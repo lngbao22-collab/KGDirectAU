@@ -225,15 +225,25 @@ class Trainer:
         if test_eval_path and os.path.exists(test_eval_path):
             test_entity_dict = get_entity_dict()
             test_output_path = os.path.join(self.args.model_dir, 'test_link_prediction.log')
-            self.evaluate_link_prediction_inplace(self.model, test_eval_path, test_entity_dict, test_output_path)
+            # Evaluate both forward and backward directions for test set
+            forward_metrics = self.evaluate_link_prediction_inplace(self.model, test_eval_path, test_entity_dict, test_output_path, eval_forward=True)
+            backward_metrics = self.evaluate_link_prediction_inplace(self.model, test_eval_path, test_entity_dict, test_output_path, eval_forward=False)
+            # Average metrics
+            if forward_metrics and backward_metrics:
+                avg_metrics = {k: round((forward_metrics[k] + backward_metrics[k]) / 2, 4) for k in forward_metrics}
+                log_str = f"[TEST] Forward: {json.dumps(forward_metrics)}\nBackward: {json.dumps(backward_metrics)}\nAverage: {json.dumps(avg_metrics)}"
+                print(log_str)
+                logger.info(log_str)
+                with open(test_output_path, 'a', encoding='utf-8') as f:
+                    f.write(log_str + '\n')
 
-        # Link prediction evaluation on validation set after each epoch
-        valid_path = self.args.valid_path
-        if valid_path and os.path.exists(valid_path):
-            from dict_hub import get_entity_dict
-            entity_dict = get_entity_dict()
-            log_path = os.path.join(self.args.model_dir, 'valid_linkpred_metrics.log')
-            self.evaluate_link_prediction_inplace(self.model, valid_path, entity_dict, log_path, eval_forward=True)
+        # # Link prediction evaluation on validation set after each epoch
+        # valid_path = self.args.valid_path
+        # if valid_path and os.path.exists(valid_path):
+        #     from dict_hub import get_entity_dict
+        #     entity_dict = get_entity_dict()
+        #     log_path = os.path.join(self.args.model_dir, 'valid_linkpred_metrics.log')
+        #     self.evaluate_link_prediction_inplace(self.model, valid_path, entity_dict, log_path, eval_forward=True)
 
         total_time = time.time() - total_start_time
         print(f"[Timing] Training time (s): {round(train_time, 2)}")

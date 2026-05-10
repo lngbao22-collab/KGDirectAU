@@ -154,7 +154,7 @@ def predict_by_split():
     linkpred_eval_path = None
     if args.is_test:
         data_dir = os.path.dirname(args.valid_path)
-        test_unlabeled_path = os.path.join(data_dir, 'test.txt')
+        test_unlabeled_path = os.path.join(data_dir, 'test.txt.json')
         if os.path.exists(test_unlabeled_path):
             linkpred_eval_path = test_unlabeled_path
             logger.info(f'Using unlabeled test file for link prediction: {test_unlabeled_path}')
