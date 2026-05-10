@@ -163,15 +163,20 @@ def load_data(path: str,
                 if len(fs) == 4:
                     head_id, relation, tail_id, label = fs
                     # Nếu dùng cho link prediction, chỉ lấy label=1
-                    if (add_forward_triplet or add_backward_triplet) and str(label) == '1':
-                        examples.append(Example(head_id=head_id, relation=relation, tail_id=tail_id, label=label))
+                    if str(label) == '1':
+                        if add_forward_triplet:
+                            examples.append(Example(head_id=head_id, relation=relation, tail_id=tail_id, label=label))
+                        if add_backward_triplet:
+                            examples.append(Example(**reverse_triplet({'head_id': head_id, 'head': '', 'relation': relation, 'tail_id': tail_id, 'tail': ''})))
                     # Nếu dùng cho classification, lấy cả 0 và 1
                     elif not (add_forward_triplet or add_backward_triplet):
                         examples.append(Example(head_id=head_id, relation=relation, tail_id=tail_id, label=label))
                 elif len(fs) == 3:
                     head_id, relation, tail_id = fs
-                    if add_forward_triplet or add_backward_triplet:
+                    if add_forward_triplet:
                         examples.append(Example(head_id=head_id, relation=relation, tail_id=tail_id, label='1'))
+                    if add_backward_triplet:
+                        examples.append(Example(**reverse_triplet({'head_id': head_id, 'head': '', 'relation': relation, 'tail_id': tail_id, 'tail': ''})))
     else:
         raise ValueError(f'Unsupported format: {path}')
     return examples
