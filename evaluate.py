@@ -150,12 +150,23 @@ def predict_by_split():
     predictor.load(ckt_path=args.eval_model_path)
     entity_tensor = predictor.predict_by_entities(entity_dict.entity_exs)
 
+    # For link prediction in test mode, use unlabeled test.txt instead of labeled test_w_label.txt
+    linkpred_eval_path = None
+    if args.is_test:
+        data_dir = os.path.dirname(args.valid_path)
+        test_unlabeled_path = os.path.join(data_dir, 'test.txt')
+        if os.path.exists(test_unlabeled_path):
+            linkpred_eval_path = test_unlabeled_path
+            logger.info(f'Using unlabeled test file for link prediction: {test_unlabeled_path}')
+
     forward_metrics = eval_single_direction(predictor,
                                             entity_tensor=entity_tensor,
-                                            eval_forward=True)
+                                            eval_forward=True,
+                                            eval_path=linkpred_eval_path)
     backward_metrics = eval_single_direction(predictor,
                                              entity_tensor=entity_tensor,
-                                             eval_forward=False)
+                                             eval_forward=False,
+                                             eval_path=linkpred_eval_path)
     metrics = {k: round((forward_metrics[k] + backward_metrics[k]) / 2, 4) for k in forward_metrics}
     logger.info('Averaged metrics: {}'.format(metrics))
 
