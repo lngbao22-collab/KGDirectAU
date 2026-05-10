@@ -14,6 +14,7 @@ from dict_hub import get_entity_dict, get_all_triplet_dict
 from triplet import EntityDict
 from rerank import rerank_by_graph
 from metric_classification import classification_metrics, find_global_threshold
+from utils import get_model_obj, call_model_forward
 from logger_config import logger
 
 
@@ -81,7 +82,7 @@ def compute_metrics(hr_tensor: torch.tensor,
                     entities_tensor: torch.tensor,
                     target: List[int],
                     examples: List[Example],
-                    k=3, batch_size=256) -> Tuple:
+                    k=3, batch_size=256, chunk_size=None) -> Tuple:
     assert hr_tensor.size(1) == entities_tensor.size(1)
     total = hr_tensor.size(0)
     entity_cnt = len(entity_dict)
@@ -92,20 +93,32 @@ def compute_metrics(hr_tensor: torch.tensor,
 
     mean_rank, mrr, hit1, hit3, hit10 = 0, 0, 0, 0, 0
 
+    if chunk_size is None:
+        chunk_size = getattr(args, 'chunk_size', 8192)
+
     for start in tqdm.tqdm(range(0, total, batch_size)):
         end = start + batch_size
-        # batch_size * entity_cnt
-        batch_score = torch.mm(hr_tensor[start:end, :], entities_tensor.t())
-        assert entity_cnt == batch_score.size(1)
+        batch_hr = hr_tensor[start:end, :]
         batch_target = target[start:end]
+        batch_examples = examples[start:end]
+        
+        batch_size_actual = batch_hr.size(0)
+        batch_score = torch.zeros(batch_size_actual, entity_cnt, device=hr_tensor.device, dtype=hr_tensor.dtype)
+        
+        for entity_start in range(0, entity_cnt, chunk_size):
+            entity_end = min(entity_start + chunk_size, entity_cnt)
+            chunk_entities = entities_tensor[entity_start:entity_end, :]
+            batch_score[:, entity_start:entity_end] = torch.mm(batch_hr, chunk_entities.t())
+        
+        assert entity_cnt == batch_score.size(1)
 
         # re-ranking based on topological structure
-        rerank_by_graph(batch_score, examples[start:end], entity_dict=entity_dict)
+        rerank_by_graph(batch_score, batch_examples, entity_dict=entity_dict)
 
         # filter known triplets
         for idx in range(batch_score.size(0)):
             mask_indices = []
-            cur_ex = examples[start + idx]
+            cur_ex = batch_examples[idx]
             gold_neighbor_ids = all_triplet_dict.get_neighbors(cur_ex.head_id, cur_ex.relation)
             if len(gold_neighbor_ids) > 10000:
                 logger.debug('{} - {} has {} neighbors'.format(cur_ex.head_id, cur_ex.relation, len(gold_neighbor_ids)))
@@ -150,12 +163,23 @@ def predict_by_split():
     predictor.load(ckt_path=args.eval_model_path)
     entity_tensor = predictor.predict_by_entities(entity_dict.entity_exs)
 
+    # For link prediction in test mode, use unlabeled test.txt instead of labeled test_w_label.txt
+    linkpred_eval_path = None
+    if args.is_test:
+        data_dir = os.path.dirname(args.valid_path)
+        test_unlabeled_path = os.path.join(data_dir, 'test.txt')
+        if os.path.exists(test_unlabeled_path):
+            linkpred_eval_path = test_unlabeled_path
+            logger.info(f'Using unlabeled test file for link prediction: {test_unlabeled_path}')
+
     forward_metrics = eval_single_direction(predictor,
                                             entity_tensor=entity_tensor,
-                                            eval_forward=True)
+                                            eval_forward=True,
+                                            eval_path=linkpred_eval_path)
     backward_metrics = eval_single_direction(predictor,
                                              entity_tensor=entity_tensor,
-                                             eval_forward=False)
+                                             eval_forward=False,
+                                             eval_path=linkpred_eval_path)
     metrics = {k: round((forward_metrics[k] + backward_metrics[k]) / 2, 4) for k in forward_metrics}
     logger.info('Averaged metrics: {}'.format(metrics))
 
@@ -177,19 +201,22 @@ def predict_by_split():
 def eval_single_direction(predictor: BertPredictor,
                           entity_tensor: torch.tensor,
                           eval_forward=True,
-                          batch_size=256) -> dict:
+                          batch_size=256,
+                          eval_path=None) -> dict:
     start_time = time()
-    print(f"eval_forward: {eval_forward}")
-    examples = load_data(args.valid_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
+    # Use provided eval_path or fall back to args.valid_path
+    data_path = eval_path if eval_path else args.valid_path
+    examples = load_data(data_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
 
     hr_tensor, _ = predictor.predict_by_examples(examples)
     hr_tensor = hr_tensor.to(entity_tensor.device)
     target = [entity_dict.entity_to_idx(ex.tail_id) for ex in examples]
     logger.info('predict tensor done, compute metrics...')
 
+    chunk_size = getattr(args, 'chunk_size', 8192)
     topk_scores, topk_indices, metrics, ranks = compute_metrics(hr_tensor=hr_tensor, entities_tensor=entity_tensor,
                                                                 target=target, examples=examples,
-                                                                batch_size=batch_size)
+                                                                batch_size=batch_size, chunk_size=chunk_size)
     eval_dir = 'forward' if eval_forward else 'backward'
     logger.info('{} metrics: {}'.format(eval_dir, json.dumps(metrics)))
 
@@ -241,8 +268,8 @@ def evaluate_triple_classification(predictor: BertPredictor, label_path: str, ou
                 if isinstance(batch_dict[key], torch.Tensor):
                     batch_dict[key] = batch_dict[key].cuda()
             predictor.model.cuda()
-        output_dict = predictor.model(**batch_dict)
-        logits = predictor.model.compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
+        output_dict = call_model_forward(predictor.model, batch_dict)
+        logits = get_model_obj(predictor.model).compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
         prob = torch.sigmoid(logits.diag()).detach().cpu().numpy().reshape(-1)
         y_prob.extend(prob.tolist())
 
