@@ -113,7 +113,7 @@ def compute_metrics(hr_tensor: torch.tensor,
         assert entity_cnt == batch_score.size(1)
 
         # re-ranking based on topological structure
-        rerank_by_graph(batch_score, batch_examples, entity_dict=entity_dict)
+        # rerank_by_graph(batch_score, batch_examples, entity_dict=entity_dict)
 
         # filter known triplets
         for idx in range(batch_score.size(0)):

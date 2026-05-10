@@ -14,6 +14,7 @@ from dict_hub import get_entity_dict, get_all_triplet_dict
 from triplet import EntityDict
 from rerank import rerank_by_graph
 from metric_classification import classification_metrics, find_global_threshold
+from utils import get_model_obj, call_model_forward
 from logger_config import logger
 
 
@@ -100,7 +101,7 @@ def compute_metrics(hr_tensor: torch.tensor,
         batch_target = target[start:end]
 
         # re-ranking based on topological structure
-        rerank_by_graph(batch_score, examples[start:end], entity_dict=entity_dict)
+        # rerank_by_graph(batch_score, examples[start:end], entity_dict=entity_dict)
 
         # filter known triplets
         for idx in range(batch_score.size(0)):
@@ -201,10 +202,10 @@ def eval_single_direction(predictor: BertPredictor,
     target = [entity_dict.entity_to_idx(ex.tail_id) for ex in examples]
     logger.info('predict tensor done, compute metrics...')
 
-    chunk_size = getattr(args, 'chunk_size', 8192)
+    #chunk_size = getattr(args, 'chunk_size', 8192)
     topk_scores, topk_indices, metrics, ranks = compute_metrics(hr_tensor=hr_tensor, entities_tensor=entity_tensor,
                                                                 target=target, examples=examples,
-                                                                batch_size=batch_size, chunk_size=chunk_size)
+                                                                batch_size=batch_size)
     eval_dir = 'forward' if eval_forward else 'backward'
     logger.info('{} metrics: {}'.format(eval_dir, json.dumps(metrics)))
 

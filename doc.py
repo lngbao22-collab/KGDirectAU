@@ -156,7 +156,7 @@ def load_data(path: str,
                 examples.append(Example(**reverse_triplet(obj)))
             data[i] = None
     elif path.endswith('.txt'):
-        # Định dạng: head_id\trelation\ttail_id\tlabel\n
+        # Định dạng: head_id\trelation\ttail_id\tlabel\n hoặc head_id\trelation\ttail_id\n
         with open(path, 'r', encoding='utf-8') as f:
             for line in f:
                 fs = line.strip().split('\t')
@@ -168,6 +168,10 @@ def load_data(path: str,
                     # Nếu dùng cho classification, lấy cả 0 và 1
                     elif not (add_forward_triplet or add_backward_triplet):
                         examples.append(Example(head_id=head_id, relation=relation, tail_id=tail_id, label=label))
+                elif len(fs) == 3:
+                    head_id, relation, tail_id = fs
+                    if add_forward_triplet or add_backward_triplet:
+                        examples.append(Example(head_id=head_id, relation=relation, tail_id=tail_id, label='1'))
     else:
         raise ValueError(f'Unsupported format: {path}')
     return examples
