@@ -297,9 +297,34 @@ class Trainer:
     @torch.no_grad()
     def _run_eval(self, epoch, step=0):
         metric_dict = self.eval_epoch(epoch)
-        is_best = self.valid_loader and (self.best_metric is None or metric_dict['Acc@1'] > self.best_metric['Acc@1'])
+
+        valid_mrr = None
+        valid_eval_path = None
+        if self.args.valid_path:
+            if self.args.valid_path.endswith('_w_label.txt'):
+                cand_txt = self.args.valid_path.replace('valid_w_label.txt', 'valid.txt')
+                cand_json = self.args.valid_path.replace('valid_w_label.txt', 'valid.txt.json')
+                if os.path.exists(cand_json):
+                    valid_eval_path = cand_json
+                elif os.path.exists(cand_txt):
+                    valid_eval_path = cand_txt
+            elif self.args.valid_path.endswith('.txt.json') or self.args.valid_path.endswith('.txt'):
+                valid_eval_path = self.args.valid_path
+
+        if valid_eval_path and os.path.exists(valid_eval_path):
+            valid_entity_dict = get_entity_dict()
+            valid_output_path = os.path.join(self.args.model_dir, 'valid_link_prediction.log')
+            forward_metrics = self.evaluate_link_prediction_inplace(
+                self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=True)
+            backward_metrics = self.evaluate_link_prediction_inplace(
+                self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=False)
+            if forward_metrics and backward_metrics:
+                valid_mrr = round((forward_metrics.get('mrr', 0) + backward_metrics.get('mrr', 0)) / 2, 4)
+                logger.info(f"[EPOCH {epoch}] Validation link-pred MRR(avg): {valid_mrr}")
+
+        is_best = valid_mrr is not None and (self.best_metric is None or valid_mrr > self.best_metric.get('mrr', -1))
         if is_best:
-            self.best_metric = metric_dict
+            self.best_metric = {'mrr': valid_mrr}
 
         filename = '{}/checkpoint_{}_{}.mdl'.format(self.args.model_dir, epoch, step)
         if step == 0:
