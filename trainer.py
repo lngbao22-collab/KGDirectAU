@@ -307,6 +307,12 @@ class Trainer:
         top1 = AverageMeter('Acc@1', ':6.2f')
         top3 = AverageMeter('Acc@3', ':6.2f')
         inv_t = AverageMeter('InvT', ':6.2f')
+        align_loss_meter = AverageMeter('AlignLoss', ':.6f')
+        uniform_total_meter = AverageMeter('UniformTotal', ':.6f')
+        uniform_query_meter = AverageMeter('UniformQuery', ':.6f')
+        uniform_tail_meter = AverageMeter('UniformTail', ':.6f')
+        avg_pair_query_meter = AverageMeter('AvgPairQuery', ':.6f')
+        avg_pair_tail_meter = AverageMeter('AvgPairTail', ':.6f')
         progress = ProgressMeter(
             len(self.train_loader),
             [losses, inv_t, top1, top3],
@@ -342,6 +348,22 @@ class Trainer:
             inv_t.update(outputs.inv_t, 1)
             losses.update(loss.item(), batch_size)
 
+            with torch.no_grad():
+                align_loss = self._compute_align_loss(outputs.hr_vector, outputs.tail_vector)
+                uniform_total, uniform_query, uniform_tail, avg_pair_query, avg_pair_tail = (
+                    self._compute_uniformity_and_pairwise_stats(
+                        outputs.hr_vector,
+                        outputs.tail_vector,
+                        batch_dict.get('batch_data', None)
+                    )
+                )
+            align_loss_meter.update(align_loss.item(), batch_size)
+            uniform_total_meter.update(uniform_total.item(), 1)
+            uniform_query_meter.update(uniform_query.item(), 1)
+            uniform_tail_meter.update(uniform_tail.item(), 1)
+            avg_pair_query_meter.update(avg_pair_query.item(), 1)
+            avg_pair_tail_meter.update(avg_pair_tail.item(), 1)
+
             # compute gradient and do SGD step
             self.optimizer.zero_grad()
             if self.args.use_amp:
@@ -361,6 +383,73 @@ class Trainer:
             if (i + 1) % self.args.eval_every_n_step == 0:
                 self._run_eval(epoch=epoch, step=i + 1)
         logger.info('Learning rate: {}'.format(self.scheduler.get_last_lr()[0]))
+        log_str = (
+            f"[EPOCH {epoch}] AlignLoss: {align_loss_meter.avg:.6f} | "
+            f"UniformTotal: {uniform_total_meter.avg:.6f} | "
+            f"UniformQuery: {uniform_query_meter.avg:.6f} | "
+            f"UniformTail: {uniform_tail_meter.avg:.6f} | "
+            f"AvgPairDistQuery: {avg_pair_query_meter.avg:.6f} | "
+            f"AvgPairDistTail: {avg_pair_tail_meter.avg:.6f}"
+        )
+        print(log_str)
+        logger.info(log_str)
+        with open(os.path.join(self.args.model_dir, 'valid_metrics.log'), 'a', encoding='utf-8') as f:
+            f.write(log_str + '\n')
+
+    @staticmethod
+    def _compute_align_loss(hr_vector: torch.tensor, tail_vector: torch.tensor) -> torch.tensor:
+        squared_l2_dist = torch.sum((hr_vector - tail_vector) ** 2, dim=-1)
+        return torch.mean(squared_l2_dist)
+
+    @staticmethod
+    def _compute_uniform_loss_for_vectors(vectors: torch.tensor, eps: float = 1e-12) -> torch.tensor:
+        if vectors.size(0) < 2:
+            return torch.tensor(0.0, device=vectors.device, dtype=vectors.dtype)
+
+        pairwise_dists = torch.cdist(vectors, vectors, p=2)
+        pairwise_mask = ~torch.eye(vectors.size(0), dtype=torch.bool, device=vectors.device)
+        pairwise_dists = pairwise_dists[pairwise_mask]
+        exp_term = torch.exp(-2 * pairwise_dists ** 2)
+        mean_exp = torch.mean(exp_term)
+        return torch.log(mean_exp + eps)
+
+    @staticmethod
+    def _unique_indices_by_id(ids, device):
+        seen = set()
+        uniq_idx = []
+        for i, idv in enumerate(ids):
+            if idv not in seen:
+                seen.add(idv)
+                uniq_idx.append(i)
+        return torch.tensor(uniq_idx, dtype=torch.long, device=device)
+
+    def _compute_uniformity_and_pairwise_stats(self, hr_vector: torch.tensor, tail_vector: torch.tensor, batch_exs):
+        if batch_exs is not None:
+            query_keys = [(ex.head_id, ex.relation) for ex in batch_exs]
+            tail_ids = [ex.tail_id for ex in batch_exs]
+
+            hr_idx = self._unique_indices_by_id(query_keys, hr_vector.device)
+            tail_idx = self._unique_indices_by_id(tail_ids, tail_vector.device)
+            hr_unique = hr_vector[hr_idx]
+            tail_unique = tail_vector[tail_idx]
+        else:
+            hr_unique = hr_vector
+            tail_unique = tail_vector
+
+        uniform_query = self._compute_uniform_loss_for_vectors(hr_unique)
+        uniform_tail = self._compute_uniform_loss_for_vectors(tail_unique)
+        uniform_total = uniform_query + uniform_tail
+
+        avg_pair_query = self._average_pairwise_distance(hr_unique)
+        avg_pair_tail = self._average_pairwise_distance(tail_unique)
+        return uniform_total, uniform_query, uniform_tail, avg_pair_query, avg_pair_tail
+
+    @staticmethod
+    def _average_pairwise_distance(vectors: torch.tensor) -> torch.tensor:
+        if vectors.size(0) < 2:
+            return torch.tensor(0.0, device=vectors.device, dtype=vectors.dtype)
+        pairwise_dists = torch.pdist(vectors, p=2)
+        return torch.mean(pairwise_dists)
 
     def _setup_training(self):
         if torch.cuda.device_count() > 1:
