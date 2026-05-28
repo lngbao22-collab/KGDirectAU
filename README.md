@@ -80,7 +80,14 @@ By default, the script reads from `data/<dataset>/` and writes the processed fil
 
 ```bash
 # Train with default WN18RR config
+## SimKGC
 python main.py --config-path configs/SimKGC_WN18RR.json
+
+## DistMult
+python main.py --config-path configs/DistMult_WN18RR.json
+
+## ComplEx
+python main.py --config-path configs/ComplEx_WN18RR.json
 
 # Run only link prediction task
 python main.py --config-path configs/SimKGC_WN18RR.json --task lp

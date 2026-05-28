@@ -12,7 +12,7 @@ from transformers import AutoConfig, AutoModel
 from base.model import BaseModel
 from data.dataloader import collate
 from data.dataset import Dataset, Example
-from models.losses.infonce import compute_infonce_logits
+from models.losses.infonce_loss import compute_infonce_logits
 from utils.device import move_to_cuda
 
 

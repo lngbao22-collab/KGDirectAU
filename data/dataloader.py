@@ -5,7 +5,7 @@ import torch
 
 from configs.config import args
 from data.dict_hub import get_tokenizer
-from models.samplers.masking import construct_mask, construct_self_negative_mask
+from models.samplers.masking_sampler import construct_mask, construct_self_negative_mask
 
 
 def to_indices_and_mask(batch_tensor, pad_token_id=0, need_mask=True):

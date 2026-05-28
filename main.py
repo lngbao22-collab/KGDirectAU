@@ -4,7 +4,7 @@ import time
 
 from configs.config import args
 from base.evaluator import Evaluator
-from models.strategies.simkgc import ContrastiveTrainer as Trainer
+from models.builder import import_module_from_path
 from utils.device import init_hardware
 from utils.checkpoint import best_model_path
 from utils.logger import setup_logger, write_results_report
@@ -120,7 +120,28 @@ def main():
         _write_results(args, None, evaluator, link_metrics, triple_metrics, test_time, config_snapshot)
         return
 
-    trainer = Trainer(args, ngpus_per_node=ngpus_per_node)
+    # Dynamically load the strategy/trainer class from config
+    strategy_path = args.model_strategy_path or args.model_strategy_path or 'models/strategies/simkgc_strategy.py'
+    strategy_mod = import_module_from_path(strategy_path)
+    # prefer common trainer names
+    trainer_cls = None
+    for cand in ('ContrastiveTrainer', 'Trainer', 'SimKGCStrategy', 'SimKGCTrainer', 'Strategy'):
+        if hasattr(strategy_mod, cand):
+            trainer_cls = getattr(strategy_mod, cand)
+            break
+    if trainer_cls is None:
+        # fallback: find first class defined in module
+        for v in vars(strategy_mod).values():
+            try:
+                if isinstance(v, type):
+                    trainer_cls = v
+                    break
+            except Exception:
+                continue
+    if trainer_cls is None:
+        raise ImportError(f'Could not find a Trainer class in {strategy_path}')
+
+    trainer = trainer_cls(args, ngpus_per_node=ngpus_per_node)
     train_summary = trainer.train_loop()
 
     evaluator = Evaluator(args)

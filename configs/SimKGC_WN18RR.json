@@ -1,17 +1,20 @@
 {
   "model": "SimKGC",
-  "model_def": "models/strategies/simkgc.py",
+  "model_encoder_path": "models/encoders/bert_encoder.py",
+  "model_loss_path": "models/losses/infonce_loss.py",
+  "model_sampler_path": "models/samplers/masking_sampler.py",
+  "model_strategy_path": "models/strategies/simkgc_strategy.py",
 
   "dataset": "WN18RR",
-  "task": "both",
-  "bert_encoder": "distilbert-base-uncased",
-
   "train_path": "data/WN18RR/preprocessed/train.txt.json",
   "valid_path": "data/WN18RR/preprocessed/valid.txt.json",
   "test_path": "data/WN18RR/preprocessed/test.txt.json",
   "valid_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
   "test_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
 
+  "bert_encoder": "distilbert-base-uncased",
+
+  "task": "both",
   "eval_model_path": "",
   "output_dir_prefix": "logs/SimKGC_WN18RR",
 

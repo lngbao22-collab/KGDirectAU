@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import torch
+import torch.nn.functional as F
 
 
 @dataclass
@@ -13,6 +14,20 @@ class ModelOutput:
 	inv_t: torch.Tensor
 	hr_vector: torch.Tensor
 	tail_vector: torch.Tensor
+
+
+def compute_listwise_loss(scores: torch.Tensor, truth_indices: torch.Tensor) -> torch.Tensor:
+	"""Compute the listwise softmax loss for a batch of candidate scores."""
+
+	if not torch.is_tensor(truth_indices):
+		truth_indices = torch.as_tensor(truth_indices, device=scores.device, dtype=torch.long)
+	else:
+		truth_indices = truth_indices.to(device=scores.device, dtype=torch.long)
+
+	log_probs = F.log_softmax(scores, dim=-1)
+	row_indices = torch.arange(scores.size(0), device=scores.device)
+	loss = -log_probs[row_indices, truth_indices]
+	return loss.mean()
 
 
 def compute_infonce_logits(query_vec: torch.Tensor, candidate_vec: torch.Tensor, temp: torch.Tensor, margin: float = 0.0) -> torch.Tensor:

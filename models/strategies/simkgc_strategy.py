@@ -1,9 +1,4 @@
-"""SimKGC contrastive training strategy with:
-+ Encoder: BERT
-+ Loss: InfoNCE
-+ Sampler: In-batch (IB) negatives, pre-batch (PB) negatives and/or self-negatives (SB)
-+ Evaluation: Link prediction with neighbor-aware reranking
-"""
+"""SimKGC contrastive training strategy"""
 
 import json
 import os
@@ -15,26 +10,28 @@ from base.evaluator import Evaluator
 from base.trainer import Trainer
 from data.dict_hub import build_tokenizer, get_entity_dict
 from metrics.ranking import topk_accuracy as accuracy
-from models.encoders.bert import build_model
-from models.losses.infonce import ModelOutput, compute_infonce_logits
-from models.samplers.masking import construct_mask
+from models.builder import import_module_from_path, load_attr_from_path
 from utils.device import get_model_obj, move_to_cuda
 from utils.logger import AverageMeter, ProgressMeter, logger
 
 
 class SimKGCStrategy(Trainer, Evaluator):
-    """SimKGC contrastive training strategy with:
-    + Encoder: BERT
-    + Loss: InfoNCE
-    + Sampler: In-batch (IB) negatives, pre-batch (PB) negatives and/or self-negatives (SB)
-    + Evaluation: Link prediction with neighbor-aware reranking
-    """
+    """Training strategy for SimKGC model, implementing contrastive learning with in-batch negatives, pre-batch negatives, and self-negatives, along with evaluation on validation set and link prediction metrics."""
 
     def __init__(self, args, ngpus_per_node):
         Evaluator.__init__(self)
         self.args = args
         self.ngpus_per_node = ngpus_per_node
         build_tokenizer(args)
+
+        # Load encoder/build_model factory from configured path (fallback to bert encoder)
+        encoder_path = getattr(args, 'model_encoder_path', '') or 'models/encoders/bert_encoder.py'
+        try:
+            build_model = load_attr_from_path(encoder_path, 'build_model')
+        except Exception:
+            # try importing module and looking for build_model
+            mod = import_module_from_path(encoder_path)
+            build_model = getattr(mod, 'build_model')
 
         logger.info('=> creating model')
         model = build_model(args)
@@ -46,6 +43,24 @@ class SimKGCStrategy(Trainer, Evaluator):
 
         super().__init__(args, ngpus_per_node, model=model, criterion=criterion)
 
+        # load loss helpers
+        loss_path = getattr(args, 'model_loss_path', '') or 'models/losses/infonce_loss.py'
+        try:
+            self.ModelOutput = load_attr_from_path(loss_path, 'ModelOutput')
+            self.compute_infonce_logits = load_attr_from_path(loss_path, 'compute_infonce_logits')
+        except Exception:
+            loss_mod = import_module_from_path(loss_path)
+            self.ModelOutput = getattr(loss_mod, 'ModelOutput')
+            self.compute_infonce_logits = getattr(loss_mod, 'compute_infonce_logits')
+
+        # load sampler helpers such as construct_mask
+        sampler_path = getattr(args, 'model_sampler_path', '') or 'models/samplers/masking_sampler.py'
+        try:
+            self.construct_mask = load_attr_from_path(sampler_path, 'construct_mask')
+        except Exception:
+            sampler_mod = import_module_from_path(sampler_path)
+            self.construct_mask = getattr(sampler_mod, 'construct_mask')
+
     def _compute_logits(self, output_dict: dict, batch_dict: dict) -> dict:
         """Compute logits and labels for InfoNCE loss based on model outputs and batch information, applying necessary masking and adjustments for in-batch negatives, pre-batch negatives, and self-negatives."""
 
@@ -54,7 +69,7 @@ class SimKGCStrategy(Trainer, Evaluator):
         batch_size = hr_vector.size(0)
         labels = torch.arange(batch_size, device=hr_vector.device)
 
-        logits = compute_infonce_logits(
+        logits = self.compute_infonce_logits(
             query_vec=hr_vector,
             candidate_vec=tail_vector,
             temp=model.log_inv_t,
@@ -93,10 +108,10 @@ class SimKGCStrategy(Trainer, Evaluator):
 
         assert tail_vector.size(0) == model.batch_size
         batch_exs = batch_dict['batch_data']
-        pre_batch_logits = compute_infonce_logits(hr_vector, model.pre_batch_vectors.clone(), model.log_inv_t)
+        pre_batch_logits = self.compute_infonce_logits(hr_vector, model.pre_batch_vectors.clone(), model.log_inv_t)
         pre_batch_logits *= model.args.pre_batch_weight
         if model.pre_batch_exs[-1] is not None:
-            pre_triplet_mask = construct_mask(batch_exs, model.pre_batch_exs).to(hr_vector.device)
+            pre_triplet_mask = self.construct_mask(batch_exs, model.pre_batch_exs).to(hr_vector.device)
             pre_batch_logits.masked_fill_(~pre_triplet_mask, -1e4)
 
         model.pre_batch_vectors[model.offset:(model.offset + model.batch_size)] = tail_vector.data.clone()
@@ -132,7 +147,7 @@ class SimKGCStrategy(Trainer, Evaluator):
                 outputs = self.model(**batch_dict)
 
             outputs = self._compute_logits(output_dict=outputs, batch_dict=batch_dict)
-            outputs = ModelOutput(**outputs)
+            outputs = self.ModelOutput(**outputs)
             logits, labels = outputs.logits, outputs.labels
             assert logits.size(0) == batch_size
 
@@ -188,7 +203,7 @@ class SimKGCStrategy(Trainer, Evaluator):
 
                 outputs = self.model(**batch_dict)
                 outputs = self._compute_logits(output_dict=outputs, batch_dict=batch_dict)
-                outputs = ModelOutput(**outputs)
+                outputs = self.ModelOutput(**outputs)
                 logits, labels = outputs.logits, outputs.labels
                 loss = self.criterion(logits, labels)
                 losses.update(loss.item(), batch_size)

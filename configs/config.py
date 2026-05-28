@@ -24,6 +24,14 @@ def build_parser() -> argparse.ArgumentParser:
                         help='model family name, e.g. simkgc, transe, transd, rotate')
     parser.add_argument('--model-def', default='', type=str,
                         help='path to the model definition file, e.g. models/strategies/simkgc.py. If not specified, it will be inferred from the model name and looked up in configs/ for backward compatibility.')
+    parser.add_argument('--model-encoder-path', default='', type=str,
+                        help='path to encoder module, e.g. models/encoders/bert_encoder.py')
+    parser.add_argument('--model-loss-path', default='', type=str,
+                        help='path to loss module, e.g. models/losses/infonce_loss.py')
+    parser.add_argument('--model-sampler-path', default='', type=str,
+                        help='path to sampler module, e.g. models/samplers/masking_sampler.py')
+    parser.add_argument('--model-strategy-path', default='', type=str,
+                        help='path to strategy module, e.g. models/strategies/simkgc_strategy.py')
     parser.add_argument('--task', default='both', type=str,
                         help='link prediction/triple classification/both')
     parser.add_argument('--bert-encoder', '--encoder', default='distilbert-base-uncased', type=str, dest='bert_encoder',

@@ -18,7 +18,7 @@ from metrics.classification import classification_metrics, find_global_threshold
 
 from configs.config import args as global_args
 from data.dict_hub import build_tokenizer
-from models.encoders.bert import build_model
+from models.encoders.bert_encoder import build_model
 from utils.checkpoint import load_state_dict_clean, load_checkpoint, best_model_path, checkpoint_path
 from configs.config import apply_train_args
 import numpy as np
