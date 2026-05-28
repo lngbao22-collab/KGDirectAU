@@ -1,7 +1,5 @@
 # KGDirectAU
 
-Lightweight, modular KG training and evaluation framework extracted from SimKGC.
-
 Repository layout
 ```
 KGDirectAU_root/
@@ -42,9 +40,10 @@ KGDirectAU_root/
 │   └── logger.py       # ProgressMeter, AverageMeter, logging setup
 ├── logs/
 │   └── <model-dataset logs>/
-│       ├── train.log       # Text output
-│       ├── results.txt     # Final metrics
-│       └── best_model.mdl   # Model weights
+│       ├── train.log       # Training text output
+│       ├── results.txt     # Final result metrics, time, configs
+│       ├── best_model.mdl   # Best model's weights
+│       └── last_model.mdl   # Last trained model's weights
 ├── main.py                 # THE START BUTTON
 ├── README.md
 └── requirements.txt
@@ -90,5 +89,20 @@ python main.py --config-path configs/SimKGC_WN18RR.json --task lp
 Notes
 - The repo is organized to separate encoders, loss formulations, samplers and training strategies so you can mix-and-match components.
 - Ensure `torch`, `transformers`, `numpy`, and `tqdm` are installed in your environment before running training or evaluation.
+
+Model source layout
+-------------------
+Each model implementation should be split into four composable pieces so the repo pipeline can mix-and-match components:
+
+- **encoder**: model-specific encoder implementation (place under `models/encoders/`).
+	- Example files: `models/encoders/transe_encoder.py`, `models/encoders/distmult_encoder.py`
+- **loss**: loss function definitions (place under `models/losses/`).
+	- Example files: `models/losses/pairwise.py`, `models/losses/kbgan_loss.py`
+- **negative sampling**: negative-sampler implementations (place under `models/samplers/`).
+	- Example files: `models/samplers/uniform.py`, `models/samplers/sans.py`
+- **core logic / strategy**: training strategy tying encoder + loss + sampler (place under `models/strategies/`).
+	- Example files: `models/strategies/transe.py`, `models/strategies/kbgan.py`
+
+The `model_def` field in each JSON config should point to the strategy implementation (e.g. `models/strategies/transe.py`) and specify which encoder, loss, and sampler to use. This keeps the training loop (`main.py` / `base/trainer.py`) generic and lets you add new models by dropping well-formed components into these folders.
 
 If you'd like, I can also update `requirements.txt` to pin versions or add a short `examples/` section with commands for FB15k-237 and Wikidata5M.

@@ -80,6 +80,17 @@ def save_model_weights(model: torch.nn.Module, path: str, **metadata: Any) -> st
     return save_checkpoint(payload, is_best=False, filename=path)
 
 
+def save_last_model_weights(model: torch.nn.Module, model_dir: str, **metadata: Any) -> str:
+    """Convenience helper to save model weights directly as `last_model.mdl` in `model_dir`."""
+
+    payload: Dict[str, Any] = {'state_dict': model.state_dict()}
+    payload.update(metadata)
+    target = Path(model_dir) / LAST_MODEL_FILENAME
+    target.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(payload, target)
+    return str(target)
+
+
 def load_model_weights(model: torch.nn.Module, path: str, map_location: Optional[str] = 'cpu', strict: bool = True) -> Tuple[torch.nn.Module, Dict[str, Any]]:
     """Load weights from a `.mdl` checkpoint into a model."""
 
