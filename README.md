@@ -64,15 +64,32 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-2) Prepare the dataset once.
+2) Preprocess the dataset (one-time setup).
 
-`main.py` consumes preprocessed split files such as `train.txt.json`, `valid.txt.json`, `test.txt.json`, and, when available, `valid_w_label.txt.json` / `test_w_label.txt.json` for triple classification. Run `data/preprocess.py` once per dataset to generate those JSON files from the raw `.txt` splits under `data/<dataset>/`.
+```bash
+# For WN18RR
+python data/preprocess.py --dataset wn18rr --data-dir data/WN18RR --output-dir data/WN18RR
 
-3) Pick a JSON config in `configs/` and use it with `main.py`.
+# For FB15k-237
+python data/preprocess.py --dataset fb15k237 --data-dir data/FB15k237 --output-dir data/FB15k237
+```
 
-The default WN18RR config is [configs/SimKGC_WN18RR.json](configs/SimKGC_WN18RR.json). Pass it with `--config-path`; this file is the main place to define the model protocol through `model_def`, which points to the encoder, loss, sampler, and strategy implementation in `models/`.
+This generates `train.txt.json`, `valid.txt.json`, `test.txt.json`, and optionally `valid_w_label.txt.json` / `test_w_label.txt.json` for triple classification tasks.
 
-When `output_dir` is omitted or left at the default placeholder, `config.py` resolves it to a timestamped run directory such as `logs/SimKGC_WN18RR_<yyyy-mm-dd>_<hh-mm-ss>/`.
+3) Train and evaluate with a configuration.
+
+```bash
+# Train with default WN18RR config
+python main.py --config-path configs/SimKGC_WN18RR.json
+
+# Run only link prediction task
+python main.py --config-path configs/SimKGC_WN18RR.json --task lp
+
+# Override config values from command line
+python main.py --config-path configs/SimKGC_WN18RR.json --batch-size 32 --num-epochs 100
+```
+
+Outputs are saved to `logs/<model-dataset>_<yyyy-mm-dd>_<hh-mm-ss>/` by default.
 
 4) Train and evaluate from `main.py`.
 
