@@ -56,12 +56,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help='path to model to evaluate')
     # in default, eval_model_path is taken from best_model.mdl in output-dir if exists; otherwise, it needs to be specified.
 
-    parser.add_argument('--model-dir', default='', type=str,
-                        help='path to checkpoint directory')
-    # remove model-dir and replace with output-dir for more general naming, but still support model-dir for backward compatibility. In default, checkpoints are saved in 'logs/<model>_<dataset>' folder e.g. logs/SimKGC_WN18RR, which is determined by model and dataset args. This folder will contain: train.log (Text training output), results.txt (Final result metrics + best valid + time), best_model.mdl  (Best model weights)
-
-    parser.add_argument('--output-dir', default='', type=str,
-                        help='directory used to save checkpoints, predictions, and logs')
     parser.add_argument('--output-dir-prefix', default='', type=str,
                         help='prefix for the directory used to save checkpoints, predictions, and logs; a timestamp will be appended when used')
     # in default, output is saved in 'logs/<model>_<dataset>' folder e.g. logs/SimKGC_WN18RR.
@@ -147,9 +141,9 @@ def _resolve_output_dir() -> str:
         normalized_placeholder = os.path.normpath(placeholder)
         absolute_placeholder = os.path.normpath(os.path.join(os.getcwd(), placeholder))
         return normalized_path in {normalized_placeholder, absolute_placeholder}
+    # starting candidate list: explicit output_dir, prefix, model_dir (may be empty)
+    candidates = [getattr(args, 'output_dir', ''), getattr(args, 'output_dir_prefix', ''), getattr(args, 'model_dir', '')]
 
-    # prefer explicit full path, then explicit prefix, then model_dir/default
-    candidates = [args.output_dir, args.output_dir_prefix, args.model_dir]
     if args.eval_model_path:
         candidates.append(os.path.dirname(args.eval_model_path))
     candidates.append(_default_run_dir())
@@ -235,11 +229,6 @@ assert not args.train_path or os.path.exists(args.train_path)
 assert args.pooling in ['cls', 'mean', 'max']
 assert args.lr_scheduler in ['linear', 'cosine']
 
-if not args.model_dir and not args.output_dir:
-    assert os.path.exists(args.eval_model_path), 'One of args.model_dir and args.eval_model_path should be valid path'
-
-args.model_dir = _resolve_output_dir()
-args.output_dir = args.model_dir
 args.config_path = config_path
 args.model_type = args.model
 args.encoder = args.bert_encoder
@@ -270,28 +259,35 @@ if not torch.cuda.is_available():
     args.print_freq = 1
     warnings.warn('GPU is not available, set use_amp=False and print_freq=1')
 
+# Ensure `args` exposes `model_dir` and `output_dir` (parser flags were removed).
+if not hasattr(args, 'model_dir'):
+    args.model_dir = ''
+if not hasattr(args, 'output_dir'):
+    args.output_dir = ''
+
 # If a user provided an output_dir_prefix (e.g., "logs/Model_Dataset"),
-# convert it into a timestamped run directory: logs/Model_Dataset_YYYY-MM-DD_HH-MM-SS
+# convert it into a timestamped run directory and prefer it when writable.
 if getattr(args, 'output_dir_prefix', ''):
     prefix = args.output_dir_prefix.rstrip('/\\')
-    # detect if prefix already contains a timestamp-like suffix
     import re, datetime
     ts_pattern = re.compile(r'.*\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$')
     if ts_pattern.match(prefix):
         chosen = prefix
     else:
         chosen = prefix + '_' + datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    # ensure directory exists and is writable; prefer this explicit path
     try:
         os.makedirs(chosen, exist_ok=True)
         if os.access(chosen, os.W_OK):
             args.model_dir = chosen
             args.output_dir = chosen
     except Exception:
-        # fall back to previously resolved model_dir
+        # ignore and fall back to resolver
         pass
 
-
+# If no explicit model_dir was chosen above, resolve a sensible default.
+if not args.model_dir:
+    args.model_dir = _resolve_output_dir()
+    args.output_dir = args.model_dir
 def apply_train_args(train_args: SimpleNamespace) -> SimpleNamespace:
     """Merge training-time args from a checkpoint with current global `args`.
 
