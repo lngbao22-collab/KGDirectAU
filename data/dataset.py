@@ -13,7 +13,7 @@ from configs.config import args
 from data.preprocess import _concat_name_desc, _parse_entity_name
 from utils.logger import logger
 
-from data.dict_hub import get_entity_dict, get_link_graph, get_tokenizer, EntityDict
+from data.dict_hub import get_entity_dict, get_link_graph, get_tokenizer
 
 
 def _get_entity_dict():
