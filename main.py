@@ -1,81 +1,148 @@
-import torch
 import json
-import torch.backends.cudnn as cudnn
+import os
+import time
 
-from config import args
-from trainer import Trainer
-from doc import collate
-from logger_config import logger
+from configs.config import args
+from base.evaluator import Evaluator
+from models.strategies.simkgc import ContrastiveTrainer as Trainer
+from utils.device import init_hardware
+from utils.checkpoint import best_model_path
+from utils.logger import setup_logger, write_results_report
+from data.dict_hub import get_entity_dict
+
+
+logger = setup_logger(log_file=os.path.join(args.model_dir, 'run.log'))
+
+
+def _resolve_test_lp_path(current_args):
+    candidates = [current_args.test_path]
+
+    if current_args.valid_path:
+        valid_dir = os.path.dirname(current_args.valid_path)
+        valid_name = os.path.basename(current_args.valid_path)
+        candidates.append(os.path.join(valid_dir, valid_name.replace('valid', 'test')))
+        candidates.append(os.path.join(valid_dir, 'test.txt'))
+
+    if current_args.valid_label_path:
+        label_dir = os.path.dirname(current_args.valid_label_path)
+        label_name = os.path.basename(current_args.valid_label_path)
+        candidates.append(os.path.join(label_dir, label_name.replace('valid_w_label.txt', 'test.txt')))
+        candidates.append(os.path.join(label_dir, 'test.txt'))
+
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return ''
+
+
+def _write_results(current_args, train_summary, evaluator, link_metrics, triple_metrics, test_time, configs_snapshot):
+    checkpoint = getattr(evaluator, 'checkpoint', {}) or {}
+    best_metric = checkpoint.get('best_metric') or {}
+    best_epoch = train_summary.get('best_epoch') if train_summary else None
+    best_mrr = train_summary.get('best_mrr') if train_summary else None
+
+    if best_epoch is None:
+        best_epoch = best_metric.get('epoch')
+    if best_mrr is None:
+        best_mrr = best_metric.get('score')
+
+    train_time = train_summary.get('train_time') if train_summary else None
+    valid_time = train_summary.get('valid_time') if train_summary else None
+    total_time = None
+    if train_summary and train_summary.get('total_time') is not None:
+        total_time = train_summary['total_time'] + test_time
+
+    write_results_report(
+        os.path.join(current_args.model_dir, 'results.txt'),
+        link_metrics=link_metrics,
+        triple_metrics=triple_metrics,
+        best_epoch=best_epoch,
+        best_mrr=best_mrr,
+        train_time=train_time,
+        valid_time=valid_time,
+        test_time=test_time,
+        total_time=total_time,
+        configs=configs_snapshot,
+    )
+
+
+def _average_link_metrics(forward_metrics, backward_metrics):
+    if not forward_metrics or not backward_metrics:
+        return forward_metrics or backward_metrics
+
+    averaged_metrics = {}
+    for key in forward_metrics.keys() & backward_metrics.keys():
+        forward_value = forward_metrics[key]
+        backward_value = backward_metrics[key]
+        if isinstance(forward_value, (int, float)) and isinstance(backward_value, (int, float)):
+            averaged_metrics[key] = (forward_value + backward_value) / 2
+    return averaged_metrics
 
 
 def main():
-    ngpus_per_node = torch.cuda.device_count()
-    cudnn.benchmark = True
+    ngpus_per_node = init_hardware(args)
 
-    logger.info("Use {} gpus for training".format(ngpus_per_node))
+    logger.info('Use {} gpus for this run'.format(ngpus_per_node))
+    logger.info('Args={}'.format(json.dumps(args.__dict__, ensure_ascii=False, indent=4)))
+    config_snapshot = dict(args.__dict__)
+
+    # Determine which evaluation tasks to run: link prediction, triple classification, or both
+    task_flag = (args.task or 'both').lower()
+    run_lp = False
+    run_tc = False
+    if 'both' in task_flag or task_flag == 'both':
+        run_lp = True
+        run_tc = True
+    else:
+        if 'link' in task_flag or 'pred' in task_flag or 'lp' in task_flag:
+            run_lp = True
+        if 'triple' in task_flag or 'class' in task_flag or 'tc' in task_flag:
+            run_tc = True
+
+    if args.is_test:
+        evaluator = Evaluator(args)
+        eval_model_path = args.eval_model_path or best_model_path(args.model_dir)
+        evaluator.load(eval_model_path)
+        test_start = time.time()
+        link_metrics = None
+        triple_metrics = None
+        test_lp_path = _resolve_test_lp_path(args)
+        if run_lp and test_lp_path:
+            entity_dict = get_entity_dict()
+            test_lp_log_path = os.path.join(args.model_dir, 'test_link_prediction.log')
+            forward_metrics = evaluator.evaluate_link_prediction_inplace(
+                evaluator.model, test_lp_path, entity_dict, test_lp_log_path, eval_forward=True)
+            backward_metrics = evaluator.evaluate_link_prediction_inplace(
+                evaluator.model, test_lp_path, entity_dict, test_lp_log_path, eval_forward=False)
+            link_metrics = _average_link_metrics(forward_metrics, backward_metrics)
+        if run_tc:
+            triple_metrics = evaluator.evaluate_test_triple_classification()
+        test_time = time.time() - test_start
+        _write_results(args, None, evaluator, link_metrics, triple_metrics, test_time, config_snapshot)
+        return
 
     trainer = Trainer(args, ngpus_per_node=ngpus_per_node)
-    logger.info('Args={}'.format(json.dumps(args.__dict__, ensure_ascii=False, indent=4)))
-    trainer.train_loop()
-    # Evaluate triple classification on test set after training
-    evaluate_test_triple_classification(args)
+    train_summary = trainer.train_loop()
 
-
-def evaluate_test_triple_classification(args, epoch=None):
-    import os
-    import numpy as np
-    import json
-    import torch
-    from doc import load_data
-    from predict import BertPredictor
-    from metric_classification import classification_metrics, find_global_threshold
-
-    test_label_path = os.path.join('data', 'WN18RR', 'test_w_label.txt')
-    valid_label_path = getattr(args, 'valid_label_path', '')
-    if valid_label_path:
-        test_label_path = valid_label_path.replace('valid_w_label.txt', 'test_w_label.txt')
-    if not os.path.exists(test_label_path):
-        print("[TEST] test_w_label.txt not found, skip test evaluation.")
-        return
-    print("\n[TEST] Evaluating triple classification on test set...")
-    test_exs = load_data(test_label_path, add_forward_triplet=False, add_backward_triplet=False)
-    y_true = [ex.label for ex in test_exs]
-    y_prob = []
-    batch_size = 128
-    predictor = BertPredictor()
-    # Load best checkpoint after training
-    if epoch is None:
-        epoch = args.epochs - 1
-    ckt_path = '{}/checkpoint_epoch{}.mdl'.format(args.model_dir, epoch)
-    if not os.path.exists(ckt_path):
-        ckt_path = '{}/checkpoint_{}_0.mdl'.format(args.model_dir, epoch)
-    predictor.load(ckt_path)
-    for i in range(0, len(test_exs), batch_size):
-        batch = test_exs[i:i+batch_size]
-        batch_vec = [ex.vectorize() for ex in batch]
-        batch_dict = collate(batch_vec)
-        if torch.cuda.is_available():
-            for k in batch_dict:
-                if isinstance(batch_dict[k], torch.Tensor):
-                    batch_dict[k] = batch_dict[k].cuda()
-            predictor.model.cuda()
-        output_dict = predictor.model(**batch_dict)
-        logits = predictor.model.compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
-        prob = torch.sigmoid(logits.diag()).detach().cpu().numpy().reshape(-1)
-        y_prob.extend(prob.tolist())
-    # Dùng threshold tìm được trên validation
-    threshold = find_global_threshold(y_true, y_prob)
-    y_pred = (np.array(y_prob) > threshold).astype(int).tolist()
-    metrics_cls = classification_metrics(y_true, y_pred, y_prob)
-    log_thresh = f"[TEST] Best threshold on test: {threshold:.6f}"
-    log_cls = f"[TEST] Triple Classification: {json.dumps(metrics_cls)}"
-    print(log_thresh)
-    print(log_cls)
-    logger.info(log_thresh)
-    logger.info(log_cls)
-    with open(os.path.join(args.model_dir, 'test_metrics.log'), 'a', encoding='utf-8') as f:
-        f.write(log_thresh + '\n')
-        f.write(log_cls + '\n')
+    evaluator = Evaluator(args)
+    eval_model_path = train_summary.get('best_checkpoint_path') or best_model_path(args.model_dir)
+    evaluator.load(eval_model_path)
+    test_start = time.time()
+    link_metrics = None
+    triple_metrics = None
+    test_lp_path = _resolve_test_lp_path(args)
+    if run_lp and test_lp_path:
+        entity_dict = get_entity_dict()
+        test_lp_log_path = os.path.join(args.model_dir, 'test_link_prediction.log')
+        forward_metrics = evaluator.evaluate_link_prediction_inplace(
+            evaluator.model, test_lp_path, entity_dict, test_lp_log_path, eval_forward=True)
+        backward_metrics = evaluator.evaluate_link_prediction_inplace(
+            evaluator.model, test_lp_path, entity_dict, test_lp_log_path, eval_forward=False)
+        link_metrics = _average_link_metrics(forward_metrics, backward_metrics)
+    if run_tc:
+        triple_metrics = evaluator.evaluate_test_triple_classification()
+    test_time = time.time() - test_start
+    _write_results(args, train_summary, evaluator, link_metrics, triple_metrics, test_time, config_snapshot)
 
 
 if __name__ == '__main__':

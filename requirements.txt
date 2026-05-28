@@ -1,3 +1,5 @@
+### SOURCE: SimKGC
+#python>=3.7
 torch>=1.6
 transformers>=4.15
 numpy
@@ -11,4 +13,3 @@ shutil
 glob2
 logging
 multiprocessing
-

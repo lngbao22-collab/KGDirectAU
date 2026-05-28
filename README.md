@@ -1,138 +1,94 @@
-## SimKGC: Simple Contrastive Knowledge Graph Completion with Pre-trained Language Models
+# KGDirectAU
 
-Official code repository for ACL 2022 paper 
-"[SimKGC: Simple Contrastive Knowledge Graph Completion with Pre-trained Language Models](https://aclanthology.org/2022.acl-long.295.pdf)".
+Lightweight, modular KG training and evaluation framework extracted from SimKGC.
 
-The paper is available at [https://aclanthology.org/2022.acl-long.295.pdf](https://aclanthology.org/2022.acl-long.295.pdf).
-
-In this paper,
-we identify that one key issue for text-based knowledge graph completion is efficient contrastive learning.
-By combining large number of negatives and hardness-aware InfoNCE loss,
-SimKGC can substantially outperform existing methods on popular benchmark datasets.
-
-## Requirements
-* python>=3.7
-* torch>=1.6 (for mixed precision training)
-* transformers>=4.15
-
-All experiments are run with 4 V100(32GB) GPUs.
-
-## How to Run
-
-It involves 3 steps: dataset preprocessing, model training, and model evaluation.
-
-We also provide the predictions from our models in [predictions](predictions/) directory.
-
-For WN18RR and FB15k237 datasets, we use files from [KG-BERT](https://github.com/yao8839836/kg-bert).
-
-### WN18RR dataset
-
-Step 1, preprocess the dataset
+Repository layout
 ```
-bash scripts/preprocess.sh WN18RR
-```
-
-Step 2, training the model and (optionally) specify the output directory (< 3 hours)
-```
-OUTPUT_DIR=./checkpoint/wn18rr/ bash scripts/train_wn.sh
-```
-
-Step 3, evaluate a trained model
-```
-bash scripts/eval.sh ./checkpoint/wn18rr/model_last.mdl WN18RR
-```
-
-Feel free to change the output directory to any path you think appropriate.
-
-### FB15k-237 dataset
-
-Step 1, preprocess the dataset
-```
-bash scripts/preprocess.sh FB15k237
-```
-
-Step 2, training the model and (optionally) specify the output directory (< 3 hours)
-```
-OUTPUT_DIR=./checkpoint/fb15k237/ bash scripts/train_fb.sh
+KGDirectAU_root/
+├── base/
+│   ├── evaluator.py        # Testing loop
+│   ├── model.py            # Abstract Base
+│   └── trainer.py          # Training loop
+├── configs/
+│   ├── config.py           # Argument parser
+│   └── <model-dataset configs>.json # Hyperparameters
+├── data/
+│   ├── <dataset>/
+│   ├── dataloader.py
+│   ├── dataset.py
+│   ├── dict_hub.py
+│   └── preprocess.py
+├── metrics/
+│   ├── classification.py   # for Triple classification
+│   └── ranking.py          # for Link prediction
+├── models/
+│   ├── encoders/      
+│   │   └── <encoder models>.py
+│   ├── losses/
+│   │   ├── pointwise.py    # Sigmoid / Logistic
+│   │   ├── pairwise.py     # Margin / Ranking
+│   │   ├── listwise.py     # NCE / Cross-Entropy
+│   │   └── <other loss formulas>.py
+│   ├── samplers/
+│   │   ├── uniform.py
+│   │   └── <other sampling strategies>.py
+│   └── strategies/         
+│       ├── standard.py     # Simple encoder + uniform sampling + pairwise loss
+│       ├── kgdirectau.py 
+│       └── <other training strategies>.py 
+├── utils/
+│   ├── checkpoint.py   # Save/Load weights
+│   ├── device.py       # GPU setup, parameter reporting, DDP unwrapping
+│   └── logger.py       # ProgressMeter, AverageMeter, logging setup
+├── logs/
+│   └── <model-dataset logs>/
+│       ├── train.log       # Text output
+│       ├── results.txt     # Final metrics
+│       └── best_model.mdl   # Model weights
+├── main.py                 # THE START BUTTON
+├── README.md
+└── requirements.txt
 ```
 
-Step 3, evaluate a trained model
-```
-bash scripts/eval.sh ./checkpoint/fb15k237/model_last.mdl FB15k237
-```
+Quickstart
 
-### Wikidata5M transductive dataset
+0) Start from scratch by creating a virtual environment and activating it.
 
-Step 0, download the dataset. 
-We provide a script to download the [Wikidata5M dataset](https://deepgraphlearning.github.io/project/wikidata5m) from its official website.
-This will download data for both transductive and inductive settings.
-```
-bash ./scripts/download_wikidata5m.sh
+```bash
+python -m venv .venv
+.venv\Scripts\activate
 ```
 
-Step 1, preprocess the dataset
-```
-bash scripts/preprocess.sh wiki5m_trans
-```
+1) Install dependencies (recommended inside a virtualenv):
 
-Step 2, training the model and (optionally) specify the output directory (about 12 hours)
-```
-OUTPUT_DIR=./checkpoint/wiki5m_trans/ bash scripts/train_wiki.sh wiki5m_trans
+```bash
+pip install -r requirements.txt
 ```
 
-Step 3, evaluate a trained model (it takes about 1 hour due to the large number of entities)
-```
-bash scripts/eval_wiki5m_trans.sh ./checkpoint/wiki5m_trans/model_last.mdl
-```
+2) Prepare the dataset once.
 
-### Wikidata5M inductive dataset
+`main.py` consumes preprocessed split files such as `train.txt.json`, `valid.txt.json`, `test.txt.json`, and, when available, `valid_w_label.txt.json` / `test_w_label.txt.json` for triple classification. Run `data/preprocess.py` once per dataset to generate those JSON files from the raw `.txt` splits under `data/<dataset>/`.
 
-Make sure you have run `scripts/download_wikidata5m.sh` to download Wikidata5M dataset.
+3) Pick a JSON config in `configs/` and use it with `main.py`.
 
-Step 1, preprocess the dataset
-```
-bash scripts/preprocess.sh wiki5m_ind
-```
+The default WN18RR config is [configs/SimKGC_WN18RR.json](configs/SimKGC_WN18RR.json). Pass it with `--config-path`; this file is the main place to define the model protocol through `model_def`, which points to the encoder, loss, sampler, and strategy implementation in `models/`.
 
-Step 2, training the model and (optionally) specify the output directory (about 11 hours)
-```
-OUTPUT_DIR=./checkpoint/wiki5m_ind/ bash scripts/train_wiki.sh wiki5m_ind
+When `output_dir` is omitted or left at the default placeholder, `config.py` resolves it to a timestamped run directory such as `logs/SimKGC_WN18RR_<yyyy-mm-dd>_<hh-mm-ss>/`.
+
+4) Train and evaluate from `main.py`.
+
+```bash
+python main.py --config-path configs/SimKGC_WN18RR.json
 ```
 
-Step 3, evaluate a trained model
+You can override any config value from the command line, but the JSON file remains the primary source of configuration. For example, `--task` can be used to run only link prediction, only triple classification, or both.
+
+```bash
+python main.py --config-path configs/SimKGC_WN18RR.json --task lp
 ```
-bash scripts/eval.sh ./checkpoint/wiki5m_ind/model_last.mdl wiki5m_ind
-```
 
-## Troubleshooting
+Notes
+- The repo is organized to separate encoders, loss formulations, samplers and training strategies so you can mix-and-match components.
+- Ensure `torch`, `transformers`, `numpy`, and `tqdm` are installed in your environment before running training or evaluation.
 
-1. I encountered "CUDA out of memory" when running the code.
-
-We run experiments with 4 V100(32GB) GPUs, please reduce the batch size if you don't have enough resources. 
-Be aware that smaller batch size will hurt the performance for contrastive training. 
-
-2. Does this codebase support distributed data parallel(DDP) training?
-
-No. Some input masks require access to batch data on all GPUs, 
-so currently it only supports data parallel training for ease of implementation.
-
-## Citation
-
-If you find our paper or code repository helpful, please consider citing as follows:
-
-```
-@inproceedings{wang-etal-2022-simkgc,
-    title = "{S}im{KGC}: Simple Contrastive Knowledge Graph Completion with Pre-trained Language Models",
-    author = "Wang, Liang  and
-      Zhao, Wei  and
-      Wei, Zhuoyu  and
-      Liu, Jingming",
-    booktitle = "Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)",
-    month = may,
-    year = "2022",
-    address = "Dublin, Ireland",
-    publisher = "Association for Computational Linguistics",
-    url = "https://aclanthology.org/2022.acl-long.295",
-    pages = "4281--4294",
-}
-```
+If you'd like, I can also update `requirements.txt` to pin versions or add a short `examples/` section with commands for FB15k-237 and Wikidata5M.
