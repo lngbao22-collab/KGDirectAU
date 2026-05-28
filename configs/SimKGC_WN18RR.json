@@ -4,7 +4,7 @@
 
   "dataset": "WN18RR",
   "task": "both",
-  "bert_encoder": "distilbert-base-uncased", //
+  "bert_encoder": "distilbert-base-uncased",
 
   "train_path": "data/WN18RR/train.txt.json",
   "valid_path": "data/WN18RR/valid.txt.json",

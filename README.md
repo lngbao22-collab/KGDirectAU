@@ -41,7 +41,7 @@ KGDirectAU_root/
 ├── logs/
 │   └── <model-dataset logs>/
 │       ├── train.log       # Training text output
-│       ├── results.txt     # Final result metrics, time, configs
+│       ├── results.txt     # Final result metrics, best valid, time, configs
 │       ├── best_model.mdl   # Best model's weights
 │       └── last_model.mdl   # Last trained model's weights
 ├── main.py                 # THE START BUTTON

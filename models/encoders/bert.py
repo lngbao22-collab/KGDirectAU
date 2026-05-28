@@ -28,7 +28,7 @@ class CustomBertModel(BaseModel, ABC):
     def __init__(self, args):
         super().__init__()
         self.args = args
-        self.config = AutoConfig.from_pretrained(args.encoder)
+        self.config = AutoConfig.from_pretrained(args.bert_encoder)
         self.log_inv_t = torch.nn.Parameter(torch.tensor(1.0 / args.t).log(), requires_grad=args.finetune_t)
         self.add_margin = args.additive_margin
         self.batch_size = args.batch_size
@@ -39,7 +39,7 @@ class CustomBertModel(BaseModel, ABC):
         self.offset = 0
         self.pre_batch_exs = [None for _ in range(num_pre_batch_vectors)]
 
-        self.hr_bert = AutoModel.from_pretrained(args.encoder)
+        self.hr_bert = AutoModel.from_pretrained(args.bert_encoder)
         self.tail_bert = deepcopy(self.hr_bert)
 
     def _encode(self, encoder, token_ids, mask, token_type_ids) -> torch.Tensor:

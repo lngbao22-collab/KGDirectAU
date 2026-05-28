@@ -26,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help='path to the model definition file, e.g. models/strategies/simkgc.py. If not specified, it will be inferred from the model name and looked up in configs/ for backward compatibility.')
     parser.add_argument('--task', default='both', type=str,
                         help='link prediction/triple classification/both')
-    parser.add_argument('--encoder', default='distilbert-base-uncased', type=str,
+    parser.add_argument('--bert-encoder', '--encoder', default='distilbert-base-uncased', type=str, dest='bert_encoder',
                         help='pretrained text encoder name or path')
     parser.add_argument('--dataset', default='wn18rr', type=str,
                         help='dataset or benchmark name')
@@ -231,7 +231,8 @@ args.model_dir = _resolve_output_dir()
 args.output_dir = args.model_dir
 args.config_path = config_path
 args.model_type = args.model
-args.pretrained_model = args.encoder
+args.encoder = args.bert_encoder
+args.pretrained_model = args.bert_encoder
 # `--task` is a separate flag controlling which evaluations to run
 # (link prediction / triple classification / both). Do NOT overwrite it
 # with `args.dataset` here so users can specify evaluation task independently.

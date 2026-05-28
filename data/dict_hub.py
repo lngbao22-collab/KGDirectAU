@@ -86,8 +86,8 @@ def build_tokenizer(args):
 
     global tokenizer
     if tokenizer is None:
-        tokenizer = AutoTokenizer.from_pretrained(args.encoder)
-        logger.info('Build tokenizer from {}'.format(args.encoder))
+        tokenizer = AutoTokenizer.from_pretrained(args.bert_encoder)
+        logger.info('Build tokenizer from {}'.format(args.bert_encoder))
 
 
 def get_tokenizer():    
