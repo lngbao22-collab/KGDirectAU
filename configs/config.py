@@ -54,6 +54,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument('--output-dir', default='', type=str,
                         help='directory used to save checkpoints, predictions, and logs')
+    parser.add_argument('--output-dir-prefix', default='', type=str,
+                        help='prefix for the directory used to save checkpoints, predictions, and logs; a timestamp will be appended when used')
     # in default, output is saved in 'logs/<model>_<dataset>' folder e.g. logs/SimKGC_WN18RR.
     # This folder will contain: train.log (Text training output), results.txt (Final result metrics + best valid + time), best_model.mdl  (Best model weights)
 
@@ -138,7 +140,8 @@ def _resolve_output_dir() -> str:
         absolute_placeholder = os.path.normpath(os.path.join(os.getcwd(), placeholder))
         return normalized_path in {normalized_placeholder, absolute_placeholder}
 
-    candidates = [args.output_dir, args.model_dir]
+    # prefer explicit full path, then explicit prefix, then model_dir/default
+    candidates = [args.output_dir, args.output_dir_prefix, args.model_dir]
     if args.eval_model_path:
         candidates.append(os.path.dirname(args.eval_model_path))
     candidates.append(_default_run_dir())
@@ -258,6 +261,27 @@ if not torch.cuda.is_available():
     args.use_amp = False
     args.print_freq = 1
     warnings.warn('GPU is not available, set use_amp=False and print_freq=1')
+
+# If a user provided an output_dir_prefix (e.g., "logs/Model_Dataset"),
+# convert it into a timestamped run directory: logs/Model_Dataset_YYYY-MM-DD_HH-MM-SS
+if getattr(args, 'output_dir_prefix', ''):
+    prefix = args.output_dir_prefix.rstrip('/\\')
+    # detect if prefix already contains a timestamp-like suffix
+    import re, datetime
+    ts_pattern = re.compile(r'.*\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$')
+    if ts_pattern.match(prefix):
+        chosen = prefix
+    else:
+        chosen = prefix + '_' + datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    # ensure directory exists and is writable; prefer this explicit path
+    try:
+        os.makedirs(chosen, exist_ok=True)
+        if os.access(chosen, os.W_OK):
+            args.model_dir = chosen
+            args.output_dir = chosen
+    except Exception:
+        # fall back to previously resolved model_dir
+        pass
 
 
 def apply_train_args(train_args: SimpleNamespace) -> SimpleNamespace:

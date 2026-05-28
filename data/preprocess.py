@@ -324,7 +324,8 @@ def _has_entries(path: str) -> bool:
 
     if not os.path.isdir(path):
         return False
-    return any(os.scandir(path))
+    with os.scandir(path) as entries:
+        return any(True for _ in entries)
 
 
 def preprocess_dataset(args) -> None:

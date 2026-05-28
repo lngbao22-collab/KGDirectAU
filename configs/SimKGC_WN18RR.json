@@ -13,7 +13,7 @@
   "test_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
 
   "eval_model_path": "",
-  "output_dir": "logs/SimKGC_WN18RR",
+  "output_dir_prefix": "logs/SimKGC_WN18RR",
 
   "additive_margin": 0.02,
   "batch_size": 512,

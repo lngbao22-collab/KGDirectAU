@@ -1,0 +1,24 @@
+{
+  "model": "ComplEx",
+  "model_def": "",
+  "dataset": "WN18RR",
+  "task": "both",
+
+  "train_path": "data/WN18RR/preprocessed/train.txt.json",
+  "valid_path": "data/WN18RR/preprocessed/valid.txt.json",
+  "test_path": "data/WN18RR/preprocessed/test.txt.json",
+  "valid_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
+  "test_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
+
+  "dim": 25,
+  "weight_decay": 0.1,
+  "pre_batch": 20,
+  "eval_every_n_step": 50,
+  "epochs": 1000,
+  "batch_size": 100,
+  "epoch_per_test": 50,
+
+  "output_dir_prefix": "logs/ComplEx_WN18RR",
+  "sample_freq": 1,
+  "n_sample": 20
+}
