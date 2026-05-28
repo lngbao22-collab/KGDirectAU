@@ -25,8 +25,7 @@ def _resolve_test_lp_path(current_args):
 
     if current_args.valid_label_path:
         label_dir = os.path.dirname(current_args.valid_label_path)
-        label_name = os.path.basename(current_args.valid_label_path)
-        candidates.append(os.path.join(label_dir, label_name.replace('valid_w_label.txt', 'test.txt')))
+        candidates.append(os.path.join(label_dir, 'test.txt.json'))
         candidates.append(os.path.join(label_dir, 'test.txt'))
 
     for candidate in candidates:

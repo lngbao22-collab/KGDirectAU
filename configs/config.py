@@ -42,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help='path to labeled validation data for triple classification')
     parser.add_argument('--test-label-path', default='', type=str,
                         help='path to labeled test data for triple classification')
-    # in default, paths for .txt.json (preprocess) or .txt (unprocessed) are taken by dataset in 'data/<dataset>' folder e.g. data/WN18RR/train.txt.json, data/WN18RR/valid.txt.json, data/WN18RR/test.txt.json, data/WN18RR/valid_label.txt.json, data/WN18RR/test_label.txt.json
+    # in default, paths for .txt.json (preprocess) or .txt (unprocessed) are taken by dataset in 'data/<dataset>/preprocessed' folder e.g. data/WN18RR/preprocessed/train.txt.json, data/WN18RR/preprocessed/valid.txt.json, data/WN18RR/preprocessed/test.txt.json, data/WN18RR/preprocessed/valid_w_label.txt.json, data/WN18RR/preprocessed/test_w_label.txt.json
 
     parser.add_argument('--eval-model-path', default='', type=str,
                         help='path to model to evaluate')

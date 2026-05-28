@@ -6,11 +6,11 @@
   "task": "both",
   "bert_encoder": "distilbert-base-uncased",
 
-  "train_path": "data/WN18RR/train.txt.json",
-  "valid_path": "data/WN18RR/valid.txt.json",
-  "test_path": "data/WN18RR/test.txt.json",
-  "valid_label_path": "data/WN18RR/valid_label.txt.json",
-  "test_label_path": "data/WN18RR/test_label.txt.json",
+  "train_path": "data/WN18RR/preprocessed/train.txt.json",
+  "valid_path": "data/WN18RR/preprocessed/valid.txt.json",
+  "test_path": "data/WN18RR/preprocessed/test.txt.json",
+  "valid_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
+  "test_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
 
   "eval_model_path": "",
   "output_dir": "logs/SimKGC_WN18RR",

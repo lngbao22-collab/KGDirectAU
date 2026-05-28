@@ -68,13 +68,13 @@ pip install -r requirements.txt
 
 ```bash
 # For WN18RR
-python data/preprocess.py --dataset wn18rr --data-dir data/WN18RR --output-dir data/WN18RR
+python data/preprocess.py --dataset wn18rr
 
 # For FB15k-237
-python data/preprocess.py --dataset fb15k237 --data-dir data/FB15k237 --output-dir data/FB15k237
+python data/preprocess.py --dataset fb15k237
 ```
 
-This generates `train.txt.json`, `valid.txt.json`, `test.txt.json`, and optionally `valid_w_label.txt.json` / `test_w_label.txt.json` for triple classification tasks.
+By default, the script reads from `data/<dataset>/` and writes the processed files into `data/<dataset>/preprocessed/`. It generates `train.txt.json`, `valid.txt.json`, `test.txt.json`, and optionally `valid_w_label.txt.json` / `test_w_label.txt.json` for triple classification tasks.
 
 3) Train and evaluate with a configuration.
 

@@ -311,7 +311,21 @@ class Evaluator:
         test_label_path = ''
         valid_label_path = getattr(args, 'valid_label_path', '')
         if valid_label_path:
-            test_label_path = valid_label_path.replace('valid_w_label.txt', 'test_w_label.txt')
+            valid_dir = os.path.dirname(valid_label_path)
+            valid_name = os.path.basename(valid_label_path)
+            candidate_names = [
+                valid_name.replace('valid_w_label.txt', 'test_w_label.txt'),
+                valid_name.replace('valid_label.txt', 'test_label.txt'),
+                'test_w_label.txt.json',
+                'test_label.txt.json',
+                'test_w_label.txt',
+                'test_label.txt',
+            ]
+            for candidate_name in candidate_names:
+                candidate_path = os.path.join(valid_dir, candidate_name)
+                if os.path.exists(candidate_path):
+                    test_label_path = candidate_path
+                    break
         if not test_label_path:
             candidate_dirs = []
             for source_path in [getattr(args, 'test_path', ''), getattr(args, 'valid_path', ''), getattr(args, 'train_path', '')]:
@@ -319,7 +333,7 @@ class Evaluator:
                     candidate_dirs.append(os.path.dirname(source_path))
             candidate_dirs.append(os.path.join('data', getattr(args, 'dataset', '')))
             for candidate_dir in candidate_dirs:
-                for candidate_name in ['test_w_label.txt', 'test_label.txt']:
+                for candidate_name in ['test_w_label.txt.json', 'test_label.txt.json', 'test_w_label.txt', 'test_label.txt']:
                     candidate_path = os.path.join(candidate_dir, candidate_name)
                     if os.path.exists(candidate_path):
                         test_label_path = candidate_path

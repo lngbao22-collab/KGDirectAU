@@ -293,22 +293,50 @@ def check_missing_entity_ids(def_path: str, split_paths: Sequence[str]) -> Dict[
 
 
 def _resolve_output_dir(args) -> str:
-    """Resolve the output directory for processed files based on the provided arguments. Prefers --output-dir, then the directory of --train-path, and defaults to the current working directory if neither is provided."""
+    """Resolve the output directory for processed files based on the provided arguments."""
 
     if args.output_dir:
         return args.output_dir
-    if args.train_path:
-        return os.path.dirname(os.path.abspath(args.train_path))
-    return os.getcwd()
+
+    data_dir = _resolve_data_dir(args)
+    return os.path.join(data_dir, "preprocessed")
+
+
+def _resolve_data_dir(args) -> str:
+    """Resolve the dataset directory, preferring an explicit --data-dir and otherwise falling back to the dataset preset."""
+
+    if args.data_dir:
+        return args.data_dir
+
+    dataset = (args.dataset or "generic").strip().lower()
+    preset_dirs = {
+        "wn18rr": "WN18RR",
+        "fb15k237": "FB15k237",
+        "wiki5m_trans": "wiki5m_trans",
+        "wiki5m_ind": "wiki5m_ind",
+    }
+    dataset_dir = preset_dirs.get(dataset, args.dataset or "generic")
+    return os.path.join("data", dataset_dir)
+
+
+def _has_entries(path: str) -> bool:
+    """Return True when a directory exists and contains at least one entry."""
+
+    if not os.path.isdir(path):
+        return False
+    return any(os.scandir(path))
 
 
 def preprocess_dataset(args) -> None:
     """Preprocess the dataset according to the specified arguments, including loading metadata, mapping examples, and saving processed files."""
 
     dataset = (args.dataset or "generic").lower()
-    data_dir = args.data_dir or (
-        os.path.dirname(os.path.abspath(args.train_path)) if args.train_path else os.getcwd()
-    )
+    data_dir = _resolve_data_dir(args)
+    output_dir = _resolve_output_dir(args)
+
+    if _has_entries(output_dir):
+        print(f"Dataset has been preprocessed and saved in {output_dir}")
+        return
 
     def _auto_path(path: str, fallback_names: Sequence[str]) -> str:
         """Resolve an explicit path first, then fall back to common filenames in data_dir."""
@@ -377,7 +405,6 @@ def preprocess_dataset(args) -> None:
     entity2id = _build_id_map([head_id for head_id, _, _ in all_triples] + [tail_id for _, _, tail_id in all_triples])
     relation2id = _build_id_map([relation_id for _, relation_id, _ in all_triples])
 
-    output_dir = _resolve_output_dir(args)
     os.makedirs(output_dir, exist_ok=True)
 
     metadata_entities, metadata_relations = _collect_metadata([ex for _, _, examples in split_examples for ex in examples])
@@ -401,9 +428,7 @@ def check_missing_entities_from_args(args) -> Dict[str, List[str]]:
 
     def_path = args.definitions_path
     if not def_path and (args.dataset or '').lower() == 'wn18rr':
-        base_dir = args.data_dir or (
-            os.path.dirname(os.path.abspath(args.train_path)) if args.train_path else os.getcwd()
-        )
+        base_dir = _resolve_data_dir(args)
         def_path = os.path.join(base_dir, 'wordnet-mlj12-definitions.txt')
 
     split_paths = list(args.missing_entity_paths or [])
@@ -430,13 +455,23 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         help="dataset preset: generic, wn18rr, fb15k237, wiki5m_trans, wiki5m_ind",
     )
-    parser.add_argument("--data-dir", default="", type=str, help="directory containing dataset metadata files")
+    parser.add_argument(
+        "--data-dir",
+        default="",
+        type=str,
+        help="directory containing dataset metadata files; defaults to data/<dataset>/ when omitted",
+    )
     parser.add_argument("--train-path", default="", type=str, help="path to training triples")
     parser.add_argument("--valid-path", default="", type=str, help="path to validation triples")
     parser.add_argument("--test-path", default="", type=str, help="path to test triples")
     parser.add_argument("--valid-label-path", default="", type=str, help="path to labeled validation triples")
     parser.add_argument("--test-label-path", default="", type=str, help="path to labeled test triples")
-    parser.add_argument("--output-dir", default="", type=str, help="directory where processed files will be written")
+    parser.add_argument(
+        "--output-dir",
+        default="",
+        type=str,
+        help="directory where processed files will be written; defaults to data/<dataset>/preprocessed/ when omitted",
+    )
     parser.add_argument("--workers", default=1, type=int, help="number of threads for example mapping")
     parser.add_argument("--entity-text-path", default="", type=str, help="optional entity text file for generic mode")
     parser.add_argument("--entity-desc-path", default="", type=str, help="optional entity description file for generic mode")
