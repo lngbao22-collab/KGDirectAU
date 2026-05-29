@@ -367,7 +367,12 @@ def preprocess_dataset(args) -> None:
         entity_text, relation_text, entity_desc = _load_generic_metadata(args)
         relation_transform = None
 
-    split_paths = [("train", args.train_path), ("valid", args.valid_path), ("test", args.test_path)]
+    split_paths = [
+        ("train", _auto_path(args.train_path, ["train.txt"])),
+        ("valid", _auto_path(args.valid_path, ["valid.txt"])),
+        ("test", _auto_path(args.test_path, ["test.txt"])),
+    ]
+
     label_fallbacks = {
         "valid_label": ["valid_w_label.txt", "valid_label.txt"],
         "test_label": ["test_w_label.txt", "test_label.txt"],

@@ -1,0 +1,413 @@
+[2026-05-29 22:32:23,662 INFO] kg: Use 1 gpus for this run
+[2026-05-29 22:32:23,662 INFO] kg: Args={
+    "config_path": "configs/SimKGC_WN18RR.json",
+    "model": "SimKGC",
+    "model_def": "",
+    "model_encoder_path": "models/encoders/bert_encoder.py",
+    "model_loss_path": "models/losses/infonce_loss.py",
+    "model_sampler_path": "models/samplers/masking_sampler.py",
+    "model_strategy_path": "models/strategies/simkgc_strategy.py",
+    "task": "both",
+    "bert_encoder": "distilbert-base-uncased",
+    "dataset": "WN18RR",
+    "train_path": "data/WN18RR/preprocessed/train.txt.json",
+    "valid_path": "data/WN18RR/preprocessed/valid.txt.json",
+    "test_path": "data/WN18RR/preprocessed/test.txt.json",
+    "valid_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
+    "test_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
+    "eval_model_path": "",
+    "output_dir_prefix": "logs/SimKGC_WN18RR",
+    "additive_margin": 0.02,
+    "batch_size": 512,
+    "dim": 768,
+    "dropout": 0.1,
+    "epochs": 50,
+    "eval_every_n_step": 10000,
+    "finetune_t": true,
+    "grad_clip": 10.0,
+    "is_test": false,
+    "lr": 5e-05,
+    "lr_scheduler": "linear",
+    "max_num_tokens": 50,
+    "max_to_keep": 3,
+    "neighbor_weight": 0.0,
+    "pooling": "mean",
+    "pre_batch": 0,
+    "pre_batch_weight": 0.5,
+    "print_freq": 1,
+    "rerank_n_hop": 2,
+    "seed": null,
+    "t": 0.05,
+    "use_amp": false,
+    "use_link_graph": true,
+    "use_self_negative": false,
+    "weight_decay": 0.0001,
+    "workers": 2,
+    "warmup": 400,
+    "unparsed_args": [],
+    "model_type": "SimKGC",
+    "encoder": "distilbert-base-uncased",
+    "pretrained_model": "distilbert-base-uncased",
+    "model_dir": "logs/SimKGC_WN18RR_2026-05-29_22-32-22",
+    "output_dir": "logs/SimKGC_WN18RR_2026-05-29_22-32-22"
+}
+[2026-05-29 22:32:28,497 INFO] kg: Build tokenizer from distilbert-base-uncased
+[2026-05-29 22:32:28,498 INFO] kg: => creating model
+[2026-05-29 22:32:34,260 INFO] kg: CustomBertModel(
+  (hr_bert): DistilBertModel(
+    (embeddings): Embeddings(
+      (word_embeddings): Embedding(30522, 768, padding_idx=0)
+      (position_embeddings): Embedding(512, 768)
+      (LayerNorm): LayerNorm((768,), eps=1e-12, elementwise_affine=True, bias=True)
+      (dropout): Dropout(p=0.1, inplace=False)
+    )
+    (transformer): Transformer(
+      (layer): ModuleList(
+        (0-5): 6 x TransformerBlock(
+          (attention): DistilBertSelfAttention(
+            (q_lin): Linear(in_features=768, out_features=768, bias=True)
+            (k_lin): Linear(in_features=768, out_features=768, bias=True)
+            (v_lin): Linear(in_features=768, out_features=768, bias=True)
+            (out_lin): Linear(in_features=768, out_features=768, bias=True)
+            (dropout): Dropout(p=0.1, inplace=False)
+          )
+          (sa_layer_norm): LayerNorm((768,), eps=1e-12, elementwise_affine=True, bias=True)
+          (ffn): FFN(
+            (dropout): Dropout(p=0.1, inplace=False)
+            (lin1): Linear(in_features=768, out_features=3072, bias=True)
+            (lin2): Linear(in_features=3072, out_features=768, bias=True)
+            (activation): GELUActivation()
+          )
+          (output_layer_norm): LayerNorm((768,), eps=1e-12, elementwise_affine=True, bias=True)
+        )
+      )
+    )
+  )
+  (tail_bert): DistilBertModel(
+    (embeddings): Embeddings(
+      (word_embeddings): Embedding(30522, 768, padding_idx=0)
+      (position_embeddings): Embedding(512, 768)
+      (LayerNorm): LayerNorm((768,), eps=1e-12, elementwise_affine=True, bias=True)
+      (dropout): Dropout(p=0.1, inplace=False)
+    )
+    (transformer): Transformer(
+      (layer): ModuleList(
+        (0-5): 6 x TransformerBlock(
+          (attention): DistilBertSelfAttention(
+            (q_lin): Linear(in_features=768, out_features=768, bias=True)
+            (k_lin): Linear(in_features=768, out_features=768, bias=True)
+            (v_lin): Linear(in_features=768, out_features=768, bias=True)
+            (out_lin): Linear(in_features=768, out_features=768, bias=True)
+            (dropout): Dropout(p=0.1, inplace=False)
+          )
+          (sa_layer_norm): LayerNorm((768,), eps=1e-12, elementwise_affine=True, bias=True)
+          (ffn): FFN(
+            (dropout): Dropout(p=0.1, inplace=False)
+            (lin1): Linear(in_features=768, out_features=3072, bias=True)
+            (lin2): Linear(in_features=3072, out_features=768, bias=True)
+            (activation): GELUActivation()
+          )
+          (output_layer_norm): LayerNorm((768,), eps=1e-12, elementwise_affine=True, bias=True)
+        )
+      )
+    )
+  )
+)
+[2026-05-29 22:32:34,261 INFO] kg: No gpu will be used
+[2026-05-29 22:32:34,261 INFO] kg: log_inv_t: 1
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.embeddings.word_embeddings.weight: 23440896
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.embeddings.position_embeddings.weight: 393216
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.embeddings.LayerNorm.weight: 768
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.embeddings.LayerNorm.bias: 768
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.0.attention.q_lin.weight: 589824
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.0.attention.q_lin.bias: 768
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.0.attention.k_lin.weight: 589824
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.0.attention.k_lin.bias: 768
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.0.attention.v_lin.weight: 589824
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.0.attention.v_lin.bias: 768
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.0.attention.out_lin.weight: 589824
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.0.attention.out_lin.bias: 768
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.0.sa_layer_norm.weight: 768
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.0.sa_layer_norm.bias: 768
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.0.ffn.lin1.weight: 2359296
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.0.ffn.lin1.bias: 3072
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.0.ffn.lin2.weight: 2359296
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.0.ffn.lin2.bias: 768
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.0.output_layer_norm.weight: 768
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.0.output_layer_norm.bias: 768
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.1.attention.q_lin.weight: 589824
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.1.attention.q_lin.bias: 768
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.1.attention.k_lin.weight: 589824
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.1.attention.k_lin.bias: 768
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.1.attention.v_lin.weight: 589824
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.1.attention.v_lin.bias: 768
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.1.attention.out_lin.weight: 589824
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.1.attention.out_lin.bias: 768
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.1.sa_layer_norm.weight: 768
+[2026-05-29 22:32:34,261 INFO] kg: hr_bert.transformer.layer.1.sa_layer_norm.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.1.ffn.lin1.weight: 2359296
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.1.ffn.lin1.bias: 3072
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.1.ffn.lin2.weight: 2359296
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.1.ffn.lin2.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.1.output_layer_norm.weight: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.1.output_layer_norm.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.2.attention.q_lin.weight: 589824
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.2.attention.q_lin.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.2.attention.k_lin.weight: 589824
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.2.attention.k_lin.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.2.attention.v_lin.weight: 589824
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.2.attention.v_lin.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.2.attention.out_lin.weight: 589824
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.2.attention.out_lin.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.2.sa_layer_norm.weight: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.2.sa_layer_norm.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.2.ffn.lin1.weight: 2359296
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.2.ffn.lin1.bias: 3072
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.2.ffn.lin2.weight: 2359296
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.2.ffn.lin2.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.2.output_layer_norm.weight: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.2.output_layer_norm.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.3.attention.q_lin.weight: 589824
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.3.attention.q_lin.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.3.attention.k_lin.weight: 589824
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.3.attention.k_lin.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.3.attention.v_lin.weight: 589824
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.3.attention.v_lin.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.3.attention.out_lin.weight: 589824
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.3.attention.out_lin.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.3.sa_layer_norm.weight: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.3.sa_layer_norm.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.3.ffn.lin1.weight: 2359296
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.3.ffn.lin1.bias: 3072
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.3.ffn.lin2.weight: 2359296
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.3.ffn.lin2.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.3.output_layer_norm.weight: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.3.output_layer_norm.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.4.attention.q_lin.weight: 589824
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.4.attention.q_lin.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.4.attention.k_lin.weight: 589824
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.4.attention.k_lin.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.4.attention.v_lin.weight: 589824
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.4.attention.v_lin.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.4.attention.out_lin.weight: 589824
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.4.attention.out_lin.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.4.sa_layer_norm.weight: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.4.sa_layer_norm.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.4.ffn.lin1.weight: 2359296
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.4.ffn.lin1.bias: 3072
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.4.ffn.lin2.weight: 2359296
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.4.ffn.lin2.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.4.output_layer_norm.weight: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.4.output_layer_norm.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.5.attention.q_lin.weight: 589824
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.5.attention.q_lin.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.5.attention.k_lin.weight: 589824
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.5.attention.k_lin.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.5.attention.v_lin.weight: 589824
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.5.attention.v_lin.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.5.attention.out_lin.weight: 589824
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.5.attention.out_lin.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.5.sa_layer_norm.weight: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.5.sa_layer_norm.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.5.ffn.lin1.weight: 2359296
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.5.ffn.lin1.bias: 3072
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.5.ffn.lin2.weight: 2359296
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.5.ffn.lin2.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.5.output_layer_norm.weight: 768
+[2026-05-29 22:32:34,262 INFO] kg: hr_bert.transformer.layer.5.output_layer_norm.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: tail_bert.embeddings.word_embeddings.weight: 23440896
+[2026-05-29 22:32:34,262 INFO] kg: tail_bert.embeddings.position_embeddings.weight: 393216
+[2026-05-29 22:32:34,262 INFO] kg: tail_bert.embeddings.LayerNorm.weight: 768
+[2026-05-29 22:32:34,262 INFO] kg: tail_bert.embeddings.LayerNorm.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: tail_bert.transformer.layer.0.attention.q_lin.weight: 589824
+[2026-05-29 22:32:34,262 INFO] kg: tail_bert.transformer.layer.0.attention.q_lin.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: tail_bert.transformer.layer.0.attention.k_lin.weight: 589824
+[2026-05-29 22:32:34,262 INFO] kg: tail_bert.transformer.layer.0.attention.k_lin.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: tail_bert.transformer.layer.0.attention.v_lin.weight: 589824
+[2026-05-29 22:32:34,262 INFO] kg: tail_bert.transformer.layer.0.attention.v_lin.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: tail_bert.transformer.layer.0.attention.out_lin.weight: 589824
+[2026-05-29 22:32:34,262 INFO] kg: tail_bert.transformer.layer.0.attention.out_lin.bias: 768
+[2026-05-29 22:32:34,262 INFO] kg: tail_bert.transformer.layer.0.sa_layer_norm.weight: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.0.sa_layer_norm.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.0.ffn.lin1.weight: 2359296
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.0.ffn.lin1.bias: 3072
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.0.ffn.lin2.weight: 2359296
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.0.ffn.lin2.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.0.output_layer_norm.weight: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.0.output_layer_norm.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.1.attention.q_lin.weight: 589824
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.1.attention.q_lin.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.1.attention.k_lin.weight: 589824
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.1.attention.k_lin.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.1.attention.v_lin.weight: 589824
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.1.attention.v_lin.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.1.attention.out_lin.weight: 589824
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.1.attention.out_lin.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.1.sa_layer_norm.weight: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.1.sa_layer_norm.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.1.ffn.lin1.weight: 2359296
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.1.ffn.lin1.bias: 3072
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.1.ffn.lin2.weight: 2359296
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.1.ffn.lin2.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.1.output_layer_norm.weight: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.1.output_layer_norm.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.2.attention.q_lin.weight: 589824
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.2.attention.q_lin.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.2.attention.k_lin.weight: 589824
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.2.attention.k_lin.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.2.attention.v_lin.weight: 589824
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.2.attention.v_lin.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.2.attention.out_lin.weight: 589824
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.2.attention.out_lin.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.2.sa_layer_norm.weight: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.2.sa_layer_norm.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.2.ffn.lin1.weight: 2359296
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.2.ffn.lin1.bias: 3072
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.2.ffn.lin2.weight: 2359296
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.2.ffn.lin2.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.2.output_layer_norm.weight: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.2.output_layer_norm.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.3.attention.q_lin.weight: 589824
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.3.attention.q_lin.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.3.attention.k_lin.weight: 589824
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.3.attention.k_lin.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.3.attention.v_lin.weight: 589824
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.3.attention.v_lin.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.3.attention.out_lin.weight: 589824
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.3.attention.out_lin.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.3.sa_layer_norm.weight: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.3.sa_layer_norm.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.3.ffn.lin1.weight: 2359296
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.3.ffn.lin1.bias: 3072
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.3.ffn.lin2.weight: 2359296
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.3.ffn.lin2.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.3.output_layer_norm.weight: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.3.output_layer_norm.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.4.attention.q_lin.weight: 589824
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.4.attention.q_lin.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.4.attention.k_lin.weight: 589824
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.4.attention.k_lin.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.4.attention.v_lin.weight: 589824
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.4.attention.v_lin.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.4.attention.out_lin.weight: 589824
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.4.attention.out_lin.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.4.sa_layer_norm.weight: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.4.sa_layer_norm.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.4.ffn.lin1.weight: 2359296
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.4.ffn.lin1.bias: 3072
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.4.ffn.lin2.weight: 2359296
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.4.ffn.lin2.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.4.output_layer_norm.weight: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.4.output_layer_norm.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.5.attention.q_lin.weight: 589824
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.5.attention.q_lin.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.5.attention.k_lin.weight: 589824
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.5.attention.k_lin.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.5.attention.v_lin.weight: 589824
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.5.attention.v_lin.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.5.attention.out_lin.weight: 589824
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.5.attention.out_lin.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.5.sa_layer_norm.weight: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.5.sa_layer_norm.bias: 768
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.5.ffn.lin1.weight: 2359296
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.5.ffn.lin1.bias: 3072
+[2026-05-29 22:32:34,263 INFO] kg: tail_bert.transformer.layer.5.ffn.lin2.weight: 2359296
+[2026-05-29 22:32:34,264 INFO] kg: tail_bert.transformer.layer.5.ffn.lin2.bias: 768
+[2026-05-29 22:32:34,264 INFO] kg: tail_bert.transformer.layer.5.output_layer_norm.weight: 768
+[2026-05-29 22:32:34,264 INFO] kg: tail_bert.transformer.layer.5.output_layer_norm.bias: 768
+[2026-05-29 22:32:34,264 INFO] kg: Number of parameters: 132M
+[2026-05-29 22:32:34,264 INFO] kg: In test mode: False
+[2026-05-29 22:32:34,335 INFO] kg: Load 86835 examples from data/WN18RR/preprocessed/train.txt.json
+[2026-05-29 22:32:34,528 INFO] kg: In test mode: False
+[2026-05-29 22:32:34,531 INFO] kg: Load 3034 examples from data/WN18RR/preprocessed/valid.txt.json
+[2026-05-29 22:32:34,533 INFO] kg: Total training steps: 16959, warmup steps: 400
+[2026-05-29 22:32:34,554 INFO] kg: Start to build link graph from data/WN18RR/preprocessed/train.txt.json
+[2026-05-29 22:32:34,556 INFO] kg: Start to build link graph from data/WN18RR/preprocessed/train.txt.json
+[2026-05-29 22:32:34,702 INFO] kg: Done build link graph with 40559 nodes
+[2026-05-29 22:32:34,706 INFO] kg: Done build link graph with 40559 nodes
+[2026-05-29 22:33:05,035 INFO] kg: Epoch: [0][  0/339]	Loss 9.383 (9.383)	InvT  20.00 ( 20.00)	Acc@1  13.48 ( 13.48)	Acc@3  27.15 ( 27.15)
+[2026-05-29 22:33:34,994 INFO] kg: Epoch: [0][  1/339]	Loss 9.227 (9.305)	InvT  20.00 ( 20.00)	Acc@1  13.28 ( 13.38)	Acc@3  29.30 ( 28.22)
+[2026-05-29 22:34:04,730 INFO] kg: Epoch: [0][  2/339]	Loss 9.338 (9.316)	InvT  20.00 ( 20.00)	Acc@1  15.23 ( 14.00)	Acc@3  28.91 ( 28.45)
+[2026-05-29 22:34:34,131 INFO] kg: Epoch: [0][  3/339]	Loss 9.449 (9.349)	InvT  20.00 ( 20.00)	Acc@1  15.04 ( 14.26)	Acc@3  28.32 ( 28.42)
+[2026-05-29 22:35:03,425 INFO] kg: Epoch: [0][  4/339]	Loss 9.258 (9.331)	InvT  20.00 ( 20.00)	Acc@1  14.65 ( 14.34)	Acc@3  29.49 ( 28.63)
+[2026-05-29 22:35:32,801 INFO] kg: Epoch: [0][  5/339]	Loss 9.137 (9.299)	InvT  20.00 ( 20.00)	Acc@1  16.21 ( 14.65)	Acc@3  30.08 ( 28.87)
+[2026-05-29 22:36:02,034 INFO] kg: Epoch: [0][  6/339]	Loss 9.258 (9.293)	InvT  20.00 ( 20.00)	Acc@1  15.23 ( 14.73)	Acc@3  29.10 ( 28.91)
+[2026-05-29 22:36:31,299 INFO] kg: Epoch: [0][  7/339]	Loss 9.077 (9.266)	InvT  20.00 ( 20.00)	Acc@1  16.60 ( 14.97)	Acc@3  32.81 ( 29.39)
+[2026-05-29 22:37:00,543 INFO] kg: Epoch: [0][  8/339]	Loss 9.133 (9.251)	InvT  20.00 ( 20.00)	Acc@1  17.19 ( 15.21)	Acc@3  28.52 ( 29.30)
+[2026-05-29 22:37:29,765 INFO] kg: Epoch: [0][  9/339]	Loss 9.245 (9.25)	InvT  20.00 ( 20.00)	Acc@1  13.09 ( 15.00)	Acc@3  27.93 ( 29.16)
+[2026-05-29 22:37:59,051 INFO] kg: Epoch: [0][ 10/339]	Loss 9.241 (9.25)	InvT  20.00 ( 20.00)	Acc@1  16.80 ( 15.16)	Acc@3  29.49 ( 29.19)
+[2026-05-29 22:38:28,206 INFO] kg: Epoch: [0][ 11/339]	Loss 8.939 (9.224)	InvT  20.00 ( 20.00)	Acc@1  16.02 ( 15.23)	Acc@3  30.86 ( 29.33)
+[2026-05-29 22:38:57,481 INFO] kg: Epoch: [0][ 12/339]	Loss 9.057 (9.211)	InvT  20.00 ( 20.00)	Acc@1  15.04 ( 15.22)	Acc@3  29.10 ( 29.31)
+[2026-05-29 22:39:26,744 INFO] kg: Epoch: [0][ 13/339]	Loss 8.953 (9.192)	InvT  20.00 ( 20.00)	Acc@1  17.19 ( 15.36)	Acc@3  32.81 ( 29.56)
+[2026-05-29 22:39:55,969 INFO] kg: Epoch: [0][ 14/339]	Loss 8.772 (9.164)	InvT  20.00 ( 20.00)	Acc@1  16.41 ( 15.43)	Acc@3  32.62 ( 29.77)
+[2026-05-29 22:40:25,095 INFO] kg: Epoch: [0][ 15/339]	Loss 8.896 (9.148)	InvT  20.00 ( 20.00)	Acc@1  17.19 ( 15.54)	Acc@3  32.23 ( 29.92)
+[2026-05-29 22:40:54,257 INFO] kg: Epoch: [0][ 16/339]	Loss 8.776 (9.126)	InvT  20.00 ( 20.00)	Acc@1  18.36 ( 15.71)	Acc@3  34.96 ( 30.22)
+[2026-05-29 22:41:23,532 INFO] kg: Epoch: [0][ 17/339]	Loss 8.536 (9.093)	InvT  20.00 ( 20.00)	Acc@1  18.75 ( 15.87)	Acc@3  36.33 ( 30.56)
+[2026-05-29 22:41:52,943 INFO] kg: Epoch: [0][ 18/339]	Loss 8.925 (9.084)	InvT  20.00 ( 20.00)	Acc@1  14.26 ( 15.79)	Acc@3  29.10 ( 30.48)
+[2026-05-29 22:42:22,192 INFO] kg: Epoch: [0][ 19/339]	Loss 8.538 (9.057)	InvT  20.00 ( 20.00)	Acc@1  16.21 ( 15.81)	Acc@3  34.18 ( 30.66)
+[2026-05-29 22:42:51,320 INFO] kg: Epoch: [0][ 20/339]	Loss 8.125 (9.012)	InvT  20.00 ( 20.00)	Acc@1  24.61 ( 16.23)	Acc@3  40.23 ( 31.12)
+[2026-05-29 22:43:20,519 INFO] kg: Epoch: [0][ 21/339]	Loss 8.241 (8.977)	InvT  20.00 ( 20.00)	Acc@1  23.44 ( 16.56)	Acc@3  36.52 ( 31.37)
+[2026-05-29 22:43:49,644 INFO] kg: Epoch: [0][ 22/339]	Loss 8.272 (8.947)	InvT  20.00 ( 20.00)	Acc@1  20.12 ( 16.71)	Acc@3  38.28 ( 31.67)
+[2026-05-29 22:44:18,725 INFO] kg: Epoch: [0][ 23/339]	Loss 8.08 (8.911)	InvT  20.00 ( 20.00)	Acc@1  23.83 ( 17.01)	Acc@3  39.84 ( 32.01)
+[2026-05-29 22:44:47,825 INFO] kg: Epoch: [0][ 24/339]	Loss 8.148 (8.88)	InvT  20.00 ( 20.00)	Acc@1  20.70 ( 17.16)	Acc@3  36.72 ( 32.20)
+[2026-05-29 22:45:16,869 INFO] kg: Epoch: [0][ 25/339]	Loss 7.769 (8.837)	InvT  20.00 ( 20.00)	Acc@1  21.48 ( 17.32)	Acc@3  40.43 ( 32.51)
+[2026-05-29 22:45:45,959 INFO] kg: Epoch: [0][ 26/339]	Loss 7.801 (8.799)	InvT  20.00 ( 20.00)	Acc@1  24.22 ( 17.58)	Acc@3  42.19 ( 32.87)
+[2026-05-29 22:46:15,066 INFO] kg: Epoch: [0][ 27/339]	Loss 7.534 (8.754)	InvT  20.00 ( 20.00)	Acc@1  27.54 ( 17.93)	Acc@3  44.14 ( 33.27)
+[2026-05-29 22:46:44,141 INFO] kg: Epoch: [0][ 28/339]	Loss 7.702 (8.717)	InvT  20.00 ( 20.00)	Acc@1  24.02 ( 18.14)	Acc@3  39.84 ( 33.50)
+[2026-05-29 22:47:13,276 INFO] kg: Epoch: [0][ 29/339]	Loss 7.229 (8.668)	InvT  20.00 ( 20.00)	Acc@1  28.52 ( 18.49)	Acc@3  47.66 ( 33.97)
+[2026-05-29 22:47:42,446 INFO] kg: Epoch: [0][ 30/339]	Loss 7.339 (8.625)	InvT  20.00 ( 20.00)	Acc@1  26.76 ( 18.76)	Acc@3  42.19 ( 34.24)
+[2026-05-29 22:48:11,613 INFO] kg: Epoch: [0][ 31/339]	Loss 7.261 (8.582)	InvT  20.00 ( 20.00)	Acc@1  27.54 ( 19.03)	Acc@3  47.85 ( 34.66)
+[2026-05-29 22:48:40,703 INFO] kg: Epoch: [0][ 32/339]	Loss 7.331 (8.544)	InvT  20.00 ( 20.00)	Acc@1  25.20 ( 19.22)	Acc@3  42.38 ( 34.90)
+[2026-05-29 22:49:09,873 INFO] kg: Epoch: [0][ 33/339]	Loss 6.865 (8.495)	InvT  20.00 ( 20.00)	Acc@1  31.25 ( 19.57)	Acc@3  52.34 ( 35.41)
+[2026-05-29 22:49:39,028 INFO] kg: Epoch: [0][ 34/339]	Loss 7.102 (8.455)	InvT  20.00 ( 20.00)	Acc@1  25.00 ( 19.73)	Acc@3  45.31 ( 35.69)
+[2026-05-29 22:50:08,132 INFO] kg: Epoch: [0][ 35/339]	Loss 7.023 (8.415)	InvT  20.00 ( 20.00)	Acc@1  27.34 ( 19.94)	Acc@3  44.92 ( 35.95)
+[2026-05-29 22:50:37,248 INFO] kg: Epoch: [0][ 36/339]	Loss 6.774 (8.371)	InvT  20.00 ( 20.00)	Acc@1  27.34 ( 20.14)	Acc@3  47.46 ( 36.26)
+[2026-05-29 22:51:06,419 INFO] kg: Epoch: [0][ 37/339]	Loss 6.709 (8.327)	InvT  20.00 ( 20.00)	Acc@1  29.69 ( 20.39)	Acc@3  49.22 ( 36.60)
+[2026-05-29 22:51:35,570 INFO] kg: Epoch: [0][ 38/339]	Loss 6.734 (8.287)	InvT  20.00 ( 20.00)	Acc@1  30.08 ( 20.64)	Acc@3  47.07 ( 36.87)
+[2026-05-29 22:52:04,850 INFO] kg: Epoch: [0][ 39/339]	Loss 6.398 (8.239)	InvT  20.00 ( 20.00)	Acc@1  33.59 ( 20.96)	Acc@3  53.32 ( 37.28)
+[2026-05-29 22:52:34,071 INFO] kg: Epoch: [0][ 40/339]	Loss 6.155 (8.188)	InvT  20.00 ( 20.00)	Acc@1  34.57 ( 21.29)	Acc@3  54.30 ( 37.70)
+[2026-05-29 22:53:03,279 INFO] kg: Epoch: [0][ 41/339]	Loss 6.379 (8.145)	InvT  20.00 ( 20.00)	Acc@1  33.40 ( 21.58)	Acc@3  49.41 ( 37.97)
+[2026-05-29 22:53:32,475 INFO] kg: Epoch: [0][ 42/339]	Loss 6.421 (8.105)	InvT  20.00 ( 20.00)	Acc@1  30.47 ( 21.79)	Acc@3  51.95 ( 38.30)
+[2026-05-29 22:54:01,575 INFO] kg: Epoch: [0][ 43/339]	Loss 6.309 (8.064)	InvT  20.00 ( 20.00)	Acc@1  31.25 ( 22.00)	Acc@3  53.12 ( 38.64)
+[2026-05-29 22:54:30,771 INFO] kg: Epoch: [0][ 44/339]	Loss 6.231 (8.024)	InvT  20.00 ( 20.00)	Acc@1  32.42 ( 22.24)	Acc@3  52.54 ( 38.95)
+[2026-05-29 22:54:59,878 INFO] kg: Epoch: [0][ 45/339]	Loss 6.157 (7.983)	InvT  20.00 ( 20.00)	Acc@1  33.01 ( 22.47)	Acc@3  51.95 ( 39.23)
+[2026-05-29 22:55:29,012 INFO] kg: Epoch: [0][ 46/339]	Loss 5.927 (7.939)	InvT  20.00 ( 20.00)	Acc@1  35.35 ( 22.74)	Acc@3  53.91 ( 39.54)
+[2026-05-29 22:55:58,165 INFO] kg: Epoch: [0][ 47/339]	Loss 6.04 (7.9)	InvT  20.00 ( 20.00)	Acc@1  33.59 ( 22.97)	Acc@3  54.10 ( 39.84)
+[2026-05-29 22:56:27,272 INFO] kg: Epoch: [0][ 48/339]	Loss 6.031 (7.862)	InvT  20.00 ( 20.00)	Acc@1  37.11 ( 23.26)	Acc@3  55.08 ( 40.15)
+[2026-05-29 22:56:56,433 INFO] kg: Epoch: [0][ 49/339]	Loss 6.168 (7.828)	InvT  20.00 ( 20.00)	Acc@1  33.01 ( 23.45)	Acc@3  51.37 ( 40.38)
+[2026-05-29 22:57:25,560 INFO] kg: Epoch: [0][ 50/339]	Loss 6.042 (7.793)	InvT  20.00 ( 20.00)	Acc@1  32.62 ( 23.63)	Acc@3  52.34 ( 40.61)
+[2026-05-29 22:57:54,739 INFO] kg: Epoch: [0][ 51/339]	Loss 5.795 (7.754)	InvT  20.00 ( 20.00)	Acc@1  36.33 ( 23.88)	Acc@3  56.05 ( 40.91)
+[2026-05-29 22:58:23,873 INFO] kg: Epoch: [0][ 52/339]	Loss 5.505 (7.712)	InvT  20.00 ( 20.00)	Acc@1  36.91 ( 24.12)	Acc@3  57.23 ( 41.22)
+[2026-05-29 22:58:53,042 INFO] kg: Epoch: [0][ 53/339]	Loss 5.658 (7.674)	InvT  20.00 ( 20.00)	Acc@1  38.09 ( 24.38)	Acc@3  59.18 ( 41.55)
+[2026-05-29 22:59:22,175 INFO] kg: Epoch: [0][ 54/339]	Loss 5.505 (7.634)	InvT  20.00 ( 20.00)	Acc@1  39.84 ( 24.66)	Acc@3  58.40 ( 41.86)
+[2026-05-29 22:59:51,341 INFO] kg: Epoch: [0][ 55/339]	Loss 5.761 (7.601)	InvT  20.00 ( 20.00)	Acc@1  38.48 ( 24.91)	Acc@3  60.35 ( 42.19)
+[2026-05-29 23:00:20,471 INFO] kg: Epoch: [0][ 56/339]	Loss 5.336 (7.561)	InvT  20.00 ( 20.00)	Acc@1  38.09 ( 25.14)	Acc@3  57.23 ( 42.45)
+[2026-05-29 23:00:49,577 INFO] kg: Epoch: [0][ 57/339]	Loss 5.345 (7.523)	InvT  20.00 ( 20.00)	Acc@1  36.13 ( 25.33)	Acc@3  58.20 ( 42.72)
+[2026-05-29 23:01:18,787 INFO] kg: Epoch: [0][ 58/339]	Loss 5.344 (7.486)	InvT  20.00 ( 20.00)	Acc@1  40.43 ( 25.59)	Acc@3  61.72 ( 43.04)
+[2026-05-29 23:01:47,912 INFO] kg: Epoch: [0][ 59/339]	Loss 5.191 (7.448)	InvT  20.00 ( 20.00)	Acc@1  39.65 ( 25.82)	Acc@3  62.30 ( 43.37)
+[2026-05-29 23:02:17,114 INFO] kg: Epoch: [0][ 60/339]	Loss 5.86 (7.422)	InvT  20.00 ( 20.00)	Acc@1  35.55 ( 25.98)	Acc@3  56.05 ( 43.57)
+[2026-05-29 23:02:46,323 INFO] kg: Epoch: [0][ 61/339]	Loss 5.094 (7.384)	InvT  20.00 ( 20.00)	Acc@1  41.60 ( 26.23)	Acc@3  63.09 ( 43.89)
+[2026-05-29 23:03:15,503 INFO] kg: Epoch: [0][ 62/339]	Loss 5.259 (7.351)	InvT  20.00 ( 20.00)	Acc@1  39.84 ( 26.45)	Acc@3  59.96 ( 44.14)
+[2026-05-29 23:03:44,655 INFO] kg: Epoch: [0][ 63/339]	Loss 5.546 (7.322)	InvT  20.00 ( 20.00)	Acc@1  41.41 ( 26.68)	Acc@3  60.74 ( 44.40)
+[2026-05-29 23:04:13,748 INFO] kg: Epoch: [0][ 64/339]	Loss 5.24 (7.29)	InvT  20.00 ( 20.00)	Acc@1  41.80 ( 26.91)	Acc@3  62.11 ( 44.68)
+[2026-05-29 23:04:42,878 INFO] kg: Epoch: [0][ 65/339]	Loss 5.314 (7.26)	InvT  20.00 ( 20.00)	Acc@1  40.82 ( 27.12)	Acc@3  60.16 ( 44.91)
+[2026-05-29 23:05:12,043 INFO] kg: Epoch: [0][ 66/339]	Loss 5.262 (7.231)	InvT  20.00 ( 20.00)	Acc@1  43.36 ( 27.37)	Acc@3  63.87 ( 45.19)
+[2026-05-29 23:05:41,177 INFO] kg: Epoch: [0][ 67/339]	Loss 5.086 (7.199)	InvT  20.00 ( 20.00)	Acc@1  40.23 ( 27.56)	Acc@3  60.94 ( 45.42)
+[2026-05-29 23:06:10,299 INFO] kg: Epoch: [0][ 68/339]	Loss 5.082 (7.168)	InvT  20.00 ( 20.00)	Acc@1  43.75 ( 27.79)	Acc@3  62.89 ( 45.68)
+[2026-05-29 23:06:39,546 INFO] kg: Epoch: [0][ 69/339]	Loss 4.824 (7.135)	InvT  20.00 ( 20.00)	Acc@1  42.38 ( 28.00)	Acc@3  65.04 ( 45.95)
+[2026-05-29 23:07:08,711 INFO] kg: Epoch: [0][ 70/339]	Loss 5.24 (7.108)	InvT  20.00 ( 20.00)	Acc@1  41.02 ( 28.18)	Acc@3  61.72 ( 46.18)
+[2026-05-29 23:07:37,921 INFO] kg: Epoch: [0][ 71/339]	Loss 4.894 (7.077)	InvT  20.00 ( 20.00)	Acc@1  44.34 ( 28.41)	Acc@3  66.60 ( 46.46)
+[2026-05-29 23:08:07,178 INFO] kg: Epoch: [0][ 72/339]	Loss 4.808 (7.046)	InvT  20.00 ( 20.00)	Acc@1  44.73 ( 28.63)	Acc@3  65.04 ( 46.71)
+[2026-05-29 23:08:36,317 INFO] kg: Epoch: [0][ 73/339]	Loss 4.984 (7.018)	InvT  20.00 ( 20.00)	Acc@1  45.12 ( 28.85)	Acc@3  66.21 ( 46.98)
+[2026-05-29 23:09:05,462 INFO] kg: Epoch: [0][ 74/339]	Loss 5.027 (6.992)	InvT  20.00 ( 20.00)	Acc@1  45.51 ( 29.08)	Acc@3  63.28 ( 47.20)
+[2026-05-29 23:09:34,573 INFO] kg: Epoch: [0][ 75/339]	Loss 4.845 (6.964)	InvT  20.00 ( 20.00)	Acc@1  45.90 ( 29.30)	Acc@3  65.23 ( 47.43)
+[2026-05-29 23:10:03,716 INFO] kg: Epoch: [0][ 76/339]	Loss 5.064 (6.939)	InvT  20.00 ( 20.00)	Acc@1  45.31 ( 29.50)	Acc@3  63.67 ( 47.64)
+[2026-05-29 23:10:32,884 INFO] kg: Epoch: [0][ 77/339]	Loss 4.978 (6.914)	InvT  20.00 ( 20.00)	Acc@1  42.19 ( 29.67)	Acc@3  63.87 ( 47.85)
+[2026-05-29 23:11:02,017 INFO] kg: Epoch: [0][ 78/339]	Loss 4.575 (6.884)	InvT  20.00 ( 20.00)	Acc@1  46.88 ( 29.89)	Acc@3  67.38 ( 48.10)
+[2026-05-29 23:11:31,176 INFO] kg: Epoch: [0][ 79/339]	Loss 4.664 (6.856)	InvT  20.00 ( 20.00)	Acc@1  45.51 ( 30.08)	Acc@3  65.82 ( 48.32)
+[2026-05-29 23:12:00,388 INFO] kg: Epoch: [0][ 80/339]	Loss 4.706 (6.83)	InvT  20.00 ( 20.00)	Acc@1  46.29 ( 30.28)	Acc@3  67.77 ( 48.56)
+[2026-05-29 23:12:29,566 INFO] kg: Epoch: [0][ 81/339]	Loss 4.402 (6.8)	InvT  20.00 ( 20.00)	Acc@1  46.88 ( 30.48)	Acc@3  69.73 ( 48.82)
+[2026-05-29 23:12:58,679 INFO] kg: Epoch: [0][ 82/339]	Loss 4.338 (6.771)	InvT  20.00 ( 20.00)	Acc@1  46.68 ( 30.68)	Acc@3  69.34 ( 49.07)
+[2026-05-29 23:13:27,813 INFO] kg: Epoch: [0][ 83/339]	Loss 4.805 (6.747)	InvT  20.00 ( 20.00)	Acc@1  46.68 ( 30.87)	Acc@3  66.99 ( 49.28)
+[2026-05-29 23:13:56,907 INFO] kg: Epoch: [0][ 84/339]	Loss 5.238 (6.729)	InvT  20.00 ( 20.00)	Acc@1  41.99 ( 31.00)	Acc@3  63.48 ( 49.45)
+[2026-05-29 23:14:26,514 INFO] kg: Epoch: [0][ 85/339]	Loss 4.776 (6.707)	InvT  20.01 ( 20.00)	Acc@1  43.16 ( 31.14)	Acc@3  66.60 ( 49.65)

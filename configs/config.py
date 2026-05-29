@@ -256,8 +256,7 @@ except Exception:
 
 if not torch.cuda.is_available():
     args.use_amp = False
-    args.print_freq = 1
-    warnings.warn('GPU is not available, set use_amp=False and print_freq=1')
+    warnings.warn('GPU is not available, set use_amp=False')
 
 # Ensure `args` exposes `model_dir` and `output_dir` (parser flags were removed).
 if not hasattr(args, 'model_dir'):
