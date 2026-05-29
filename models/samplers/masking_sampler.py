@@ -5,8 +5,9 @@ import torch
 from typing import List
 
 from configs.config import args
-from data.dict_hub import get_train_triplet_dict, get_entity_dict, EntityDict, TripletDict
-
+# from data.dict_hub import get_train_triplet_dict, get_entity_dict, EntityDict, TripletDict
+from data.dict_hub import get_train_triplet_dict, get_entity_dict
+from data.dataset import EntityDict, TripletDict
 entity_dict: EntityDict = get_entity_dict()
 train_triplet_dict: TripletDict = get_train_triplet_dict() if not args.is_test else None
 

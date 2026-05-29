@@ -7,3 +7,5 @@ entities.json
 .idea/
 checkpoint/
 relations.json
+data/**/preprocessed/
+
