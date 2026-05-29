@@ -10,6 +10,8 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 @dataclass(frozen=True)
 class TripleExample:
+    """Data class representing a single triple example, including IDs, text, and descriptions for the head and tail entities, as well as the relation."""
+
     head_id: str
     relation_id: str
     tail_id: str
@@ -483,7 +485,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
+def main():
     parser = build_parser()
     args = parser.parse_args()
     if args.check_missing_entities:

@@ -1,0 +1,35 @@
+{
+  "model": "DaBR",
+  "model_encoder_path": "models/encoders/dabr_encoder.py",
+  "model_loss_path": "models/losses/softplus_loss.py",
+  "model_sampler_path": "models/samplers/pointwise_sampler.py",
+  "model_strategy_path": "models/strategies/pointwise_strategy.py",
+
+  "dataset": "WN18RR",
+  "train_path": "data/WN18RR/preprocessed/train.txt",
+  "valid_path": "data/WN18RR/preprocessed/valid.txt.json",
+  "test_path": "data/WN18RR/preprocessed/test.txt.json",
+  "valid_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
+  "test_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
+
+  "task": "both",
+  "eval_model_path": "",
+  "output_dir_prefix": "logs/DaBR_WN18RR",
+
+  "dim": 100,
+  "dim": 500,
+  "lr": 0.1,
+  "batch_size": 100,
+  "epochs": 40000,
+  "n_sample": 5,
+  "eval_every_n_step": 400,
+  "epoch_per_test": 400,
+  "lam": 0.5,
+  "lmbda": 0.5,
+  "lmbda_two": 0.01,
+  "optim": "adagrad",
+  "workers": 8,
+  "early_stopping_patience": 10,
+  "test_link": true,
+  "test_triple": false
+}

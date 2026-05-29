@@ -1,9 +1,9 @@
 {
-  "model": "SimKGC",
+  "model": "SimKGC-AU",
   "model_encoder_path": "models/encoders/bert_encoder.py",
-  "model_loss_path": "models/losses/infonce_loss.py",
-  "model_sampler_path": "models/samplers/masking_sampler.py",
-  "model_strategy_path": "models/strategies/simkgc_strategy.py",
+  "model_loss_path": "models/losses/au_loss.py",
+  "model_sampler_path": "",
+  "model_strategy_path": "models/strategies/kgau_strategy.py",
 
   "dataset": "WN18RR",
   "train_path": "data/WN18RR/preprocessed/train.txt",
@@ -14,7 +14,7 @@
 
   "task": "both",
   "eval_model_path": "",
-  "output_dir_prefix": "logs/SimKGC_WN18RR",
+  "output_dir_prefix": "logs/SimKGC-AU_WN18RR",
 
   "additive_margin": 0.02,
   "batch_size": 512,
@@ -24,6 +24,10 @@
   "epochs": 50,
   "eval_every_n_step": 10000,
   "finetune_t": true,
+  "gamma_q": 1.0,
+  "gamma_t": 1.0,
+  "gamma_h": 0.5,
+  "gamma_ent": 0.0,
   "grad_clip": 10.0,
   "is_test": false,
   "lr": 5e-05,
@@ -37,7 +41,7 @@
   "print_freq": 20,
   "rerank_n_hop": 2,
   "seed": null,
-  "t": 0.05,
+  "tuni": 2.0,
   "use_amp": true,
   "use_link_graph": true,
   "use_self_negative": false,

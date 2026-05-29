@@ -1,14 +1,20 @@
 {
   "model": "DistMult",
-  "model_def": "",
-  "dataset": "WN18RR",
-  "task": "both",
+  "model_encoder_path": "models/encoders/distmult_encoder.py",
+  "model_loss_path": "models/losses/infonce_loss.py",
+  "model_sampler_path": "models/samplers/bernoulli_sampler.py",
+  "model_strategy_path": "models/strategies/softmax_strategy.py",
 
-  "train_path": "data/WN18RR/preprocessed/train.txt.json",
+  "dataset": "WN18RR",
+  "train_path": "data/WN18RR/preprocessed/train.txt",
   "valid_path": "data/WN18RR/preprocessed/valid.txt.json",
   "test_path": "data/WN18RR/preprocessed/test.txt.json",
   "valid_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
   "test_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
+
+  "task": "both",
+  "eval_model_path": "",
+  "output_dir_prefix": "logs/DistMult_WN18RR",
 
   "dim": 50,
   "weight_decay": 0.1,
@@ -17,8 +23,6 @@
   "epochs": 1000,
   "batch_size": 100,
   "epoch_per_test": 50,
-
-  "output_dir_prefix": "logs/DistMult_WN18RR",
   "sample_freq": 1,
   "n_sample": 20
 }

@@ -18,7 +18,7 @@ from metrics.classification import classification_metrics, find_global_threshold
 
 from configs.config import args as global_args
 from data.dict_hub import build_tokenizer
-from models.encoders.bert_encoder import build_model
+from models.builder import import_module_from_path, load_attr_from_path
 from utils.checkpoint import load_state_dict_clean, load_checkpoint, best_model_path, checkpoint_path
 from configs.config import apply_train_args
 import numpy as np
@@ -51,12 +51,14 @@ def _filter_known(batch_score: torch.Tensor, examples: List[Example], all_triple
 
 def _infer_target_indices(examples: Sequence[Example], entity_dict) -> torch.Tensor:
     """Infer target entity indices for a batch of examples."""
+
     target_indices = [entity_dict.entity_to_idx(ex.tail_id) for ex in examples]
     return torch.LongTensor(target_indices)
 
 
 def _score_by_embedding_adapter(model, examples: List[Example], entity_tensor: torch.Tensor) -> torch.Tensor:
     """Score examples using the model's embedding adapters."""
+
     hr_tensor = model.hr_embeddings(examples, entity_tensor.device)
     if hr_tensor.size(1) != entity_tensor.size(1):
         raise ValueError('hr_embeddings and entity_embeddings must have the same hidden size')
@@ -79,6 +81,7 @@ def evaluate_model(
     Returns:
         topk_scores, topk_indices, metrics
     """
+
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -195,7 +198,7 @@ class Evaluator:
         self.train_args: SimpleNamespace | None = None
         self.use_cuda = False
 
-    def load(self, ckt_path: str, use_data_parallel: bool = False):
+    def load(self, ckt_path: str, use_data_parallel: bool = False) -> None:
         """Load checkpoint, apply training args, build tokenizer and model, and load weights."""
 
         checkpoint = load_checkpoint(ckt_path, map_location='cpu')
@@ -204,6 +207,13 @@ class Evaluator:
 
         apply_train_args(self.train_args)
         build_tokenizer(self.train_args)
+
+        encoder_path = getattr(self.train_args, 'model_encoder_path', '') or 'models/encoders/bert_encoder.py'
+        try:
+            build_model = load_attr_from_path(encoder_path, 'build_model')
+        except Exception:
+            encoder_mod = import_module_from_path(encoder_path)
+            build_model = getattr(encoder_mod, 'build_model')
 
         self.model = build_model(self.train_args)
         load_state_dict_clean(self.model, ckt_path)
@@ -220,7 +230,7 @@ class Evaluator:
         logger.info('Load model from %s successfully', ckt_path)
 
     @torch.no_grad()
-    def evaluate_triple_classification_inplace(self, model, label_file, output_log_path, batch_size=128):
+    def evaluate_triple_classification_inplace(self, model, label_file, output_log_path, batch_size=128) -> dict:
         """Evaluate triple classification using the model's forward pass."""
 
         model = get_model_obj(model)
@@ -233,18 +243,29 @@ class Evaluator:
         eval_exs = load_data(label_file, add_forward_triplet=False, add_backward_triplet=False)
         y_true = [ex.label for ex in eval_exs]
         y_prob = []
-        with torch.no_grad():
+        if hasattr(model, 'score_batch'):
             for i in range(0, len(eval_exs), batch_size):
                 batch = eval_exs[i:i + batch_size]
-                batch_vec = [ex.vectorize() for ex in batch]
-                batch_dict = collate(batch_vec)
-                if torch.cuda.is_available():
-                    batch_dict = move_to_cuda(batch_dict)
-                    model.cuda()
-                output_dict = model(**batch_dict)
-                logits = model.compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
-                prob = torch.sigmoid(logits.diag()).detach().cpu().numpy().reshape(-1)
+                batch_score = model.score_batch(
+                    [ex.head_id for ex in batch],
+                    [ex.relation for ex in batch],
+                    [ex.tail_id for ex in batch],
+                )
+                prob = torch.sigmoid(batch_score.diag()).detach().cpu().numpy().reshape(-1)
                 y_prob.extend(prob.tolist())
+        else:
+            with torch.no_grad():
+                for i in range(0, len(eval_exs), batch_size):
+                    batch = eval_exs[i:i + batch_size]
+                    batch_vec = [ex.vectorize() for ex in batch]
+                    batch_dict = collate(batch_vec)
+                    if torch.cuda.is_available():
+                        batch_dict = move_to_cuda(batch_dict)
+                        model.cuda()
+                    output_dict = model(**batch_dict)
+                    logits = model.compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
+                    prob = torch.sigmoid(logits.diag()).detach().cpu().numpy().reshape(-1)
+                    y_prob.extend(prob.tolist())
 
         threshold = find_global_threshold(y_true, y_prob)
         y_pred = (np.array(y_prob) > threshold).astype(int).tolist()
@@ -261,14 +282,14 @@ class Evaluator:
         return metrics_cls
 
     @torch.no_grad()
-    def evaluate_link_prediction_inplace(self, model, eval_path, entity_dict, output_log_path, batch_size=128, eval_forward=True):
+    def evaluate_link_prediction_inplace(self, model, eval_path, entity_dict, output_log_path, batch_size=128, eval_forward=True) -> dict:
         """Evaluate link prediction using the model's forward pass."""
 
         model = get_model_obj(model)
         model.eval()
         if not os.path.exists(eval_path):
             print(f"[EVAL] {eval_path} not found, skip link prediction evaluation.")
-            return
+            return {}
         eval_set = 'TEST' if 'test' in eval_path else 'VALID'
         print(f"\n[{eval_set}] Evaluating link prediction inplace on {eval_path} ...")
         examples = load_data(eval_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
@@ -304,7 +325,7 @@ class Evaluator:
             f.write(log_str + '\n')
         return metrics
 
-    def evaluate_test_triple_classification(self, epoch=None):
+    def evaluate_test_triple_classification(self, epoch=None) -> dict:
         """Evaluate triple classification on the test split using the loaded checkpoint."""
 
         args = self.args if self.args is not None else global_args
@@ -343,7 +364,7 @@ class Evaluator:
 
         if not os.path.exists(test_label_path):
             print('[TEST] test_w_label.txt not found, skip test evaluation.')
-            return
+            return {}
 
         print('\n[TEST] Evaluating triple classification on test set...')
         test_exs = load_data(test_label_path, add_forward_triplet=False, add_backward_triplet=False)
@@ -364,17 +385,28 @@ class Evaluator:
             self.load(ckt_path)
         self.model.eval()
 
-        for i in range(0, len(test_exs), batch_size):
-            batch = test_exs[i:i + batch_size]
-            batch_vec = [ex.vectorize() for ex in batch]
-            batch_dict = collate(batch_vec)
-            if torch.cuda.is_available():
-                batch_dict = move_to_cuda(batch_dict)
-                self.model.cuda()
-            output_dict = self.model(**batch_dict)
-            logits = self.model.compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
-            prob = torch.sigmoid(logits.diag()).detach().cpu().numpy().reshape(-1)
-            y_prob.extend(prob.tolist())
+        if hasattr(self.model, 'score_batch'):
+            for i in range(0, len(test_exs), batch_size):
+                batch = test_exs[i:i + batch_size]
+                batch_score = self.model.score_batch(
+                    [ex.head_id for ex in batch],
+                    [ex.relation for ex in batch],
+                    [ex.tail_id for ex in batch],
+                )
+                prob = torch.sigmoid(batch_score.diag()).detach().cpu().numpy().reshape(-1)
+                y_prob.extend(prob.tolist())
+        else:
+            for i in range(0, len(test_exs), batch_size):
+                batch = test_exs[i:i + batch_size]
+                batch_vec = [ex.vectorize() for ex in batch]
+                batch_dict = collate(batch_vec)
+                if torch.cuda.is_available():
+                    batch_dict = move_to_cuda(batch_dict)
+                    self.model.cuda()
+                output_dict = self.model(**batch_dict)
+                logits = self.model.compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
+                prob = torch.sigmoid(logits.diag()).detach().cpu().numpy().reshape(-1)
+                y_prob.extend(prob.tolist())
 
         threshold = find_global_threshold(y_true, y_prob)
         y_pred = (np.array(y_prob) > threshold).astype(int).tolist()
@@ -390,4 +422,3 @@ class Evaluator:
             f.write(log_cls + '\n')
 
         return metrics_cls
-

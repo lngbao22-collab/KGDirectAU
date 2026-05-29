@@ -7,7 +7,7 @@ import torch
 from numpy.random import choice
 
 
-def get_bern_prob(data, n_ent, n_rel):
+def get_bern_prob(data, n_ent, n_rel) -> torch.Tensor:
 	"""Compute relation-specific Bernoulli corruption probabilities."""
 
 	src, rel, dst = data
@@ -33,7 +33,9 @@ class BernoulliListwiseSampler(object):
 		self.n_ent = n_ent
 		self.n_sample = n_sample
 
-	def corrupt(self, src, rel, dst, keep_truth=True):
+	def corrupt(self, src, rel, dst, keep_truth=True) -> (torch.Tensor, torch.Tensor, torch.Tensor):
+		"""Corrupt triples with Bernoulli sampling to generate listwise candidates."""
+
 		n = len(src)
 		prob = self.bern_prob[rel]
 		selection = torch.bernoulli(prob).cpu().numpy().astype('bool')

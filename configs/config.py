@@ -163,6 +163,8 @@ def _resolve_output_dir() -> str:
 
 
 def _format_model_name(model: str) -> str:
+    """Format the model name for consistent config lookup and output naming."""
+
     mapping = {
         'simkgc': 'SimKGC',
         'transe': 'TransE',
@@ -173,6 +175,8 @@ def _format_model_name(model: str) -> str:
 
 
 def _format_dataset_name(dataset: str) -> str:
+    """Format the dataset name for consistent config lookup and output naming."""
+
     mapping = {
         'wn18rr': 'WN18RR',
         'fb15k237': 'FB15k237',
@@ -288,6 +292,7 @@ if getattr(args, 'output_dir_prefix', ''):
 if not args.model_dir:
     args.model_dir = _resolve_output_dir()
     args.output_dir = args.model_dir
+    
 def apply_train_args(train_args: SimpleNamespace) -> SimpleNamespace:
     """Merge training-time args from a checkpoint with current global `args`.
 

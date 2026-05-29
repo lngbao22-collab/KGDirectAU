@@ -1,9 +1,4 @@
-"""Masking triplets for:
-    + IB (in-batch) negatives
-    + PB (pre-batch) negatives
-    + SN (self-negatives)
-for models: SimKGC.
-"""
+"""Masking triplets for IB (in-batch) negatives, PB (pre-batch) negatives, SN (self-negatives) of models: SimKGC."""
 
 import torch
 
