@@ -15,6 +15,8 @@ from data.dict_hub import get_entity_dict
 
 
 def _relation_path_candidates(args) -> list[str]:
+	"""Return a list of candidate paths for loading the relation-to-index mapping."""
+
 	paths = []
 	for source_path in [getattr(args, 'train_path', ''), getattr(args, 'valid_path', ''), getattr(args, 'test_path', '')]:
 		if not source_path:
@@ -28,6 +30,8 @@ def _relation_path_candidates(args) -> list[str]:
 
 
 def _load_relation_to_idx(args) -> dict[str, int]:
+	"""Load the relation-to-index mapping from candidate paths or construct it from training data."""
+
 	for path in _relation_path_candidates(args):
 		if not path or not os.path.exists(path):
 			continue
@@ -46,6 +50,8 @@ def _load_relation_to_idx(args) -> dict[str, int]:
 
 
 def _as_index_tensor(values, lookup, device: torch.device) -> torch.Tensor:
+	"""Convert a list of values into a tensor of corresponding indices using the provided lookup."""
+
 	if torch.is_tensor(values):
 		return values.to(device=device, dtype=torch.long)
 	return torch.tensor([lookup(value) for value in values], dtype=torch.long, device=device)
@@ -93,7 +99,7 @@ class ComplExEncoder(nn.Module):
 
 		return self.forward(src, rel, dst)
 
-	def get_queries_targets(self, src, rel, dst):
+	def get_queries_targets(self, src, rel, dst) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 		"""Return query, target, and head embeddings for AU training."""
 
 		h_re = self.ent_re_embed(src)
@@ -196,7 +202,7 @@ class ComplExEncoder(nn.Module):
 		raise TypeError('Unsupported model output type for logits computation')
 
 
-def build_model(args):
+def build_model(args) -> ComplExEncoder:
 	"""Factory helper used by the evaluator to rebuild the model from checkpoints."""
 
 	entity_dict = get_entity_dict()

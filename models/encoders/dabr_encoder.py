@@ -7,14 +7,15 @@ from base.model import BaseModel
 
 
 def build_model(args) -> nn.Module:
+    """Factory function to build the DaBR encoder."""
+
     return DaBREncoder(args)
 
 
 class DaBREncoder(BaseModel):
     """DaBR encoder adapted from classic DaBR implementation.
 
-    Exposes quaternion utilities and a `forward(batch_dict)` returning scores
-    and embeddings for regularization.
+    Exposes quaternion utilities and a `forward(batch_dict)` returning scores and embeddings for regularization.
     """
 
     def __init__(self, args):

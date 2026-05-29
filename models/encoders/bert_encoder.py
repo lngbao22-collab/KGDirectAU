@@ -132,6 +132,7 @@ class CustomBertModel(BaseModel, ABC):
     @torch.no_grad()
     def predict_ent_embedding(self, tail_token_ids, tail_mask, tail_token_type_ids, **kwargs) -> dict:
         """Predict entity embeddings directly from tail entity inputs, used for efficient inference."""
+        
         ent_vectors = self._encode(
             self.tail_bert,
             token_ids=tail_token_ids,

@@ -2,6 +2,7 @@
 
 import time
 from abc import ABC, abstractmethod
+from typing import Any
 
 import torch
 from torch.optim import AdamW
@@ -65,7 +66,7 @@ class Trainer(ABC):
                 pin_memory=True,
             )
 
-    def train_loop(self):
+    def train_loop(self) -> dict:
         """Main training loop that iterates over epochs, runs training and evaluation, and handles checkpointing."""
 
         if self.args.use_amp:
@@ -97,17 +98,17 @@ class Trainer(ABC):
         }
 
     @abstractmethod
-    def train_epoch(self, epoch):
+    def train_epoch(self, epoch) -> float:
         """Train for one epoch. Must be implemented by subclasses."""
         raise NotImplementedError
 
     @abstractmethod
-    def eval_epoch(self, epoch):
+    def eval_epoch(self, epoch) -> dict:
         """Evaluate for one epoch. Must be implemented by subclasses."""
         raise NotImplementedError
 
     @torch.no_grad()
-    def _run_eval(self, epoch, step=0):
+    def _run_eval(self, epoch, step=0) -> dict:
         """Run evaluation and handle checkpointing based on the results."""
 
         eval_start = time.time()
@@ -133,7 +134,7 @@ class Trainer(ABC):
         delete_old_ckt(path_pattern='{}/checkpoint_*.mdl'.format(self.args.model_dir), keep=self.args.max_to_keep)
         return metric_dict
 
-    def _extract_monitor_value(self, metric_dict, valid_metric='mrr'):
+    def _extract_monitor_value(self, metric_dict, valid_metric='mrr') -> float | None:
         """Extract the value to monitor for checkpointing from the metric dictionary."""
 
         if not metric_dict:
@@ -147,7 +148,7 @@ class Trainer(ABC):
                 return value
         return None
 
-    def _setup_training(self):
+    def _setup_training(self) -> None:
         """Set up the model for training, including moving to GPU(s) if available."""
 
         if torch.cuda.device_count() > 1:
@@ -157,7 +158,7 @@ class Trainer(ABC):
         else:
             logger.info('No gpu will be used')
 
-    def _create_lr_scheduler(self, num_training_steps):
+    def _create_lr_scheduler(self, num_training_steps) -> Any:
         """Create a learning rate scheduler based on the specified type."""
 
         if self.args.lr_scheduler == 'linear':

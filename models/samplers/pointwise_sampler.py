@@ -1,3 +1,5 @@
+"""Pointwise negative sampling for DaBR training."""
+
 import torch
 
 
@@ -6,6 +8,7 @@ def get_pointwise_negatives(batch: dict, num_neg: int, num_entities: int) -> dic
 
     Returns concatenated positives followed by negatives and corresponding labels (+1, -1).
     """
+
     heads = batch['head_id']
     rels = batch['relation']
     tails = batch['tail_id']
