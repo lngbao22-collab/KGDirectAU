@@ -240,7 +240,7 @@ class Evaluator:
             return
         eval_set = 'TEST' if 'test' in label_file else 'VALID'
         print(f"\n[{eval_set}] Evaluating triple classification inplace on {label_file} ...")
-        eval_exs = load_data(label_file, add_forward_triplet=False, add_backward_triplet=False)
+        eval_exs = load_data(label_file, add_forward_triplet=True, add_backward_triplet=False)
         y_true = [ex.label for ex in eval_exs]
         y_prob = []
         if hasattr(model, 'score_batch'):
@@ -367,7 +367,7 @@ class Evaluator:
             return {}
 
         print('\n[TEST] Evaluating triple classification on test set...')
-        test_exs = load_data(test_label_path, add_forward_triplet=False, add_backward_triplet=False)
+        test_exs = load_data(test_label_path, add_forward_triplet=True, add_backward_triplet=False)
         y_true = [ex.label for ex in test_exs]
         y_prob = []
         batch_size = 128
