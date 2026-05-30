@@ -1,8 +1,20 @@
 ### SOURCE: SimKGC
-#python>=3.7
+# Minimum Python version
+python>=3.8
+
+# Core ML libraries
 torch>=1.6
 transformers>=4.15
-numpy
-tqdm
-scikit-learn
-typing-extensions
+
+# Tokenization backends (some pretrained tokenizers need these)
+tokenizers>=0.10.0
+sentencepiece>=0.1.95
+
+# Utilities
+numpy>=1.19
+tqdm>=4.0
+scikit-learn>=0.24
+typing-extensions>=3.10
+
+# Optional: specify a compatible protobuf if environment needs it
+protobuf>=3.19
