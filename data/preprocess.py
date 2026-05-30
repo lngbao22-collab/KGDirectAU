@@ -20,6 +20,7 @@ class TripleExample:
     tail: str
     head_desc: str = ""
     tail_desc: str = ""
+    label: str = ""
 
 
 def _parse_entity_name(entity: str, task: str = "") -> str:
@@ -78,16 +79,17 @@ def _read_tab_mapping(path: str, *, join_rest: bool = False) -> Dict[str, str]:
     return mapping
 
 
-def _load_triples(path: str) -> List[Tuple[str, str, str]]:
-    """Load triples from a text file, where each line contains three or four tab-separated fields: head_id, relation_id, tail_id, and optionally a label. Returns a list of (head_id, relation_id, tail_id) tuples."""
+def _load_triples(path: str) -> List[Tuple[str, str, str, str]]:
+    """Load triples from a text file, where each line contains three or four tab-separated fields: head_id, relation_id, tail_id, and optionally a label. Returns a list of (head_id, relation_id, tail_id, label) tuples."""
 
-    triples: List[Tuple[str, str, str]] = []
+    triples: List[Tuple[str, str, str, str]] = []
     for line in _read_lines(path):
         fields = line.strip().split("\t")
         if len(fields) not in (3, 4):
             raise ValueError(f"Expected 3 or 4 tab-separated fields in {path}: {line.strip()}")
         head_id, relation_id, tail_id = fields[:3]
-        triples.append((head_id, relation_id, tail_id))
+        label = fields[3] if len(fields) == 4 else ""
+        triples.append((head_id, relation_id, tail_id, label))
     return triples
 
 
@@ -118,7 +120,7 @@ def _build_id_map(values: Iterable[str]) -> Dict[str, int]:
 
 
 def _map_examples(
-    triples: Sequence[Tuple[str, str, str]],
+    triples: Sequence[Tuple[str, str, str, str]],
     *,
     entity_text: Dict[str, str],
     relation_text: Dict[str, str],
@@ -128,10 +130,10 @@ def _map_examples(
 ) -> List[TripleExample]:
     """Map raw triples to TripleExample instances, enriching with text and descriptions. Uses multithreading if workers > 1."""
 
-    def build_example(triple: Tuple[str, str, str]) -> TripleExample:
+    def build_example(triple: Tuple[str, str, str, str]) -> TripleExample:
         """Build a TripleExample from a raw triple, applying text lookups and transformations."""
 
-        head_id, relation_id, tail_id = triple
+        head_id, relation_id, tail_id, label = triple
         relation_display = relation_transform(relation_id) if relation_transform else relation_text.get(relation_id, relation_id)
         return TripleExample(
             head_id=head_id,
@@ -142,6 +144,7 @@ def _map_examples(
             tail=entity_text.get(tail_id, tail_id),
             head_desc=entity_desc.get(head_id, ""),
             tail_desc=entity_desc.get(tail_id, ""),
+            label=label,
         )
 
     if workers <= 1:
@@ -342,6 +345,29 @@ def _has_entries(path: str) -> bool:
         return any(True for _ in entries)
 
 
+def _output_has_labeled_splits(output_dir: str) -> bool:
+    """Return True when the labeled classification splits already contain a label field."""
+
+    for split_name in ("valid_w_label.txt.json", "test_w_label.txt.json"):
+        split_path = os.path.join(output_dir, split_name)
+        if not os.path.exists(split_path):
+            return False
+
+        with open(split_path, "r", encoding="utf-8") as reader:
+            try:
+                payload = json.load(reader)
+            except json.JSONDecodeError:
+                return False
+
+        if not isinstance(payload, list) or not payload:
+            return False
+        first_example = payload[0]
+        if not isinstance(first_example, dict) or "label" not in first_example:
+            return False
+
+    return True
+
+
 def _resolve_split_input(data_dir: str, explicit_path: str, fallback_names: Sequence[str]) -> str:
     """Resolve a split path from an explicit CLI argument or common files under the data directory."""
 
@@ -367,7 +393,7 @@ def preprocess_dataset(args) -> None:
     data_dir = _resolve_data_dir(args)
     output_dir = _resolve_output_dir(args)
 
-    if _has_entries(output_dir):
+    if _has_entries(output_dir) and _output_has_labeled_splits(output_dir):
         print(f"Dataset has been preprocessed and saved in {output_dir}")
         return
 
@@ -396,7 +422,7 @@ def preprocess_dataset(args) -> None:
         raise ValueError("At least one of --train-path, --valid-path, or --test-path must be provided")
 
     split_examples: List[Tuple[str, str, List[TripleExample]]] = []
-    all_triples: List[Tuple[str, str, str]] = []
+    all_triples: List[Tuple[str, str, str, str]] = []
 
     for split_name, path in split_paths:
         if not os.path.exists(path):
@@ -414,8 +440,8 @@ def preprocess_dataset(args) -> None:
         split_examples.append((split_name, path, examples))
         all_triples.extend(triples)
 
-    entity2id = _build_id_map([head_id for head_id, _, _ in all_triples] + [tail_id for _, _, tail_id in all_triples])
-    relation2id = _build_id_map([relation_id for _, relation_id, _ in all_triples])
+    entity2id = _build_id_map([head_id for head_id, _, _, _ in all_triples] + [tail_id for _, _, tail_id, _ in all_triples])
+    relation2id = _build_id_map([relation_id for _, relation_id, _, _ in all_triples])
 
     os.makedirs(output_dir, exist_ok=True)
 
