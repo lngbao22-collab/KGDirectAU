@@ -237,7 +237,7 @@ class DistMultTrainer:
 				metric_dict['loss'] = epoch_loss / max(len(valid_exs), 1)
 
 			valid_entity_dict = get_entity_dict()
-			valid_output_path = os.path.join(self.args.model_dir, 'valid_link_prediction.log')
+			valid_output_path = os.path.join(self.args.output_dir, 'valid_link_prediction.log')
 			forward_metrics = self.evaluator.evaluate_link_prediction_inplace(
 				self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=True)
 			backward_metrics = self.evaluator.evaluate_link_prediction_inplace(
@@ -282,9 +282,9 @@ class DistMultTrainer:
 				'best_metric': self.best_metric,
 				'args': self.args.__dict__,
 				'state_dict': self.model.state_dict(),
-			}, is_best=is_best, filename=last_model_path(self.args.model_dir))
+			}, is_best=is_best, filename=last_model_path(self.args.output_dir))
 			if is_best:
-				self.best_checkpoint_path = best_model_path(self.args.model_dir)
+				self.best_checkpoint_path = best_model_path(self.args.output_dir)
 			elif self.best_checkpoint_path is None:
 				self.best_checkpoint_path = saved_checkpoint_path
 		self.total_time = time.time() - total_start

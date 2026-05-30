@@ -125,9 +125,9 @@ class Trainer(ABC):
             'best_metric': self.best_metric,
             'args': self.args.__dict__,
             'state_dict': self.model.state_dict(),
-        }, is_best=is_best, filename=last_model_path(self.args.model_dir))
+        }, is_best=is_best, filename=last_model_path(self.args.output_dir))
         if is_best:
-            self.best_checkpoint_path = best_model_path(self.args.model_dir)
+            self.best_checkpoint_path = best_model_path(self.args.output_dir)
         elif self.best_checkpoint_path is None:
             self.best_checkpoint_path = saved_checkpoint_path
         return metric_dict

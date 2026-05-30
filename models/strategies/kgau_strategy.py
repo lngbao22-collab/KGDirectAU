@@ -183,7 +183,7 @@ class KGAUStrategy(Evaluator):
 		valid_eval_path = self._validation_eval_path()
 		if valid_eval_path:
 			valid_entity_dict = get_entity_dict()
-			valid_output_path = os.path.join(self.args.model_dir, 'valid_link_prediction.log')
+			valid_output_path = os.path.join(self.args.output_dir, 'valid_link_prediction.log')
 			forward_metrics = self.evaluate_link_prediction_inplace(
 				self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=True)
 			backward_metrics = self.evaluate_link_prediction_inplace(
@@ -220,7 +220,7 @@ class KGAUStrategy(Evaluator):
 			if is_best:
 				self.best_metric = {'score': monitor_value, 'metrics': metric_dict, 'epoch': epoch}
 
-			filename = checkpoint_path(self.args.model_dir, epoch)
+			filename = checkpoint_path(self.args.output_dir, epoch)
 			saved_checkpoint_path = save_checkpoint({
 				'epoch': epoch,
 				'best_epoch': epoch if is_best else None,
@@ -229,10 +229,10 @@ class KGAUStrategy(Evaluator):
 				'state_dict': get_model_obj(self.model).state_dict(),
 			}, is_best=is_best, filename=filename)
 			if is_best:
-				self.best_checkpoint_path = best_model_path(self.args.model_dir)
+				self.best_checkpoint_path = best_model_path(self.args.output_dir)
 			elif self.best_checkpoint_path is None:
 				self.best_checkpoint_path = saved_checkpoint_path
-			delete_old_ckt(path_pattern='{}/checkpoint_*.mdl'.format(self.args.model_dir), keep=self.args.max_to_keep)
+			delete_old_ckt(path_pattern='{}/checkpoint_*.mdl'.format(self.args.output_dir), keep=self.args.max_to_keep)
 
 		self.total_time = time.time() - total_start_time
 		logger.info('[Timing] Training time (s): %.2f', round(self.train_time, 2))

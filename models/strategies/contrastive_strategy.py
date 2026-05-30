@@ -230,7 +230,7 @@ class SimKGCStrategy(Trainer, Evaluator):
 
         if valid_eval_path and os.path.exists(valid_eval_path):
             valid_entity_dict = get_entity_dict()
-            valid_output_path = os.path.join(self.args.model_dir, 'valid_link_prediction.log')
+            valid_output_path = os.path.join(self.args.output_dir, 'valid_link_prediction.log')
             forward_metrics = self.evaluate_link_prediction_inplace(
                 self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=True)
             backward_metrics = self.evaluate_link_prediction_inplace(

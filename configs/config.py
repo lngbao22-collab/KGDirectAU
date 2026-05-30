@@ -24,8 +24,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument('--model', default='simkgc', type=str,
                         help='model family name, e.g. simkgc, transe, transd, rotate')
-    parser.add_argument('--model-def', default='', type=str,
-                        help='path to the model definition file, e.g. models/strategies/simkgc.py. If not specified, it will be inferred from the model name and looked up in configs/ for backward compatibility.')
     parser.add_argument('--model-encoder-path', default='', type=str,
                         help='path to encoder module, e.g. models/encoders/bert_encoder.py')
     parser.add_argument('--model-loss-path', default='', type=str,
@@ -143,8 +141,8 @@ def _resolve_output_dir() -> str:
         normalized_placeholder = os.path.normpath(placeholder)
         absolute_placeholder = os.path.normpath(os.path.join(os.getcwd(), placeholder))
         return normalized_path in {normalized_placeholder, absolute_placeholder}
-    # starting candidate list: explicit output_dir, prefix, model_dir (may be empty)
-    candidates = [getattr(args, 'output_dir', ''), getattr(args, 'output_dir_prefix', ''), getattr(args, 'model_dir', '')]
+    # starting candidate list: explicit output_dir, prefix, or fallback defaults
+    candidates = [getattr(args, 'output_dir', ''), getattr(args, 'output_dir_prefix', '')]
 
     if args.eval_model_path:
         candidates.append(os.path.dirname(args.eval_model_path))
@@ -385,7 +383,6 @@ assert args.pooling in ['cls', 'mean', 'max']
 assert args.lr_scheduler in ['linear', 'cosine']
 
 args.config_path = config_path
-args.model_type = args.model
 
 _model_name = (args.model or '').lower()
 _is_text_model = _model_name not in {'distmult', 'complex'}
@@ -450,9 +447,7 @@ if not torch.cuda.is_available():
         + _cuda_unavailable_reason()
     )
 
-# Ensure args exposes model_dir and output_dir (parser flags were removed).
-if not hasattr(args, 'model_dir'):
-    args.model_dir = ''
+# Ensure args exposes output_dir (parser flags were removed).
 if not hasattr(args, 'output_dir'):
     args.output_dir = ''
 
@@ -469,16 +464,14 @@ if getattr(args, 'output_dir_prefix', ''):
     try:
         os.makedirs(chosen, exist_ok=True)
         if os.access(chosen, os.W_OK):
-            args.model_dir = chosen
             args.output_dir = chosen
     except Exception:
         # ignore and fall back to resolver
         pass
 
-# If no explicit model_dir was chosen above, resolve a sensible default.
-if not args.model_dir:
-    args.model_dir = _resolve_output_dir()
-    args.output_dir = args.model_dir
+# If no explicit output_dir was chosen above, resolve a sensible default.
+if not args.output_dir:
+    args.output_dir = _resolve_output_dir()
     
 def apply_train_args(train_args: SimpleNamespace) -> SimpleNamespace:
     """Merge training-time args from a checkpoint with current global args.

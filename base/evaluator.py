@@ -393,13 +393,13 @@ class Evaluator:
         batch_size = 128
 
         if epoch is None:
-            ckt_path = getattr(args, 'eval_model_path', '') or best_model_path(args.model_dir)
+            ckt_path = getattr(args, 'eval_model_path', '') or best_model_path(args.output_dir)
         else:
-            ckt_path = checkpoint_path(args.model_dir, epoch)
+            ckt_path = checkpoint_path(args.output_dir, epoch)
             if not os.path.exists(ckt_path):
-                ckt_path = checkpoint_path(args.model_dir, epoch, 0)
+                ckt_path = checkpoint_path(args.output_dir, epoch, 0)
             if not os.path.exists(ckt_path):
-                ckt_path = getattr(args, 'eval_model_path', '') or best_model_path(args.model_dir)
+                ckt_path = getattr(args, 'eval_model_path', '') or best_model_path(args.output_dir)
 
         if self.model is None:
             self.load(ckt_path)

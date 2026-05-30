@@ -12,7 +12,7 @@ from utils.logger import setup_logger, write_results_report
 from data.dict_hub import get_entity_dict
 
 
-logger = setup_logger(log_file=os.path.join(args.model_dir, 'run.log'))
+logger = setup_logger(log_file=os.path.join(args.output_dir, 'run.log'))
 
 
 def _resolve_test_lp_path(current_args) -> str:
@@ -57,7 +57,7 @@ def _write_results(current_args, train_summary, evaluator, link_metrics, triple_
         total_time = train_summary['total_time'] + test_time
 
     write_results_report(
-        os.path.join(current_args.model_dir, 'results.txt'),
+        os.path.join(current_args.output_dir, 'results.txt'),
         link_metrics=link_metrics,
         triple_metrics=triple_metrics,
         best_epoch=best_epoch,
@@ -107,7 +107,7 @@ def main():
 
     if args.is_test:
         evaluator = Evaluator(args)
-        eval_model_path = args.eval_model_path or best_model_path(args.model_dir)
+        eval_model_path = args.eval_model_path or best_model_path(args.output_dir)
         evaluator.load(eval_model_path)
         test_start = time.time()
         link_metrics = None
@@ -115,7 +115,7 @@ def main():
         test_lp_path = _resolve_test_lp_path(args)
         if run_lp and test_lp_path:
             entity_dict = get_entity_dict()
-            test_lp_log_path = os.path.join(args.model_dir, 'test_link_prediction.log')
+            test_lp_log_path = os.path.join(args.output_dir, 'test_link_prediction.log')
             forward_metrics = evaluator.evaluate_link_prediction_inplace(
                 evaluator.model, test_lp_path, entity_dict, test_lp_log_path, eval_forward=True)
             backward_metrics = evaluator.evaluate_link_prediction_inplace(
@@ -171,7 +171,7 @@ def main():
     train_summary = trainer.train_loop()
 
     evaluator = Evaluator(args)
-    eval_model_path = train_summary.get('best_checkpoint_path') or best_model_path(args.model_dir)
+    eval_model_path = train_summary.get('best_checkpoint_path') or best_model_path(args.output_dir)
     evaluator.load(eval_model_path)
     test_start = time.time()
     link_metrics = None
@@ -179,7 +179,7 @@ def main():
     test_lp_path = _resolve_test_lp_path(args)
     if run_lp and test_lp_path:
         entity_dict = get_entity_dict()
-        test_lp_log_path = os.path.join(args.model_dir, 'test_link_prediction.log')
+        test_lp_log_path = os.path.join(args.output_dir, 'test_link_prediction.log')
         forward_metrics = evaluator.evaluate_link_prediction_inplace(
             evaluator.model, test_lp_path, entity_dict, test_lp_log_path, eval_forward=True)
         backward_metrics = evaluator.evaluate_link_prediction_inplace(
