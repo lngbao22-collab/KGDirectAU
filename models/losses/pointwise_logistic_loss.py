@@ -1,4 +1,4 @@
-"""Softplus (pointwise logistic) loss for DaBR."""
+"""Pointwise logistic (softplus) loss for DaBR."""
 
 import torch.nn.functional as F
 import torch

@@ -2,8 +2,8 @@
 
 import torch
 from torch import optim
-from models.samplers.pointwise_sampler import get_pointwise_negatives
-from models.losses.softplus_loss import compute_softplus_loss
+from models.samplers.uniform_pointwise_sampler import get_pointwise_negatives
+from models.losses.pointwise_logistic_loss import compute_softplus_loss
 
 
 class PointwiseStrategy:
