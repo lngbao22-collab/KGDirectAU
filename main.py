@@ -15,9 +15,10 @@ from data.dict_hub import get_entity_dict
 logger = setup_logger(log_file=os.path.join(args.model_dir, 'run.log'))
 
 
-def _resolve_test_lp_path(current_args):
-    candidates = []
+def _resolve_test_lp_path(current_args) -> str:
+    """Resolve the test path for link prediction evaluation, trying multiple candidates in order of preference."""
 
+    candidates = []
     for source_path in [current_args.test_path, current_args.valid_path, current_args.train_path]:
         if not source_path:
             continue
@@ -36,7 +37,9 @@ def _resolve_test_lp_path(current_args):
     return ''
 
 
-def _write_results(current_args, train_summary, evaluator, link_metrics, triple_metrics, test_time, configs_snapshot):
+def _write_results(current_args, train_summary, evaluator, link_metrics, triple_metrics, test_time, configs_snapshot) -> None:
+    """Write the evaluation results and training summary to a report file."""
+
     checkpoint = getattr(evaluator, 'checkpoint', {}) or {}
     best_metric = checkpoint.get('best_metric') or {}
     best_epoch = train_summary.get('best_epoch') if train_summary else None
@@ -67,7 +70,9 @@ def _write_results(current_args, train_summary, evaluator, link_metrics, triple_
     )
 
 
-def _average_link_metrics(forward_metrics, backward_metrics):
+def _average_link_metrics(forward_metrics, backward_metrics) -> dict:
+    """Average the link prediction metrics from forward and backward evaluations."""
+
     if not forward_metrics or not backward_metrics:
         return forward_metrics or backward_metrics
 
@@ -123,7 +128,7 @@ def main():
         return
 
     # Dynamically load the strategy/trainer class from config
-    strategy_path = args.model_def or args.model_strategy_path or 'models/strategies/simkgc_strategy.py'
+    strategy_path = args.model_strategy_path
     strategy_mod = import_module_from_path(strategy_path)
     # prefer common trainer names
     # trainer_cls = None

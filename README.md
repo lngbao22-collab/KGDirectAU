@@ -152,10 +152,6 @@ Each model implementation should be split into four composable pieces so the rep
 - **core logic / strategy**: training strategy tying encoder + loss + sampler (place under `models/strategies/`).
 	- Example files: `models/strategies/transe.py`, `models/strategies/kbgan.py`
 
-The `model_def` field in each JSON config should point to the strategy implementation (e.g. `models/strategies/transe.py`) and specify which encoder, loss, and sampler to use. This keeps the training loop (`main.py` / `base/trainer.py`) generic and lets you add new models by dropping well-formed components into these folders.
-
-If you'd like, I can also update `requirements.txt` to pin versions or add a short `examples/` section with commands for FB15k-237 and Wikidata5M.
-
 ## Implemented Models & Components
 
 This repository uses a modular, component-driven architecture. Each experiment is defined by a combination of an **Encoder**, a **Loss Function**, a **Sampler**, and a **Training Strategy**.

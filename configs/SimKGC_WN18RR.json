@@ -7,7 +7,7 @@
 
   "dataset": "WN18RR",
   "task": "both",
-  "train_path": "data/WN18RR/preprocessed/train.txt",
+  "train_path": "data/WN18RR/preprocessed/train.txt.json",
   "valid_path": "data/WN18RR/preprocessed/valid.txt.json",
   "test_path": "data/WN18RR/preprocessed/test.txt.json",
   "valid_w_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
