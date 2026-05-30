@@ -12,7 +12,7 @@
   "valid_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
   "test_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
 
-  "bert_encoder": "distilbert-base-uncased",
+  "bert_encoder": "bert-base-uncased",
 
   "task": "both",
   "eval_model_path": "",
