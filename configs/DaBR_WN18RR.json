@@ -16,7 +16,6 @@
   "eval_model_path": "",
   "output_dir_prefix": "logs/DaBR_WN18RR",
 
-  "dim": 100,
   "dim": 500,
   "lr": 0.1,
   "batch_size": 100,
