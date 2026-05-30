@@ -51,3 +51,272 @@
     "model_dir": "logs/SimKGC_WN18RR_2026-05-30_15-18-29",
     "output_dir": "logs/SimKGC_WN18RR_2026-05-30_15-18-29"
 }
+[2026-05-30 15:18:38,884 INFO] kg: Build tokenizer from distilbert-base-uncased
+[2026-05-30 15:18:38,889 INFO] kg: => creating model
+[2026-05-30 15:18:40,170 INFO] kg: CustomBertModel(
+  (hr_bert): DistilBertModel(
+    (embeddings): Embeddings(
+      (word_embeddings): Embedding(30522, 768, padding_idx=0)
+      (position_embeddings): Embedding(512, 768)
+      (LayerNorm): LayerNorm((768,), eps=1e-12, elementwise_affine=True)
+      (dropout): Dropout(p=0.1, inplace=False)
+    )
+    (transformer): Transformer(
+      (layer): ModuleList(
+        (0-5): 6 x TransformerBlock(
+          (attention): DistilBertSelfAttention(
+            (q_lin): Linear(in_features=768, out_features=768, bias=True)
+            (k_lin): Linear(in_features=768, out_features=768, bias=True)
+            (v_lin): Linear(in_features=768, out_features=768, bias=True)
+            (out_lin): Linear(in_features=768, out_features=768, bias=True)
+            (dropout): Dropout(p=0.1, inplace=False)
+          )
+          (sa_layer_norm): LayerNorm((768,), eps=1e-12, elementwise_affine=True)
+          (ffn): FFN(
+            (dropout): Dropout(p=0.1, inplace=False)
+            (lin1): Linear(in_features=768, out_features=3072, bias=True)
+            (lin2): Linear(in_features=3072, out_features=768, bias=True)
+            (activation): GELUActivation()
+          )
+          (output_layer_norm): LayerNorm((768,), eps=1e-12, elementwise_affine=True)
+        )
+      )
+    )
+  )
+  (tail_bert): DistilBertModel(
+    (embeddings): Embeddings(
+      (word_embeddings): Embedding(30522, 768, padding_idx=0)
+      (position_embeddings): Embedding(512, 768)
+      (LayerNorm): LayerNorm((768,), eps=1e-12, elementwise_affine=True)
+      (dropout): Dropout(p=0.1, inplace=False)
+    )
+    (transformer): Transformer(
+      (layer): ModuleList(
+        (0-5): 6 x TransformerBlock(
+          (attention): DistilBertSelfAttention(
+            (q_lin): Linear(in_features=768, out_features=768, bias=True)
+            (k_lin): Linear(in_features=768, out_features=768, bias=True)
+            (v_lin): Linear(in_features=768, out_features=768, bias=True)
+            (out_lin): Linear(in_features=768, out_features=768, bias=True)
+            (dropout): Dropout(p=0.1, inplace=False)
+          )
+          (sa_layer_norm): LayerNorm((768,), eps=1e-12, elementwise_affine=True)
+          (ffn): FFN(
+            (dropout): Dropout(p=0.1, inplace=False)
+            (lin1): Linear(in_features=768, out_features=3072, bias=True)
+            (lin2): Linear(in_features=3072, out_features=768, bias=True)
+            (activation): GELUActivation()
+          )
+          (output_layer_norm): LayerNorm((768,), eps=1e-12, elementwise_affine=True)
+        )
+      )
+    )
+  )
+)
+[2026-05-30 15:18:40,571 INFO] kg: log_inv_t: 1
+[2026-05-30 15:18:40,571 INFO] kg: hr_bert.embeddings.word_embeddings.weight: 23440896
+[2026-05-30 15:18:40,572 INFO] kg: hr_bert.embeddings.position_embeddings.weight: 393216
+[2026-05-30 15:18:40,572 INFO] kg: hr_bert.embeddings.LayerNorm.weight: 768
+[2026-05-30 15:18:40,572 INFO] kg: hr_bert.embeddings.LayerNorm.bias: 768
+[2026-05-30 15:18:40,572 INFO] kg: hr_bert.transformer.layer.0.attention.q_lin.weight: 589824
+[2026-05-30 15:18:40,573 INFO] kg: hr_bert.transformer.layer.0.attention.q_lin.bias: 768
+[2026-05-30 15:18:40,573 INFO] kg: hr_bert.transformer.layer.0.attention.k_lin.weight: 589824
+[2026-05-30 15:18:40,573 INFO] kg: hr_bert.transformer.layer.0.attention.k_lin.bias: 768
+[2026-05-30 15:18:40,573 INFO] kg: hr_bert.transformer.layer.0.attention.v_lin.weight: 589824
+[2026-05-30 15:18:40,574 INFO] kg: hr_bert.transformer.layer.0.attention.v_lin.bias: 768
+[2026-05-30 15:18:40,574 INFO] kg: hr_bert.transformer.layer.0.attention.out_lin.weight: 589824
+[2026-05-30 15:18:40,574 INFO] kg: hr_bert.transformer.layer.0.attention.out_lin.bias: 768
+[2026-05-30 15:18:40,574 INFO] kg: hr_bert.transformer.layer.0.sa_layer_norm.weight: 768
+[2026-05-30 15:18:40,574 INFO] kg: hr_bert.transformer.layer.0.sa_layer_norm.bias: 768
+[2026-05-30 15:18:40,575 INFO] kg: hr_bert.transformer.layer.0.ffn.lin1.weight: 2359296
+[2026-05-30 15:18:40,575 INFO] kg: hr_bert.transformer.layer.0.ffn.lin1.bias: 3072
+[2026-05-30 15:18:40,575 INFO] kg: hr_bert.transformer.layer.0.ffn.lin2.weight: 2359296
+[2026-05-30 15:18:40,575 INFO] kg: hr_bert.transformer.layer.0.ffn.lin2.bias: 768
+[2026-05-30 15:18:40,575 INFO] kg: hr_bert.transformer.layer.0.output_layer_norm.weight: 768
+[2026-05-30 15:18:40,576 INFO] kg: hr_bert.transformer.layer.0.output_layer_norm.bias: 768
+[2026-05-30 15:18:40,576 INFO] kg: hr_bert.transformer.layer.1.attention.q_lin.weight: 589824
+[2026-05-30 15:18:40,576 INFO] kg: hr_bert.transformer.layer.1.attention.q_lin.bias: 768
+[2026-05-30 15:18:40,576 INFO] kg: hr_bert.transformer.layer.1.attention.k_lin.weight: 589824
+[2026-05-30 15:18:40,577 INFO] kg: hr_bert.transformer.layer.1.attention.k_lin.bias: 768
+[2026-05-30 15:18:40,577 INFO] kg: hr_bert.transformer.layer.1.attention.v_lin.weight: 589824
+[2026-05-30 15:18:40,577 INFO] kg: hr_bert.transformer.layer.1.attention.v_lin.bias: 768
+[2026-05-30 15:18:40,577 INFO] kg: hr_bert.transformer.layer.1.attention.out_lin.weight: 589824
+[2026-05-30 15:18:40,577 INFO] kg: hr_bert.transformer.layer.1.attention.out_lin.bias: 768
+[2026-05-30 15:18:40,578 INFO] kg: hr_bert.transformer.layer.1.sa_layer_norm.weight: 768
+[2026-05-30 15:18:40,578 INFO] kg: hr_bert.transformer.layer.1.sa_layer_norm.bias: 768
+[2026-05-30 15:18:40,578 INFO] kg: hr_bert.transformer.layer.1.ffn.lin1.weight: 2359296
+[2026-05-30 15:18:40,578 INFO] kg: hr_bert.transformer.layer.1.ffn.lin1.bias: 3072
+[2026-05-30 15:18:40,578 INFO] kg: hr_bert.transformer.layer.1.ffn.lin2.weight: 2359296
+[2026-05-30 15:18:40,579 INFO] kg: hr_bert.transformer.layer.1.ffn.lin2.bias: 768
+[2026-05-30 15:18:40,579 INFO] kg: hr_bert.transformer.layer.1.output_layer_norm.weight: 768
+[2026-05-30 15:18:40,579 INFO] kg: hr_bert.transformer.layer.1.output_layer_norm.bias: 768
+[2026-05-30 15:18:40,579 INFO] kg: hr_bert.transformer.layer.2.attention.q_lin.weight: 589824
+[2026-05-30 15:18:40,580 INFO] kg: hr_bert.transformer.layer.2.attention.q_lin.bias: 768
+[2026-05-30 15:18:40,580 INFO] kg: hr_bert.transformer.layer.2.attention.k_lin.weight: 589824
+[2026-05-30 15:18:40,580 INFO] kg: hr_bert.transformer.layer.2.attention.k_lin.bias: 768
+[2026-05-30 15:18:40,580 INFO] kg: hr_bert.transformer.layer.2.attention.v_lin.weight: 589824
+[2026-05-30 15:18:40,581 INFO] kg: hr_bert.transformer.layer.2.attention.v_lin.bias: 768
+[2026-05-30 15:18:40,581 INFO] kg: hr_bert.transformer.layer.2.attention.out_lin.weight: 589824
+[2026-05-30 15:18:40,581 INFO] kg: hr_bert.transformer.layer.2.attention.out_lin.bias: 768
+[2026-05-30 15:18:40,581 INFO] kg: hr_bert.transformer.layer.2.sa_layer_norm.weight: 768
+[2026-05-30 15:18:40,581 INFO] kg: hr_bert.transformer.layer.2.sa_layer_norm.bias: 768
+[2026-05-30 15:18:40,582 INFO] kg: hr_bert.transformer.layer.2.ffn.lin1.weight: 2359296
+[2026-05-30 15:18:40,582 INFO] kg: hr_bert.transformer.layer.2.ffn.lin1.bias: 3072
+[2026-05-30 15:18:40,582 INFO] kg: hr_bert.transformer.layer.2.ffn.lin2.weight: 2359296
+[2026-05-30 15:18:40,582 INFO] kg: hr_bert.transformer.layer.2.ffn.lin2.bias: 768
+[2026-05-30 15:18:40,583 INFO] kg: hr_bert.transformer.layer.2.output_layer_norm.weight: 768
+[2026-05-30 15:18:40,583 INFO] kg: hr_bert.transformer.layer.2.output_layer_norm.bias: 768
+[2026-05-30 15:18:40,583 INFO] kg: hr_bert.transformer.layer.3.attention.q_lin.weight: 589824
+[2026-05-30 15:18:40,583 INFO] kg: hr_bert.transformer.layer.3.attention.q_lin.bias: 768
+[2026-05-30 15:18:40,583 INFO] kg: hr_bert.transformer.layer.3.attention.k_lin.weight: 589824
+[2026-05-30 15:18:40,584 INFO] kg: hr_bert.transformer.layer.3.attention.k_lin.bias: 768
+[2026-05-30 15:18:40,584 INFO] kg: hr_bert.transformer.layer.3.attention.v_lin.weight: 589824
+[2026-05-30 15:18:40,584 INFO] kg: hr_bert.transformer.layer.3.attention.v_lin.bias: 768
+[2026-05-30 15:18:40,584 INFO] kg: hr_bert.transformer.layer.3.attention.out_lin.weight: 589824
+[2026-05-30 15:18:40,584 INFO] kg: hr_bert.transformer.layer.3.attention.out_lin.bias: 768
+[2026-05-30 15:18:40,584 INFO] kg: hr_bert.transformer.layer.3.sa_layer_norm.weight: 768
+[2026-05-30 15:18:40,585 INFO] kg: hr_bert.transformer.layer.3.sa_layer_norm.bias: 768
+[2026-05-30 15:18:40,585 INFO] kg: hr_bert.transformer.layer.3.ffn.lin1.weight: 2359296
+[2026-05-30 15:18:40,585 INFO] kg: hr_bert.transformer.layer.3.ffn.lin1.bias: 3072
+[2026-05-30 15:18:40,585 INFO] kg: hr_bert.transformer.layer.3.ffn.lin2.weight: 2359296
+[2026-05-30 15:18:40,586 INFO] kg: hr_bert.transformer.layer.3.ffn.lin2.bias: 768
+[2026-05-30 15:18:40,586 INFO] kg: hr_bert.transformer.layer.3.output_layer_norm.weight: 768
+[2026-05-30 15:18:40,586 INFO] kg: hr_bert.transformer.layer.3.output_layer_norm.bias: 768
+[2026-05-30 15:18:40,586 INFO] kg: hr_bert.transformer.layer.4.attention.q_lin.weight: 589824
+[2026-05-30 15:18:40,586 INFO] kg: hr_bert.transformer.layer.4.attention.q_lin.bias: 768
+[2026-05-30 15:18:40,587 INFO] kg: hr_bert.transformer.layer.4.attention.k_lin.weight: 589824
+[2026-05-30 15:18:40,587 INFO] kg: hr_bert.transformer.layer.4.attention.k_lin.bias: 768
+[2026-05-30 15:18:40,587 INFO] kg: hr_bert.transformer.layer.4.attention.v_lin.weight: 589824
+[2026-05-30 15:18:40,587 INFO] kg: hr_bert.transformer.layer.4.attention.v_lin.bias: 768
+[2026-05-30 15:18:40,587 INFO] kg: hr_bert.transformer.layer.4.attention.out_lin.weight: 589824
+[2026-05-30 15:18:40,588 INFO] kg: hr_bert.transformer.layer.4.attention.out_lin.bias: 768
+[2026-05-30 15:18:40,588 INFO] kg: hr_bert.transformer.layer.4.sa_layer_norm.weight: 768
+[2026-05-30 15:18:40,588 INFO] kg: hr_bert.transformer.layer.4.sa_layer_norm.bias: 768
+[2026-05-30 15:18:40,588 INFO] kg: hr_bert.transformer.layer.4.ffn.lin1.weight: 2359296
+[2026-05-30 15:18:40,588 INFO] kg: hr_bert.transformer.layer.4.ffn.lin1.bias: 3072
+[2026-05-30 15:18:40,589 INFO] kg: hr_bert.transformer.layer.4.ffn.lin2.weight: 2359296
+[2026-05-30 15:18:40,589 INFO] kg: hr_bert.transformer.layer.4.ffn.lin2.bias: 768
+[2026-05-30 15:18:40,589 INFO] kg: hr_bert.transformer.layer.4.output_layer_norm.weight: 768
+[2026-05-30 15:18:40,589 INFO] kg: hr_bert.transformer.layer.4.output_layer_norm.bias: 768
+[2026-05-30 15:18:40,589 INFO] kg: hr_bert.transformer.layer.5.attention.q_lin.weight: 589824
+[2026-05-30 15:18:40,590 INFO] kg: hr_bert.transformer.layer.5.attention.q_lin.bias: 768
+[2026-05-30 15:18:40,590 INFO] kg: hr_bert.transformer.layer.5.attention.k_lin.weight: 589824
+[2026-05-30 15:18:40,590 INFO] kg: hr_bert.transformer.layer.5.attention.k_lin.bias: 768
+[2026-05-30 15:18:40,590 INFO] kg: hr_bert.transformer.layer.5.attention.v_lin.weight: 589824
+[2026-05-30 15:18:40,590 INFO] kg: hr_bert.transformer.layer.5.attention.v_lin.bias: 768
+[2026-05-30 15:18:40,590 INFO] kg: hr_bert.transformer.layer.5.attention.out_lin.weight: 589824
+[2026-05-30 15:18:40,591 INFO] kg: hr_bert.transformer.layer.5.attention.out_lin.bias: 768
+[2026-05-30 15:18:40,591 INFO] kg: hr_bert.transformer.layer.5.sa_layer_norm.weight: 768
+[2026-05-30 15:18:40,591 INFO] kg: hr_bert.transformer.layer.5.sa_layer_norm.bias: 768
+[2026-05-30 15:18:40,591 INFO] kg: hr_bert.transformer.layer.5.ffn.lin1.weight: 2359296
+[2026-05-30 15:18:40,592 INFO] kg: hr_bert.transformer.layer.5.ffn.lin1.bias: 3072
+[2026-05-30 15:18:40,592 INFO] kg: hr_bert.transformer.layer.5.ffn.lin2.weight: 2359296
+[2026-05-30 15:18:40,592 INFO] kg: hr_bert.transformer.layer.5.ffn.lin2.bias: 768
+[2026-05-30 15:18:40,592 INFO] kg: hr_bert.transformer.layer.5.output_layer_norm.weight: 768
+[2026-05-30 15:18:40,592 INFO] kg: hr_bert.transformer.layer.5.output_layer_norm.bias: 768
+[2026-05-30 15:18:40,592 INFO] kg: tail_bert.embeddings.word_embeddings.weight: 23440896
+[2026-05-30 15:18:40,593 INFO] kg: tail_bert.embeddings.position_embeddings.weight: 393216
+[2026-05-30 15:18:40,593 INFO] kg: tail_bert.embeddings.LayerNorm.weight: 768
+[2026-05-30 15:18:40,593 INFO] kg: tail_bert.embeddings.LayerNorm.bias: 768
+[2026-05-30 15:18:40,593 INFO] kg: tail_bert.transformer.layer.0.attention.q_lin.weight: 589824
+[2026-05-30 15:18:40,593 INFO] kg: tail_bert.transformer.layer.0.attention.q_lin.bias: 768
+[2026-05-30 15:18:40,593 INFO] kg: tail_bert.transformer.layer.0.attention.k_lin.weight: 589824
+[2026-05-30 15:18:40,594 INFO] kg: tail_bert.transformer.layer.0.attention.k_lin.bias: 768
+[2026-05-30 15:18:40,594 INFO] kg: tail_bert.transformer.layer.0.attention.v_lin.weight: 589824
+[2026-05-30 15:18:40,594 INFO] kg: tail_bert.transformer.layer.0.attention.v_lin.bias: 768
+[2026-05-30 15:18:40,594 INFO] kg: tail_bert.transformer.layer.0.attention.out_lin.weight: 589824
+[2026-05-30 15:18:40,594 INFO] kg: tail_bert.transformer.layer.0.attention.out_lin.bias: 768
+[2026-05-30 15:18:40,594 INFO] kg: tail_bert.transformer.layer.0.sa_layer_norm.weight: 768
+[2026-05-30 15:18:40,595 INFO] kg: tail_bert.transformer.layer.0.sa_layer_norm.bias: 768
+[2026-05-30 15:18:40,595 INFO] kg: tail_bert.transformer.layer.0.ffn.lin1.weight: 2359296
+[2026-05-30 15:18:40,595 INFO] kg: tail_bert.transformer.layer.0.ffn.lin1.bias: 3072
+[2026-05-30 15:18:40,595 INFO] kg: tail_bert.transformer.layer.0.ffn.lin2.weight: 2359296
+[2026-05-30 15:18:40,595 INFO] kg: tail_bert.transformer.layer.0.ffn.lin2.bias: 768
+[2026-05-30 15:18:40,595 INFO] kg: tail_bert.transformer.layer.0.output_layer_norm.weight: 768
+[2026-05-30 15:18:40,596 INFO] kg: tail_bert.transformer.layer.0.output_layer_norm.bias: 768
+[2026-05-30 15:18:40,596 INFO] kg: tail_bert.transformer.layer.1.attention.q_lin.weight: 589824
+[2026-05-30 15:18:40,596 INFO] kg: tail_bert.transformer.layer.1.attention.q_lin.bias: 768
+[2026-05-30 15:18:40,596 INFO] kg: tail_bert.transformer.layer.1.attention.k_lin.weight: 589824
+[2026-05-30 15:18:40,596 INFO] kg: tail_bert.transformer.layer.1.attention.k_lin.bias: 768
+[2026-05-30 15:18:40,597 INFO] kg: tail_bert.transformer.layer.1.attention.v_lin.weight: 589824
+[2026-05-30 15:18:40,597 INFO] kg: tail_bert.transformer.layer.1.attention.v_lin.bias: 768
+[2026-05-30 15:18:40,597 INFO] kg: tail_bert.transformer.layer.1.attention.out_lin.weight: 589824
+[2026-05-30 15:18:40,597 INFO] kg: tail_bert.transformer.layer.1.attention.out_lin.bias: 768
+[2026-05-30 15:18:40,597 INFO] kg: tail_bert.transformer.layer.1.sa_layer_norm.weight: 768
+[2026-05-30 15:18:40,598 INFO] kg: tail_bert.transformer.layer.1.sa_layer_norm.bias: 768
+[2026-05-30 15:18:40,598 INFO] kg: tail_bert.transformer.layer.1.ffn.lin1.weight: 2359296
+[2026-05-30 15:18:40,598 INFO] kg: tail_bert.transformer.layer.1.ffn.lin1.bias: 3072
+[2026-05-30 15:18:40,599 INFO] kg: tail_bert.transformer.layer.1.ffn.lin2.weight: 2359296
+[2026-05-30 15:18:40,599 INFO] kg: tail_bert.transformer.layer.1.ffn.lin2.bias: 768
+[2026-05-30 15:18:40,599 INFO] kg: tail_bert.transformer.layer.1.output_layer_norm.weight: 768
+[2026-05-30 15:18:40,599 INFO] kg: tail_bert.transformer.layer.1.output_layer_norm.bias: 768
+[2026-05-30 15:18:40,599 INFO] kg: tail_bert.transformer.layer.2.attention.q_lin.weight: 589824
+[2026-05-30 15:18:40,600 INFO] kg: tail_bert.transformer.layer.2.attention.q_lin.bias: 768
+[2026-05-30 15:18:40,600 INFO] kg: tail_bert.transformer.layer.2.attention.k_lin.weight: 589824
+[2026-05-30 15:18:40,600 INFO] kg: tail_bert.transformer.layer.2.attention.k_lin.bias: 768
+[2026-05-30 15:18:40,600 INFO] kg: tail_bert.transformer.layer.2.attention.v_lin.weight: 589824
+[2026-05-30 15:18:40,601 INFO] kg: tail_bert.transformer.layer.2.attention.v_lin.bias: 768
+[2026-05-30 15:18:40,601 INFO] kg: tail_bert.transformer.layer.2.attention.out_lin.weight: 589824
+[2026-05-30 15:18:40,601 INFO] kg: tail_bert.transformer.layer.2.attention.out_lin.bias: 768
+[2026-05-30 15:18:40,601 INFO] kg: tail_bert.transformer.layer.2.sa_layer_norm.weight: 768
+[2026-05-30 15:18:40,602 INFO] kg: tail_bert.transformer.layer.2.sa_layer_norm.bias: 768
+[2026-05-30 15:18:40,602 INFO] kg: tail_bert.transformer.layer.2.ffn.lin1.weight: 2359296
+[2026-05-30 15:18:40,602 INFO] kg: tail_bert.transformer.layer.2.ffn.lin1.bias: 3072
+[2026-05-30 15:18:40,602 INFO] kg: tail_bert.transformer.layer.2.ffn.lin2.weight: 2359296
+[2026-05-30 15:18:40,602 INFO] kg: tail_bert.transformer.layer.2.ffn.lin2.bias: 768
+[2026-05-30 15:18:40,603 INFO] kg: tail_bert.transformer.layer.2.output_layer_norm.weight: 768
+[2026-05-30 15:18:40,603 INFO] kg: tail_bert.transformer.layer.2.output_layer_norm.bias: 768
+[2026-05-30 15:18:40,603 INFO] kg: tail_bert.transformer.layer.3.attention.q_lin.weight: 589824
+[2026-05-30 15:18:40,603 INFO] kg: tail_bert.transformer.layer.3.attention.q_lin.bias: 768
+[2026-05-30 15:18:40,603 INFO] kg: tail_bert.transformer.layer.3.attention.k_lin.weight: 589824
+[2026-05-30 15:18:40,604 INFO] kg: tail_bert.transformer.layer.3.attention.k_lin.bias: 768
+[2026-05-30 15:18:40,604 INFO] kg: tail_bert.transformer.layer.3.attention.v_lin.weight: 589824
+[2026-05-30 15:18:40,604 INFO] kg: tail_bert.transformer.layer.3.attention.v_lin.bias: 768
+[2026-05-30 15:18:40,604 INFO] kg: tail_bert.transformer.layer.3.attention.out_lin.weight: 589824
+[2026-05-30 15:18:40,604 INFO] kg: tail_bert.transformer.layer.3.attention.out_lin.bias: 768
+[2026-05-30 15:18:40,604 INFO] kg: tail_bert.transformer.layer.3.sa_layer_norm.weight: 768
+[2026-05-30 15:18:40,605 INFO] kg: tail_bert.transformer.layer.3.sa_layer_norm.bias: 768
+[2026-05-30 15:18:40,605 INFO] kg: tail_bert.transformer.layer.3.ffn.lin1.weight: 2359296
+[2026-05-30 15:18:40,605 INFO] kg: tail_bert.transformer.layer.3.ffn.lin1.bias: 3072
+[2026-05-30 15:18:40,605 INFO] kg: tail_bert.transformer.layer.3.ffn.lin2.weight: 2359296
+[2026-05-30 15:18:40,605 INFO] kg: tail_bert.transformer.layer.3.ffn.lin2.bias: 768
+[2026-05-30 15:18:40,606 INFO] kg: tail_bert.transformer.layer.3.output_layer_norm.weight: 768
+[2026-05-30 15:18:40,606 INFO] kg: tail_bert.transformer.layer.3.output_layer_norm.bias: 768
+[2026-05-30 15:18:40,606 INFO] kg: tail_bert.transformer.layer.4.attention.q_lin.weight: 589824
+[2026-05-30 15:18:40,606 INFO] kg: tail_bert.transformer.layer.4.attention.q_lin.bias: 768
+[2026-05-30 15:18:40,606 INFO] kg: tail_bert.transformer.layer.4.attention.k_lin.weight: 589824
+[2026-05-30 15:18:40,607 INFO] kg: tail_bert.transformer.layer.4.attention.k_lin.bias: 768
+[2026-05-30 15:18:40,607 INFO] kg: tail_bert.transformer.layer.4.attention.v_lin.weight: 589824
+[2026-05-30 15:18:40,607 INFO] kg: tail_bert.transformer.layer.4.attention.v_lin.bias: 768
+[2026-05-30 15:18:40,607 INFO] kg: tail_bert.transformer.layer.4.attention.out_lin.weight: 589824
+[2026-05-30 15:18:40,607 INFO] kg: tail_bert.transformer.layer.4.attention.out_lin.bias: 768
+[2026-05-30 15:18:40,607 INFO] kg: tail_bert.transformer.layer.4.sa_layer_norm.weight: 768
+[2026-05-30 15:18:40,608 INFO] kg: tail_bert.transformer.layer.4.sa_layer_norm.bias: 768
+[2026-05-30 15:18:40,608 INFO] kg: tail_bert.transformer.layer.4.ffn.lin1.weight: 2359296
+[2026-05-30 15:18:40,608 INFO] kg: tail_bert.transformer.layer.4.ffn.lin1.bias: 3072
+[2026-05-30 15:18:40,608 INFO] kg: tail_bert.transformer.layer.4.ffn.lin2.weight: 2359296
+[2026-05-30 15:18:40,608 INFO] kg: tail_bert.transformer.layer.4.ffn.lin2.bias: 768
+[2026-05-30 15:18:40,609 INFO] kg: tail_bert.transformer.layer.4.output_layer_norm.weight: 768
+[2026-05-30 15:18:40,609 INFO] kg: tail_bert.transformer.layer.4.output_layer_norm.bias: 768
+[2026-05-30 15:18:40,609 INFO] kg: tail_bert.transformer.layer.5.attention.q_lin.weight: 589824
+[2026-05-30 15:18:40,609 INFO] kg: tail_bert.transformer.layer.5.attention.q_lin.bias: 768
+[2026-05-30 15:18:40,609 INFO] kg: tail_bert.transformer.layer.5.attention.k_lin.weight: 589824
+[2026-05-30 15:18:40,609 INFO] kg: tail_bert.transformer.layer.5.attention.k_lin.bias: 768
+[2026-05-30 15:18:40,610 INFO] kg: tail_bert.transformer.layer.5.attention.v_lin.weight: 589824
+[2026-05-30 15:18:40,610 INFO] kg: tail_bert.transformer.layer.5.attention.v_lin.bias: 768
+[2026-05-30 15:18:40,610 INFO] kg: tail_bert.transformer.layer.5.attention.out_lin.weight: 589824
+[2026-05-30 15:18:40,610 INFO] kg: tail_bert.transformer.layer.5.attention.out_lin.bias: 768
+[2026-05-30 15:18:40,610 INFO] kg: tail_bert.transformer.layer.5.sa_layer_norm.weight: 768
+[2026-05-30 15:18:40,610 INFO] kg: tail_bert.transformer.layer.5.sa_layer_norm.bias: 768
+[2026-05-30 15:18:40,610 INFO] kg: tail_bert.transformer.layer.5.ffn.lin1.weight: 2359296
+[2026-05-30 15:18:40,611 INFO] kg: tail_bert.transformer.layer.5.ffn.lin1.bias: 3072
+[2026-05-30 15:18:40,611 INFO] kg: tail_bert.transformer.layer.5.ffn.lin2.weight: 2359296
+[2026-05-30 15:18:40,611 INFO] kg: tail_bert.transformer.layer.5.ffn.lin2.bias: 768
+[2026-05-30 15:18:40,611 INFO] kg: tail_bert.transformer.layer.5.output_layer_norm.weight: 768
+[2026-05-30 15:18:40,611 INFO] kg: tail_bert.transformer.layer.5.output_layer_norm.bias: 768
+[2026-05-30 15:18:40,611 INFO] kg: Number of parameters: 132M
+[2026-05-30 15:18:40,957 INFO] kg: Load 3034 examples from data\WN18RR\preprocessed\valid.txt.json
+[2026-05-30 15:18:40,969 INFO] kg: Total training steps: 16959, warmup steps: 400
+[2026-05-30 15:20:12,257 INFO] kg: Epoch: [0][  0/339]	Loss 10.8 (10.8)	InvT  20.00 ( 20.00)	Acc@1   8.79 (  8.79)	Acc@3  18.55 ( 18.55)
+[2026-05-30 15:23:40,746 INFO] kg: Epoch: [0][ 20/339]	Loss 10.13 (10.62)	InvT  20.00 ( 20.00)	Acc@1  11.91 (  9.34)	Acc@3  21.88 ( 17.38)
+[2026-05-30 15:27:41,823 INFO] kg: Epoch: [0][ 40/339]	Loss 8.074 (9.887)	InvT  20.00 ( 20.00)	Acc@1  20.31 ( 12.60)	Acc@3  35.55 ( 22.95)

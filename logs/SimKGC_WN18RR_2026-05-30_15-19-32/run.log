@@ -1,0 +1,3 @@
+[2026-05-30 15:19:58,012 INFO] kg: Start to build link graph from data\WN18RR\train.txt
+[2026-05-30 15:19:58,601 INFO] kg: Done build link graph with 40559 nodes
+[2026-05-30 15:20:01,362 INFO] kg: Build tokenizer from distilbert-base-uncased

@@ -7,7 +7,7 @@
 
   "dataset": "WN18RR",
   "task": "both",
-  "train_path": "data/WN18RR/train.txt",
+
   "train_path": "data/WN18RR/preprocessed/train.txt",
   "valid_path": "data/WN18RR/preprocessed/valid.txt.json",
   "test_path": "data/WN18RR/preprocessed/test.txt.json",
@@ -19,7 +19,6 @@
 
   "additive_margin": 0.02,
   "batch_size": 512,
-  "bert_encoder": "distilbert-base-uncased",
   "dim": 768,
   "dropout": 0.1,
   "epochs": 50,

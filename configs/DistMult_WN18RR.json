@@ -5,21 +5,12 @@
   "model_sampler_path": "models/samplers/bernoulli_sampler.py",
   "model_strategy_path": "models/strategies/softmax_strategy.py",
 
-  "model_encoder_path": "models/encoders/distmult_encoder.py",
-  "model_loss_path": "models/losses/infonce_loss.py",
-  "model_sampler_path": "models/samplers/bernoulli_sampler.py",
-  "model_strategy_path": "models/strategies/softmax_strategy.py",
-
   "dataset": "WN18RR",
   "train_path": "data/WN18RR/preprocessed/train.txt",
   "valid_path": "data/WN18RR/preprocessed/valid.txt.json",
   "test_path": "data/WN18RR/preprocessed/test.txt.json",
   "valid_w_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
   "test_w_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
-
-  "output_dir_prefix": "logs/DistMult_WN18RR",
-  "valid_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
-  "test_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
 
   "task": "both",
   "eval_model_path": "",
