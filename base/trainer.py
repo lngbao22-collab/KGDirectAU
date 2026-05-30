@@ -9,7 +9,7 @@ from transformers import get_cosine_schedule_with_warmup, get_linear_schedule_wi
 
 from data.dataset import Dataset
 from data.dataloader import collate
-from utils.checkpoint import save_checkpoint, delete_old_ckt, checkpoint_path, best_model_path
+from utils.checkpoint import save_checkpoint, best_model_path, last_model_path
 from utils.device import report_num_trainable_parameters
 from utils.logger import logger
 
@@ -118,19 +118,17 @@ class Trainer(ABC):
         if is_best:
             self.best_metric = {'score': monitor_value, 'metrics': metric_dict, 'epoch': epoch}
 
-        filename = checkpoint_path(self.args.model_dir, epoch, None if step == 0 else step)
         saved_checkpoint_path = save_checkpoint({
             'epoch': epoch,
             'best_epoch': epoch if is_best else None,
             'best_metric': self.best_metric,
             'args': self.args.__dict__,
             'state_dict': self.model.state_dict(),
-        }, is_best=is_best, filename=filename)
+        }, is_best=is_best, filename=last_model_path(self.args.model_dir))
         if is_best:
             self.best_checkpoint_path = best_model_path(self.args.model_dir)
         elif self.best_checkpoint_path is None:
             self.best_checkpoint_path = saved_checkpoint_path
-        delete_old_ckt(path_pattern='{}/checkpoint_*.mdl'.format(self.args.model_dir), keep=self.args.max_to_keep)
         return metric_dict
 
     def _extract_monitor_value(self, metric_dict, valid_metric='mrr'):

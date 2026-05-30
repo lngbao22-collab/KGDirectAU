@@ -6,17 +6,15 @@
   "model_strategy_path": "models/strategies/simkgc_strategy.py",
 
   "dataset": "WN18RR",
-  "train_path": "data/WN18RR/preprocessed/train.txt.json",
+  "task": "both",
+  "train_path": "data/WN18RR/train.txt",
   "valid_path": "data/WN18RR/preprocessed/valid.txt.json",
   "test_path": "data/WN18RR/preprocessed/test.txt.json",
-  "valid_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
-  "test_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
+  "valid_w_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
+  "test_w_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
 
-  "bert_encoder": "distilbert-base-uncased",
-
-  "task": "both",
-  "eval_model_path": "",
   "output_dir_prefix": "logs/SimKGC_WN18RR",
+  "bert_encoder": "distilbert-base-uncased",
 
   "additive_margin": 0.02,
   "batch_size": 512,

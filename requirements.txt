@@ -6,10 +6,3 @@ numpy
 tqdm
 scikit-learn
 typing-extensions
-jsonlib
-os
-argparse
-shutil
-glob2
-logging
-multiprocessing

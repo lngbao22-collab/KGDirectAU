@@ -1,4 +1,5 @@
 import json
+import inspect
 import os
 import time
 
@@ -15,18 +16,19 @@ logger = setup_logger(log_file=os.path.join(args.model_dir, 'run.log'))
 
 
 def _resolve_test_lp_path(current_args):
-    candidates = [current_args.test_path]
+    candidates = []
 
-    if current_args.valid_path:
-        valid_dir = os.path.dirname(current_args.valid_path)
-        valid_name = os.path.basename(current_args.valid_path)
-        candidates.append(os.path.join(valid_dir, valid_name.replace('valid', 'test')))
-        candidates.append(os.path.join(valid_dir, 'test.txt'))
+    for source_path in [current_args.test_path, current_args.valid_path, current_args.train_path]:
+        if not source_path:
+            continue
+        source_dir = os.path.dirname(source_path)
+        candidates.append(os.path.join(source_dir, 'test.txt.json'))
+        candidates.append(os.path.join(source_dir, 'test.txt'))
 
-    if current_args.valid_label_path:
-        label_dir = os.path.dirname(current_args.valid_label_path)
-        candidates.append(os.path.join(label_dir, 'test.txt.json'))
-        candidates.append(os.path.join(label_dir, 'test.txt'))
+    candidates.append(os.path.join('data', getattr(current_args, 'dataset', ''), 'preprocessed', 'test.txt.json'))
+    candidates.append(os.path.join('data', getattr(current_args, 'dataset', ''), 'preprocessed', 'test.txt'))
+    candidates.append(os.path.join('data', getattr(current_args, 'dataset', ''), 'test.txt.json'))
+    candidates.append(os.path.join('data', getattr(current_args, 'dataset', ''), 'test.txt'))
 
     for candidate in candidates:
         if candidate and os.path.exists(candidate):
@@ -121,19 +123,27 @@ def main():
         return
 
     # Dynamically load the strategy/trainer class from config
-    strategy_path = args.model_strategy_path or args.model_strategy_path or 'models/strategies/simkgc_strategy.py'
+    strategy_path = args.model_def or args.model_strategy_path or 'models/strategies/simkgc_strategy.py'
     strategy_mod = import_module_from_path(strategy_path)
-    # prefer common trainer names
+    # prefer concrete trainer classes defined in the selected strategy module
     trainer_cls = None
-    for cand in ('ContrastiveTrainer', 'Trainer', 'SimKGCStrategy', 'SimKGCTrainer', 'Strategy'):
-        if hasattr(strategy_mod, cand):
-            trainer_cls = getattr(strategy_mod, cand)
+    preferred_names = (
+        'DistMultTrainer',
+        'SoftmaxTrainer',
+        'SimKGCStrategy',
+        'ContrastiveTrainer',
+        'SimKGCTrainer',
+        'Strategy',
+    )
+    for cand in preferred_names:
+        cls = getattr(strategy_mod, cand, None)
+        if inspect.isclass(cls) and cls.__module__ == strategy_mod.__name__ and not inspect.isabstract(cls):
+            trainer_cls = cls
             break
     if trainer_cls is None:
-        # fallback: find first class defined in module
         for v in vars(strategy_mod).values():
             try:
-                if isinstance(v, type):
+                if inspect.isclass(v) and v.__module__ == strategy_mod.__name__ and not inspect.isabstract(v):
                     trainer_cls = v
                     break
             except Exception:

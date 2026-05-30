@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import random
+import sys
 import warnings
 from datetime import datetime
 from types import SimpleNamespace
@@ -46,11 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help='path to validation data')
     parser.add_argument('--test-path', default='', type=str,
                         help='path to test data')
-    parser.add_argument('--valid-label-path', default='', type=str,
-                        help='path to labeled validation data for triple classification')
-    parser.add_argument('--test-label-path', default='', type=str,
-                        help='path to labeled test data for triple classification')
-    # in default, paths for .txt.json (preprocess) or .txt (unprocessed) are taken by dataset in 'data/<dataset>/preprocessed' folder e.g. data/WN18RR/preprocessed/train.txt.json, data/WN18RR/preprocessed/valid.txt.json, data/WN18RR/preprocessed/test.txt.json, data/WN18RR/preprocessed/valid_w_label.txt.json, data/WN18RR/preprocessed/test_w_label.txt.json
+    parser.add_argument('--valid-w-label-path', default='', type=str,
+                        help='path to validation data for triple classification')
+    parser.add_argument('--test-w-label-path', default='', type=str,
+                        help='path to test data for triple classification')
+    # in default, paths for .txt.json (preprocess) or .txt (unprocessed) are taken by dataset in 'data/<dataset>/preprocessed' folder e.g. data/WN18RR/preprocessed/train.txt.json, data/WN18RR/preprocessed/valid.txt.json, data/WN18RR/preprocessed/test.txt.json
 
     parser.add_argument('--eval-model-path', default='', type=str,
                         help='path to model to evaluate')
@@ -214,6 +215,112 @@ def _load_json_defaults(path: str) -> Dict[str, Any]:
     return cfg
 
 
+def _resolve_case_insensitive_path(path: str) -> str:
+    """Resolve an existing path on case-sensitive filesystems when only letter case differs."""
+
+    if not path:
+        return path
+    norm_path = os.path.normpath(path)
+    if os.path.exists(norm_path):
+        return norm_path
+
+    drive, tail = os.path.splitdrive(norm_path)
+    current = drive + os.sep if drive else os.sep if norm_path.startswith(os.sep) else ''
+    parts = [p for p in tail.split(os.sep) if p]
+
+    if not parts:
+        return norm_path
+
+    for part in parts:
+        if not current or not os.path.isdir(current):
+            return norm_path
+        try:
+            entries = os.listdir(current)
+        except OSError:
+            return norm_path
+
+        matched = None
+        lower_part = part.lower()
+        for entry in entries:
+            if entry.lower() == lower_part:
+                matched = entry
+                break
+
+        if matched is None:
+            return norm_path
+        current = os.path.join(current, matched)
+
+    return current if os.path.exists(current) else norm_path
+
+
+def _resolve_data_path(path: str) -> str:
+    """Resolve data paths, falling back from preprocessed *.txt.json to raw *.txt when needed."""
+
+    if not path:
+        return path
+
+    candidate = _resolve_case_insensitive_path(path)
+    if os.path.exists(candidate):
+        return candidate
+
+    if candidate.endswith('.txt.json'):
+        raw_candidate = candidate[:-5]
+        raw_candidate = _resolve_case_insensitive_path(raw_candidate)
+        if os.path.exists(raw_candidate):
+            return raw_candidate
+
+    return candidate
+
+
+def _replace_split_suffix(path: str, source_suffix: str, target_suffix: str) -> str:
+    """Replace a dataset split suffix inside a file name while preserving the directory."""
+
+    if not path:
+        return path
+
+    directory, basename = os.path.split(path)
+    if source_suffix not in basename:
+        return path
+    return os.path.join(directory, basename.replace(source_suffix, target_suffix))
+
+
+def _derive_split_variant(path: str, *, split_name: str, labeled: bool) -> str:
+    """Map between the raw and labeled split variants for a given split name."""
+
+    if not path:
+        return path
+
+    if labeled:
+        source_suffix = f'{split_name}.txt'
+        target_suffix = f'{split_name}_w_label.txt'
+    else:
+        source_suffix = f'{split_name}_w_label.txt'
+        target_suffix = f'{split_name}.txt'
+
+    return _replace_split_suffix(path, source_suffix, target_suffix)
+
+
+def _cuda_unavailable_reason() -> str:
+    """Return a human-readable reason when CUDA is unavailable in the current Python env."""
+
+    torch_cuda = getattr(torch.version, 'cuda', None)
+    torch_version = getattr(torch, '__version__', 'unknown')
+    executable = sys.executable
+
+    if not torch_cuda:
+        return (
+            'CPU-only PyTorch build detected '
+            f'(python={executable}, torch={torch_version}). '
+            'Install a CUDA wheel in this same environment.'
+        )
+
+    return (
+        'CUDA runtime is bundled with PyTorch but no GPU is usable in this environment '
+        f'(python={executable}, torch={torch_version}, torch_cuda={torch_cuda}). '
+        'This is commonly caused by a CUDA-runtime/driver mismatch or running with a different Python env than expected.'
+    )
+
+
 parser = build_parser()
 args, unknown_args = parser.parse_known_args()
 
@@ -225,14 +332,58 @@ if config_defaults:
 
 args.unparsed_args = unknown_args
 
+args.train_path = _resolve_data_path(getattr(args, 'train_path', ''))
+args.valid_path = _resolve_data_path(_derive_split_variant(getattr(args, 'valid_path', ''), split_name='valid', labeled=False))
+args.test_path = _resolve_data_path(_derive_split_variant(getattr(args, 'test_path', ''), split_name='test', labeled=False))
+args.valid_w_label_path = _resolve_data_path(
+    getattr(args, 'valid_w_label_path', '')
+    or _derive_split_variant(args.valid_path, split_name='valid', labeled=True)
+)
+args.test_w_label_path = _resolve_data_path(
+    getattr(args, 'test_w_label_path', '')
+    or _derive_split_variant(args.test_path, split_name='test', labeled=True)
+)
 assert not args.train_path or os.path.exists(args.train_path)
 assert args.pooling in ['cls', 'mean', 'max']
 assert args.lr_scheduler in ['linear', 'cosine']
 
 args.config_path = config_path
 args.model_type = args.model
-args.encoder = args.bert_encoder
-args.pretrained_model = args.bert_encoder
+
+_model_name = (args.model or '').lower()
+_is_text_model = _model_name not in {'distmult', 'complex'}
+
+if _is_text_model:
+    args.encoder = args.bert_encoder
+    args.pretrained_model = args.bert_encoder
+else:
+    args.bert_encoder = ''
+    args.encoder = ''
+    args.pretrained_model = ''
+
+if not args.model_strategy_path:
+    if _model_name in {'distmult', 'complex'}:
+        args.model_strategy_path = 'models/strategies/softmax_strategy.py'
+    else:
+        args.model_strategy_path = 'models/strategies/simkgc_strategy.py'
+
+if not args.model_encoder_path:
+    if _model_name == 'distmult':
+        args.model_encoder_path = 'models/encoders/distmult_encoder.py'
+    elif _model_name == 'complex':
+        args.model_encoder_path = 'models/encoders/complex_encoder.py'
+    else:
+        args.model_encoder_path = 'models/encoders/bert_encoder.py'
+
+if not args.model_sampler_path:
+    if _model_name in {'distmult', 'complex'}:
+        args.model_sampler_path = 'models/samplers/bernoulli_sampler.py'
+    else:
+        args.model_sampler_path = 'models/samplers/masking_sampler.py'
+
+if not args.model_loss_path and _model_name in {'distmult', 'complex'}:
+    args.model_loss_path = 'models/losses/infonce_loss.py'
+
 # `--task` is a separate flag controlling which evaluations to run
 # (link prediction / triple classification / both). Do NOT overwrite it
 # with `args.dataset` here so users can specify evaluation task independently.
@@ -257,7 +408,10 @@ except Exception:
 if not torch.cuda.is_available():
     args.use_amp = False
     args.print_freq = 1
-    warnings.warn('GPU is not available, set use_amp=False and print_freq=1')
+    warnings.warn(
+        'GPU is not available, set use_amp=False and print_freq=1. '
+        + _cuda_unavailable_reason()
+    )
 
 # Ensure `args` exposes `model_dir` and `output_dir` (parser flags were removed).
 if not hasattr(args, 'model_dir'):

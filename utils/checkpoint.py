@@ -54,8 +54,12 @@ def save_checkpoint(state: Dict[str, Any], is_best: bool, filename: str) -> str:
     torch.save(state, path)
 
     if is_best:
-        shutil.copyfile(path, path.with_name(BEST_MODEL_FILENAME))
-    shutil.copyfile(path, path.with_name(LAST_MODEL_FILENAME))
+        best_path = path.with_name(BEST_MODEL_FILENAME)
+        if best_path != path:
+            shutil.copyfile(path, best_path)
+    last_path = path.with_name(LAST_MODEL_FILENAME)
+    if last_path != path:
+        shutil.copyfile(path, last_path)
     return str(path)
 
 

@@ -182,8 +182,6 @@ class SimKGCStrategy(Trainer, Evaluator):
         log_str = f"[EPOCH {epoch}] Loss: {losses.avg:.4f} | Acc@1: {top1.avg:.2f} | Acc@3: {top3.avg:.2f}"
         print(log_str)
         logger.info(log_str)
-        with open(os.path.join(self.args.model_dir, 'valid_metrics.log'), 'a', encoding='utf-8') as f:
-            f.write(log_str + '\n')
 
     @torch.no_grad()
     def eval_epoch(self, epoch) -> dict:

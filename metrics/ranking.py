@@ -37,20 +37,21 @@ def accuracy(output: torch.Tensor, target: torch.Tensor, topk=(1,)) -> list:
 def ranking_metrics_from_ranks(ranks: Sequence[int]) -> dict:
     """Compute link-prediction metrics from 1-based ranks.
 
-    Returns a dictionary containing 'mean_rank', 'mrr', and hit@k metrics.
+    Returns a dictionary containing 'mr'/'mean_rank', 'mrr', and hit@k metrics.
     """
     ranks_list = list(ranks)
     if not ranks_list:
         raise ValueError('ranks must not be empty')
 
     total = float(len(ranks_list))
-    mean_rank = sum(ranks_list) / total
+    mr = sum(ranks_list) / total
     mrr = sum(1.0 / rank for rank in ranks_list) / total
     hit_at_1 = sum(1 for rank in ranks_list if rank <= 1) / total
     hit_at_3 = sum(1 for rank in ranks_list if rank <= 3) / total
     hit_at_10 = sum(1 for rank in ranks_list if rank <= 10) / total
     return {
-        'mean_rank': round(mean_rank, 4),
+        'mr': round(mr, 4),
+        'mean_rank': round(mr, 4),
         'mrr': round(mrr, 4),
         'hit@1': round(hit_at_1, 4),
         'hit@3': round(hit_at_3, 4),

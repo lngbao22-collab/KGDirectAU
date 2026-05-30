@@ -145,14 +145,6 @@ def write_results_report(path: Union[str, Path], *, link_metrics: Optional[dict]
 
     lines = []
 
-    if best_epoch is not None or best_mrr is not None:
-        lines.append('Best Valid')
-        if best_epoch is not None:
-            lines.append(f'  Best Epoch: {best_epoch}')
-        if best_mrr is not None:
-            lines.append(f'  Best MRR: {best_mrr:.6f}')
-        lines.append('')
-
     if link_metrics:
         lines.append('Link Prediction')
         for key in ['mean_rank', 'mrr', 'hit@1', 'hit@3', 'hit@10']:
@@ -165,6 +157,14 @@ def write_results_report(path: Union[str, Path], *, link_metrics: Optional[dict]
         for key in ['accuracy', 'precision', 'recall', 'f1', 'pr_auc', 'roc_auc']:
             if key in triple_metrics:
                 lines.append(f'  {_format_metric_key(key)}: {_format_metric_value(triple_metrics[key])}')
+        lines.append('')
+
+    if best_epoch is not None or best_mrr is not None:
+        lines.append('Best Valid')
+        if best_epoch is not None:
+            lines.append(f'  Best Epoch: {best_epoch}')
+        if best_mrr is not None:
+            lines.append(f'  Best MRR: {best_mrr:.6f}')
         lines.append('')
 
     if train_time is not None or valid_time is not None or test_time is not None or total_time is not None:

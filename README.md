@@ -114,6 +114,27 @@ Notes
 - The repo is organized to separate encoders, loss formulations, samplers and training strategies so you can mix-and-match components.
 - Ensure `torch`, `transformers`, `numpy`, and `tqdm` are installed in your environment before running training or evaluation.
 
+Preprocessing (WN18RR)
+
+- Input files:
+	- [data/WN18RR/wordnet-mlj12-definitions.txt](data/WN18RR/wordnet-mlj12-definitions.txt): entity words and descriptions used to enrich examples.
+	- [data/WN18RR/train.txt](data/WN18RR/train.txt): raw training triples (head\trelation\ttail).
+	- [data/WN18RR/valid.txt](data/WN18RR/valid.txt), [data/WN18RR/test.txt](data/WN18RR/test.txt): raw validation/test triples.
+	- [data/WN18RR/valid_w_label.txt](data/WN18RR/valid_w_label.txt), [data/WN18RR/test_w_label.txt](data/WN18RR/test_w_label.txt): labeled triples for triple-classification (auto-discovered when label paths are omitted).
+
+- Output files (written to `data/WN18RR/preprocessed/` by `python data/preprocess.py --dataset wn18rr`):
+	- [data/WN18RR/preprocessed/entities.json](data/WN18RR/preprocessed/entities.json): per-entity metadata (id, name, description).
+	- [data/WN18RR/preprocessed/relations.json](data/WN18RR/preprocessed/relations.json): per-relation metadata.
+	- [data/WN18RR/preprocessed/entity2id.json](data/WN18RR/preprocessed/entity2id.json): mapping from entity id string to integer index.
+	- [data/WN18RR/preprocessed/relation2id.json](data/WN18RR/preprocessed/relation2id.json): mapping from relation id string to integer index.
+	- Per-split JSON files named after the input basename with `.json` appended (e.g. `valid_w_label.txt.json`, `test_w_label.txt.json`, or `train.txt.json` if provided): enriched triples with text and description fields.
+
+- Purpose / notes:
+	- The preprocess script loads dataset-specific metadata (for WN18RR it uses `wordnet-mlj12-definitions.txt`) to provide human-readable entity names and descriptions used by text-based encoders.
+	- It converts raw tab-separated triples into JSON `TripleExample` objects with fields `head`, `relation`, `tail`, `head_desc`, `tail_desc`, etc., and writes these into the `preprocessed/` folder.
+	- The script auto-discovers labeled splits (`valid_w_label.txt`, `test_w_label.txt`) if label paths are not explicitly provided, but it does not automatically synthesize `train.txt.json`/`valid.txt.json`/`test.txt.json` unless the corresponding raw `*.txt` files are provided or paths are passed in. Running `python data/preprocess.py --dataset wn18rr` will pick up the common filenames in `data/WN18RR/`.
+	- Output files are used by the training and evaluation pipeline (see `configs/*.json` `train_path` / `valid_path` / `test_path` settings).
+
 Model source layout
 -------------------
 Each model implementation should be split into four composable pieces so the repo pipeline can mix-and-match components:

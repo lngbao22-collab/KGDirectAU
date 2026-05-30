@@ -7,13 +7,16 @@ for models: SimKGC.
 
 import torch
 
-from typing import List
+from typing import List, TYPE_CHECKING
 
 from configs.config import args
-from data.dict_hub import get_train_triplet_dict, get_entity_dict, EntityDict, TripletDict
+from data.dict_hub import get_train_triplet_dict, get_entity_dict
 
-entity_dict: EntityDict = get_entity_dict()
-train_triplet_dict: TripletDict = get_train_triplet_dict() if not args.is_test else None
+if TYPE_CHECKING:
+    from data.dataset import EntityDict, TripletDict
+
+entity_dict = get_entity_dict()
+train_triplet_dict = get_train_triplet_dict() if not args.is_test else None
 
 
 def construct_mask(row_exs: List, col_exs: List = None) -> torch.tensor:

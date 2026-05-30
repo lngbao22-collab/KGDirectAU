@@ -72,8 +72,29 @@ class TripletDict:
 	def _load(self, path: str):
 		"""Load triplets from a given path and populate the internal data structures for neighbor retrieval."""
 
-		examples = json.load(open(path, 'r', encoding='utf-8'))
-		examples += [reverse_triplet(obj) for obj in examples]
+		examples = []
+		if path.endswith('.json'):
+			examples = json.load(open(path, 'r', encoding='utf-8'))
+		elif path.endswith('.txt'):
+			with open(path, 'r', encoding='utf-8') as reader:
+				for line in reader:
+					fields = line.strip().split('\t')
+					if len(fields) not in (3, 4):
+						continue
+					head_id, relation, tail_id = fields[:3]
+					examples.append({'head_id': head_id, 'relation': relation, 'tail_id': tail_id})
+		else:
+			raise ValueError(f'Unsupported format: {path}')
+
+		reversed_examples = [
+			{
+				'head_id': ex['tail_id'],
+				'relation': 'inverse {}'.format(ex['relation']),
+				'tail_id': ex['head_id'],
+			}
+			for ex in examples
+		]
+		examples += reversed_examples
 		for ex in examples:
 			self.relations.add(ex['relation'])
 			key = (ex['head_id'], ex['relation'])
@@ -95,6 +116,7 @@ class EntityDict:
 		path = os.path.join(entity_dict_dir, 'entities.json')
 		assert os.path.exists(path)
 		self.entity_exs = [EntityExample(**obj) for obj in json.load(open(path, 'r', encoding='utf-8'))]
+		self._ensure_entity_coverage(entity_dict_dir)
 
 		if inductive_test_path:
 			examples = json.load(open(inductive_test_path, 'r', encoding='utf-8'))
@@ -107,6 +129,58 @@ class EntityDict:
 		self.id2entity = {ex.entity_id: ex for ex in self.entity_exs}
 		self.entity2idx = {ex.entity_id: i for i, ex in enumerate(self.entity_exs)}
 		logger.info('Load {} entities from {}'.format(len(self.id2entity), path))
+
+	def _ensure_entity_coverage(self, entity_dict_dir: str) -> None:
+		"""Backfill entities that appear in raw split files but are missing from entities.json."""
+
+		from configs.config import args as current_args
+
+		known_entity_ids = {ex.entity_id for ex in self.entity_exs}
+		missing_entity_ids = set()
+		for split_path in [getattr(current_args, 'train_path', ''), getattr(current_args, 'valid_path', ''), getattr(current_args, 'test_path', '')]:
+			if not split_path or not os.path.exists(split_path):
+				continue
+			if split_path.endswith('.json'):
+				with open(split_path, 'r', encoding='utf-8') as reader:
+					for obj in json.load(reader):
+						missing_entity_ids.add(obj['head_id'])
+						missing_entity_ids.add(obj['tail_id'])
+			else:
+				with open(split_path, 'r', encoding='utf-8') as reader:
+					for line in reader:
+						fields = line.strip().split('\t')
+						if len(fields) not in (3, 4):
+							continue
+						missing_entity_ids.add(fields[0])
+						missing_entity_ids.add(fields[2])
+
+		missing_entity_ids.difference_update(known_entity_ids)
+		if not missing_entity_ids:
+			return
+
+		definition_candidates = [
+			os.path.join(entity_dict_dir, '..', 'wordnet-mlj12-definitions.txt'),
+			os.path.join(entity_dict_dir, 'wordnet-mlj12-definitions.txt'),
+		]
+		entity_text_map = {}
+		for candidate in definition_candidates:
+			if not os.path.exists(candidate):
+				continue
+			with open(candidate, 'r', encoding='utf-8') as reader:
+				for line in reader:
+					fields = line.strip().split('\t')
+					if len(fields) != 3:
+						continue
+					entity_id, word, _ = fields
+					entity_text_map[entity_id] = word.replace('__', ' ')
+				break
+
+		for entity_id in sorted(missing_entity_ids):
+			self.entity_exs.append(EntityExample(
+				entity_id=entity_id,
+				entity=entity_text_map.get(entity_id, entity_id),
+				entity_desc='',
+			))
 
 	def entity_to_idx(self, entity_id: str) -> int:
 		"""Given an entity ID, return its corresponding index in the entity list."""
@@ -135,7 +209,19 @@ class LinkGraph:
 	def __init__(self, train_path: str):
 		logger.info('Start to build link graph from {}'.format(train_path))
 		self.graph = {}
-		examples = json.load(open(train_path, 'r', encoding='utf-8'))
+		if train_path.endswith('.json'):
+			examples = json.load(open(train_path, 'r', encoding='utf-8'))
+		elif train_path.endswith('.txt'):
+			examples = []
+			with open(train_path, 'r', encoding='utf-8') as reader:
+				for line in reader:
+					fields = line.strip().split('\t')
+					if len(fields) not in (3, 4):
+						continue
+					head_id, relation, tail_id = fields[:3]
+					examples.append({'head_id': head_id, 'relation': relation, 'tail_id': tail_id})
+		else:
+			raise ValueError(f'Unsupported format: {train_path}')
 		for ex in examples:
 			head_id, tail_id = ex['head_id'], ex['tail_id']
 			if head_id not in self.graph:
@@ -303,8 +389,6 @@ class Dataset(torch.utils.data.dataset.Dataset):
 
 def load_data(path: str, add_forward_triplet: bool = True, add_backward_triplet: bool = True) -> List[Example]:
 	"""Load examples from a given path, which can be in JSON or TXT format, and return a list of Example objects. The function also supports adding forward and backward triplets based on the specified flags."""
-
-	logger.info('In test mode: {}'.format(args.is_test))
 
 	examples = []
 	if path.endswith('.json'):

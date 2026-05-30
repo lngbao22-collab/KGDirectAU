@@ -14,6 +14,10 @@ from sklearn.metrics import (
 def classification_metrics(y_true, y_pred, y_prob=None, zero_division=0) -> dict:
     """Compute standard binary classification metrics for triple classification."""
 
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+    unique_classes = np.unique(y_true)
+
     metrics = {
         'accuracy': accuracy_score(y_true, y_pred),
         'precision': precision_score(y_true, y_pred, zero_division=zero_division),
@@ -22,19 +26,24 @@ def classification_metrics(y_true, y_pred, y_prob=None, zero_division=0) -> dict
     }
 
     if y_prob is None:
-        metrics['roc_auc'] = float('nan')
-        metrics['pr_auc'] = float('nan')
+        metrics['roc_auc'] = 0.0
+        metrics['pr_auc'] = 0.0
+        return metrics
+
+    if unique_classes.size < 2:
+        metrics['roc_auc'] = 0.0
+        metrics['pr_auc'] = 0.0
         return metrics
 
     try:
         metrics['roc_auc'] = roc_auc_score(y_true, y_prob)
     except Exception:
-        metrics['roc_auc'] = float('nan')
+        metrics['roc_auc'] = 0.0
 
     try:
         metrics['pr_auc'] = average_precision_score(y_true, y_prob)
     except Exception:
-        metrics['pr_auc'] = float('nan')
+        metrics['pr_auc'] = 0.0
 
     return metrics
 
