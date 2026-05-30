@@ -29,7 +29,8 @@ class CustomBertModel(BaseModel, ABC):
         super().__init__()
         self.args = args
         self.config = AutoConfig.from_pretrained(args.bert_encoder)
-        self.log_inv_t = torch.nn.Parameter(torch.tensor(1.0 / args.t).log(), requires_grad=args.finetune_t)
+        info_nce_t = getattr(args, 'infonce_t', getattr(args, 't', 0.05))
+        self.log_inv_t = torch.nn.Parameter(torch.tensor(1.0 / info_nce_t).log(), requires_grad=args.finetune_t)
         self.add_margin = args.additive_margin
         self.batch_size = args.batch_size
         self.pre_batch = args.pre_batch
@@ -142,7 +143,7 @@ class CustomBertModel(BaseModel, ABC):
         return {'ent_vectors': ent_vectors.detach()}
 
     @torch.no_grad()
-    def predict_by_examples(self, examples: List[Example], batch_size: Optional[int] = None, num_workers: int = 1) -> (torch.Tensor, torch.Tensor):
+    def predict_by_examples(self, examples: List[Example], batch_size: Optional[int] = None, num_workers: int = 1) -> tuple[torch.Tensor, torch.Tensor]:
         """Predict head-relation and tail entity vectors for a list of examples, used for evaluation."""
 
         if batch_size is None:

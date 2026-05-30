@@ -7,3 +7,4 @@ logs/
 entities.json
 relations.json
 data/**/preprocessed/
+*.txt.json
