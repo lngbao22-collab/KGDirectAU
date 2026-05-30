@@ -165,8 +165,6 @@ def main():
     if trainer_cls is None:
         raise ImportError(f'Could not find a Trainer class in {strategy_path}')
 
-    print("trainer_cls =", trainer_cls)
-    print("trainer_cls module =", trainer_cls.__module__)
     trainer = trainer_cls(args, ngpus_per_node=ngpus_per_node)
     train_summary = trainer.train_loop()
 

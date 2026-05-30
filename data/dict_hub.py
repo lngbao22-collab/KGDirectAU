@@ -116,6 +116,13 @@ def get_entity_dict() -> 'EntityDict':
     return entity_dict
 
 
+def get_relation_id_map() -> dict:
+    """Get the relation-to-id mapping, initializing it if necessary."""
+
+    _init_relation_id_map()
+    return relation_id_map
+
+
 def get_train_triplet_dict() -> 'TripletDict':
     """Get the training triplet dictionary, initializing it if necessary."""
 

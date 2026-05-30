@@ -62,14 +62,12 @@ class TripletDict:
 
 	def __init__(self, path_list: List[str]):
 		self.path_list = path_list
-		logger.info('Triplets path: {}'.format(self.path_list))
 		self.relations = set()
 		self.hr2tails = {}
 		self.triplet_cnt = 0
 
 		for path in self.path_list:
 			self._load(path)
-		logger.info('Triplet statistics: {} relations, {} triplets'.format(len(self.relations), self.triplet_cnt))
 
 	def _load(self, path: str) -> None:
 		"""Load triplets from a given path and populate the internal data structures for neighbor retrieval."""

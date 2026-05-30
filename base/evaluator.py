@@ -305,7 +305,7 @@ class Evaluator:
         return metrics_cls
 
     @torch.no_grad()
-    def evaluate_link_prediction_inplace(self, model, eval_path, entity_dict, output_log_path, batch_size=128, eval_forward=True) -> dict:
+    def evaluate_link_prediction_inplace(self, model, eval_path, entity_dict, output_log_path, batch_size=128, eval_forward=True, examples=None) -> dict:
         """Evaluate link prediction using the model's forward pass."""
 
         model = get_model_obj(model)
@@ -314,8 +314,8 @@ class Evaluator:
             print(f"[EVAL] {eval_path} not found, skip link prediction evaluation.")
             return {}
         eval_set = 'TEST' if 'test' in eval_path else 'VALID'
-        print(f"\n[{eval_set}] Evaluating link prediction inplace on {eval_path} ...")
-        examples = load_data(eval_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
+        if examples is None:
+            examples = load_data(eval_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
 
         if hasattr(model, 'score_batch'):
             all_entity_ids = [entity_ex.entity_id for entity_ex in entity_dict.entity_exs]
@@ -357,7 +357,8 @@ class Evaluator:
             ranks.append(row[1] + 1)
 
         metrics = ranking_metrics_from_ranks(ranks)
-        log_str = f"[{eval_set}] Link Prediction Metrics: {json.dumps(metrics)}"
+        direction = 'forward' if eval_forward else 'backward'
+        log_str = f"[{eval_set}][{direction}] Link Prediction Metrics: {json.dumps(metrics)}"
         print(log_str)
         return metrics
 
@@ -386,7 +387,6 @@ class Evaluator:
             print('[TEST] test_w_label.txt not found, skip test evaluation.')
             return {}
 
-        print('\n[TEST] Evaluating triple classification on test set...')
         test_exs = [ex for ex in load_data(test_label_path, add_forward_triplet=False, add_backward_triplet=False) if ex.label is not None]
         y_true = [int(ex.label) for ex in test_exs]
         y_prob = []

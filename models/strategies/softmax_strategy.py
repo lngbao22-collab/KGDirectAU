@@ -9,7 +9,7 @@ from torch.optim import Adam
 
 from base.evaluator import Evaluator
 from configs.config import args
-from data.dataset import load_data
+from data.dataset import Example, load_data, reverse_triplet
 from data.dict_hub import get_entity_dict, get_relation_id_map
 from models.losses.infonce_loss import compute_listwise_loss
 from models.builder import import_module_from_path, load_attr_from_path
@@ -206,8 +206,8 @@ class DistMultTrainer:
 			self.optimizer.step()
 			epoch_loss += loss.item() * ss.size(0)
 
-		log_str = f"[EPOCH {epoch}] Loss: {epoch_loss / max(len(src), 1):.4f}"
-		print(log_str)
+		display_epoch = epoch + 1
+		log_str = f"[EPOCH {display_epoch}] Loss: {epoch_loss / max(len(src), 1):.4f}"
 		logger.info(log_str)
 
 	@torch.no_grad()
@@ -219,6 +219,16 @@ class DistMultTrainer:
 
 		if valid_eval_path and os.path.exists(valid_eval_path):
 			valid_exs = load_data(valid_eval_path, add_forward_triplet=True, add_backward_triplet=False)
+			valid_backward_exs = [
+				Example(**reverse_triplet({
+					'head_id': ex.head_id,
+					'head': ex.head,
+					'relation': ex.relation,
+					'tail_id': ex.tail_id,
+					'tail': ex.tail,
+				}))
+				for ex in valid_exs
+			]
 			if valid_exs:
 				epoch_loss = 0.0
 				batch_size = max(getattr(self.args, 'batch_size', 1), 1)
@@ -238,16 +248,20 @@ class DistMultTrainer:
 
 			valid_entity_dict = get_entity_dict()
 			valid_output_path = os.path.join(self.args.output_dir, 'valid_link_prediction.log')
+			display_epoch = epoch + 1
+			logger.info('[EPOCH %s] Validation link prediction forward pass on %s', display_epoch, valid_eval_path)
 			forward_metrics = self.evaluator.evaluate_link_prediction_inplace(
-				self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=True)
+				self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=True, examples=valid_exs)
+			logger.info('[EPOCH %s] Validation link prediction backward pass on %s', display_epoch, valid_eval_path)
 			backward_metrics = self.evaluator.evaluate_link_prediction_inplace(
-				self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=False)
+				self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=False, examples=valid_backward_exs)
 			metric_dict.update(self._average_metric_dict(forward_metrics, backward_metrics))
+			logger.info('[EPOCH %s] Validation link prediction average metrics: %s', display_epoch, metric_dict)
 
 		metric_dict = {key: metric_dict[key] for key in ('loss', 'mrr') if key in metric_dict}
 
 		if metric_dict:
-			logger.info('Epoch {}, valid metric: {}'.format(epoch, metric_dict))
+			logger.info('Epoch {}, valid metric: {}'.format(epoch + 1, metric_dict))
 		return metric_dict
 
 	def _extract_monitor_value(self, metric_dict):
@@ -289,7 +303,7 @@ class DistMultTrainer:
 				self.best_checkpoint_path = saved_checkpoint_path
 		self.total_time = time.time() - total_start
 		return {
-			'best_epoch': None if self.best_metric is None else self.best_metric.get('epoch'),
+			'best_epoch': None if self.best_metric is None else self.best_metric.get('epoch', 0) + 1,
 			'best_mrr': None if self.best_metric is None else self.best_metric.get('score'),
 			'train_time': self.train_time,
 			'valid_time': self.valid_time,

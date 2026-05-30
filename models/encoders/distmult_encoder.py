@@ -82,7 +82,7 @@ class DistMultEncoder(nn.Module):
 		if device is None:
 			device = self.ent_embed.weight.device
 		head_indices = _as_index_tensor([example.head_id for example in examples], self.entity_dict.entity_to_idx, device)
-		relation_indices = _as_index_tensor([example.relation for example in examples], self.rel_to_idx.__getitem__, device)
+		relation_indices = _as_index_tensor([example.relation for example in examples], self._relation_to_idx, device)
 		query_vectors = F.normalize(self.ent_embed(head_indices) * self.rel_embed(relation_indices), p=2, dim=-1)
 		return query_vectors
 
@@ -91,7 +91,7 @@ class DistMultEncoder(nn.Module):
 
 		device = self.ent_embed.weight.device
 		head_indices = _as_index_tensor([example.head_id for example in examples], self.entity_dict.entity_to_idx, device)
-		relation_indices = _as_index_tensor([example.relation for example in examples], self.rel_to_idx.__getitem__, device)
+		relation_indices = _as_index_tensor([example.relation for example in examples], self._relation_to_idx, device)
 		tail_indices = _as_index_tensor([example.tail_id for example in examples], self.entity_dict.entity_to_idx, device)
 		query_vectors = F.normalize(self.ent_embed(head_indices) * self.rel_embed(relation_indices), p=2, dim=-1)
 		tail_vectors = F.normalize(self.ent_embed(tail_indices), p=2, dim=-1)
@@ -110,11 +110,30 @@ class DistMultEncoder(nn.Module):
 
 		device = self.ent_embed.weight.device
 		head_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
-		relation_indices = _as_index_tensor(relations, self.rel_to_idx.__getitem__, device)
+		relation_indices = _as_index_tensor(relations, self._relation_to_idx, device)
 		candidate_indices = _as_index_tensor(tail_entity_ids, self.entity_dict.entity_to_idx, device)
 		query_vectors = F.normalize(self.ent_embed(head_indices) * self.rel_embed(relation_indices), p=2, dim=-1)
 		candidate_vectors = self.entity_embeddings(device=device)[candidate_indices]
 		return torch.mm(query_vectors, candidate_vectors.t())
+
+	def _relation_to_idx(self, relation: str) -> int:
+		"""Resolve relation variants used by preprocessing and inverse triplet generation."""
+
+		if relation in self.rel_to_idx:
+			return self.rel_to_idx[relation]
+		if relation.startswith('inverse '):
+			base_relation = relation[len('inverse '):]
+			if base_relation in self.rel_to_idx:
+				return self.rel_to_idx[base_relation]
+		if relation.startswith('inverse_'):
+			base_relation = relation[len('inverse_'):]
+			candidate = '_' + base_relation if not base_relation.startswith('_') else base_relation
+			if candidate in self.rel_to_idx:
+				return self.rel_to_idx[candidate]
+		normalized = ' '.join(relation.split())
+		if normalized in self.rel_to_idx:
+			return self.rel_to_idx[normalized]
+		raise KeyError(relation)
 
 	def compute_logits(self, output_dict: dict | torch.Tensor, batch_dict: dict) -> dict:
 		"""Convert a forward pass into logits for triple classification."""
