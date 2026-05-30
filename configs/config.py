@@ -1,4 +1,5 @@
 """Config parsing and global args."""
+
 import argparse
 import json
 import os
@@ -308,7 +309,7 @@ def _cuda_unavailable_reason() -> str:
     """Return a human-readable reason when CUDA is unavailable in the current Python env."""
 
     torch_cuda = getattr(torch.version, 'cuda', None)
-    torch_version = getattr(torch, '__version__', 'unknown')
+    torch_version = getattr(torch, '_version_', 'unknown')
     executable = sys.executable
 
     if not torch_cuda:
@@ -333,7 +334,7 @@ def _resolve_data_path(path: str) -> str:
     if os.path.isabs(path) and os.path.exists(path):
         return path
 
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(_file_)))
     candidates = [
         path,
         os.path.join(os.getcwd(), path),
@@ -420,9 +421,9 @@ if not args.model_sampler_path:
 if not args.model_loss_path and _model_name in {'distmult', 'complex'}:
     args.model_loss_path = 'models/losses/infonce_loss.py'
 
-# `--task` is a separate flag controlling which evaluations to run
+# --task is a separate flag controlling which evaluations to run
 # (link prediction / triple classification / both). Do NOT overwrite it
-# with `args.dataset` here so users can specify evaluation task independently.
+# with args.dataset here so users can specify evaluation task independently.
 
 if args.seed is not None:
     random.seed(args.seed)
@@ -449,7 +450,7 @@ if not torch.cuda.is_available():
         + _cuda_unavailable_reason()
     )
 
-# Ensure `args` exposes `model_dir` and `output_dir` (parser flags were removed).
+# Ensure args exposes model_dir and output_dir (parser flags were removed).
 if not hasattr(args, 'model_dir'):
     args.model_dir = ''
 if not hasattr(args, 'output_dir'):
@@ -480,10 +481,10 @@ if not args.model_dir:
     args.output_dir = args.model_dir
     
 def apply_train_args(train_args: SimpleNamespace) -> SimpleNamespace:
-    """Merge training-time args from a checkpoint with current global `args`.
+    """Merge training-time args from a checkpoint with current global args.
 
     Ensures any missing flags are filled from current parser defaults and
-    updates global `args` for evaluation flags like `use_link_graph` and `is_test`.
+    updates global args for evaluation flags like use_link_graph and is_test.
     """
 
     train_args_dict = vars(train_args)
@@ -491,7 +492,7 @@ def apply_train_args(train_args: SimpleNamespace) -> SimpleNamespace:
         if k not in train_args_dict:
             train_args_dict[k] = v
 
-    # Export training flags to global `args` used at runtime
+    # Export training flags to global args used at runtime
     args.use_link_graph = getattr(train_args, 'use_link_graph', args.use_link_graph)
     # When applying training args for evaluation, prefer explicit test flag if present,
     # otherwise set evaluation mode to True to indicate we're loading a checkpoint for eval.
@@ -502,7 +503,7 @@ def apply_train_args(train_args: SimpleNamespace) -> SimpleNamespace:
 def _merge_with_defaults(cfg: Dict[str, Any]) -> SimpleNamespace:
     """Return a SimpleNamespace merged with current parser defaults.
 
-    This fills in any missing keys from the current `args` defaults so
+    This fills in any missing keys from the current args defaults so
     downstream code can rely on a complete args namespace (useful when
     loading hyperparameters from JSON files).
     """
@@ -515,7 +516,7 @@ def _merge_with_defaults(cfg: Dict[str, Any]) -> SimpleNamespace:
 def load_args_from_json(path: str) -> SimpleNamespace:
     """Load args from a JSON file and merge with parser defaults.
 
-    Returns a `SimpleNamespace` suitable to pass to `apply_train_args`.
+    Returns a SimpleNamespace suitable to pass to apply_train_args.
     """
 
     if not os.path.exists(path):

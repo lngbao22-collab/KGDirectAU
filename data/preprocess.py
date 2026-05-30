@@ -342,6 +342,24 @@ def _has_entries(path: str) -> bool:
         return any(True for _ in entries)
 
 
+def _resolve_split_input(data_dir: str, explicit_path: str, fallback_names: Sequence[str]) -> str:
+    """Resolve a split path from an explicit CLI argument or common files under the data directory."""
+
+    candidates = []
+    if explicit_path:
+        candidates.append(explicit_path)
+        candidates.append(os.path.join(data_dir, os.path.basename(explicit_path)))
+
+    for fallback_name in fallback_names:
+        candidates.append(os.path.join(data_dir, fallback_name))
+
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+
+    return explicit_path if explicit_path and os.path.exists(explicit_path) else ""
+
+
 def preprocess_dataset(args) -> None:
     """Preprocess the dataset according to the specified arguments, including loading metadata, mapping examples, and saving processed files."""
 
@@ -352,30 +370,6 @@ def preprocess_dataset(args) -> None:
     if _has_entries(output_dir):
         print(f"Dataset has been preprocessed and saved in {output_dir}")
         return
-
-    def _auto_path(path: str, fallback_names: Sequence[str]) -> str:
-        """Resolve an explicit path first, then fall back to common filenames in data_dir."""
-
-        if path and os.path.exists(path):
-            return path
-        if path:
-            candidate = os.path.join(data_dir, os.path.basename(path))
-            if os.path.exists(candidate):
-                return candidate
-        for fallback_name in fallback_names:
-            candidate = os.path.join(data_dir, fallback_name)
-            if os.path.exists(candidate):
-                return candidate
-        return path
-
-    def _infer_split_path(path: str, source_suffix: str, target_suffix: str, fallback_names: Sequence[str]) -> str:
-        """Resolve a split path and transparently swap between raw and labeled variants when needed."""
-
-        derived = _replace_split_suffix(path, source_suffix, target_suffix)
-        resolved = _auto_path(derived, fallback_names)
-        if resolved:
-            return resolved
-        return _auto_path(path, fallback_names)
 
     if dataset == "wn18rr":
         entity_text, relation_text, entity_desc = _load_wn18rr_metadata(data_dir)
@@ -390,68 +384,13 @@ def preprocess_dataset(args) -> None:
         entity_text, relation_text, entity_desc = _load_generic_metadata(args)
         relation_transform = None
 
-    valid_path = _infer_split_path(args.valid_path, "valid_w_label.txt", "valid.txt", ["valid.txt", "valid.txt.json"])
-    test_path = _infer_split_path(args.test_path, "test_w_label.txt", "test.txt", ["test.txt", "test.txt.json"])
-    valid_w_label_path = _infer_split_path(
-        getattr(args, "valid_w_label_path", ""),
-        "valid.txt",
-        "valid_w_label.txt",
-        ["valid_w_label.txt", "valid_w_label.txt.json"],
-    )
-    if not valid_w_label_path and valid_path:
-        valid_w_label_path = _infer_split_path(
-            valid_path,
-            "valid.txt",
-            "valid_w_label.txt",
-            ["valid_w_label.txt", "valid_w_label.txt.json"],
-        )
-    test_w_label_path = _infer_split_path(
-        getattr(args, "test_w_label_path", ""),
-        "test.txt",
-        "test_w_label.txt",
-        ["test_w_label.txt", "test_w_label.txt.json"],
-    )
-    if not test_w_label_path and test_path:
-        test_w_label_path = _infer_split_path(
-            test_path,
-            "test.txt",
-            "test_w_label.txt",
-            ["test_w_label.txt", "test_w_label.txt.json"],
-        )
-
     split_paths = [
-        ("train", args.train_path),
-        ("valid", valid_path),
-        ("test", test_path),
-        ("valid_w_label", valid_w_label_path),
-        ("test_w_label", test_w_label_path),
+        ("train", _resolve_split_input(data_dir, args.train_path, ["train.txt"])),
+        ("valid", _resolve_split_input(data_dir, args.valid_path, ["valid.txt"])),
+        ("test", _resolve_split_input(data_dir, args.test_path, ["test.txt"])),
+        ("valid_w_label", _resolve_split_input(data_dir, getattr(args, "valid_w_label_path", ""), ["valid_w_label.txt"])),
+        ("test_w_label", _resolve_split_input(data_dir, getattr(args, "test_w_label_path", ""), ["test_w_label.txt"])),
     ]
-
-    def _infer_label_path(source_path: str, fallback_names: Sequence[str]) -> str:
-        """Find a labeled counterpart for a split path without requiring a dedicated CLI flag."""
-
-        if not source_path:
-            return ""
-        base_name = os.path.basename(source_path).lower()
-        if "w_label" in base_name or "label" in base_name:
-            return source_path
-
-        source_dir = os.path.dirname(source_path)
-        for fallback_name in fallback_names:
-            candidate = os.path.join(source_dir, fallback_name)
-            if os.path.exists(candidate):
-                return candidate
-
-        candidate = os.path.join(data_dir, os.path.basename(source_path))
-        if os.path.exists(candidate) and ("w_label" in os.path.basename(candidate).lower() or "label" in os.path.basename(candidate).lower()):
-            return candidate
-
-        return ""
-
-    split_paths.extend([
-        ("valid_label", _infer_label_path(args.valid_path, ["valid_w_label.txt", "valid_label.txt", "valid_w_label.txt.json", "valid_label.txt.json"])),
-        ("test_label", _infer_label_path(args.test_path, ["test_w_label.txt", "test_label.txt", "test_w_label.txt.json", "test_label.txt.json"])),
-    ])
     split_paths = [(split_name, path) for split_name, path in split_paths if path]
     if not split_paths:
         raise ValueError("At least one of --train-path, --valid-path, or --test-path must be provided")
