@@ -387,7 +387,19 @@ class Evaluator:
             print('[TEST] test_w_label.txt not found, skip test evaluation.')
             return {}
 
-        test_exs = [ex for ex in load_data(test_label_path, add_forward_triplet=False, add_backward_triplet=False) if ex.label is not None]
+        print('\n[TEST] Evaluating triple classification on test set...')
+        test_exs = [
+            ex
+            for ex in load_data(
+                test_label_path,
+                add_forward_triplet=True,
+                add_backward_triplet=False,
+            )
+            if ex.label is not None
+        ]
+        if not test_exs:
+            print(f"[TEST] {test_label_path} has no labeled examples, skip test evaluation.")
+            return {}
         y_true = [int(ex.label) for ex in test_exs]
         y_prob = []
         batch_size = 128

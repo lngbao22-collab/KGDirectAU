@@ -36,7 +36,7 @@
   "print_freq": 20,
   "rerank_n_hop": 2,
   "seed": null,
-  "t": 0.05,
+  "infonce_t": 0.05,
   "use_amp": true,
   "use_link_graph": true,
   "use_self_negative": false,

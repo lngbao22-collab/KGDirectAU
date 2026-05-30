@@ -75,7 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--eval-every-n-step', default=10000, type=int,
                         help='evaluate every n steps')
     parser.add_argument('--finetune-t', action='store_true',
-                        help='make temperature trainable')
+                        help='make InfoNCE temperature trainable')
     parser.add_argument('--grad-clip', default=10.0, type=float,
                         help='gradient clipping')
     parser.add_argument('--is-test', action='store_true',
@@ -102,8 +102,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help='neighbor hops for reranking during evaluation')
     parser.add_argument('--seed', default=None, type=int,
                         help='random seed')
-    parser.add_argument('--t', default=0.05, type=float,
-                        help='temperature parameter')
+    parser.add_argument('--infonce-t', '--t', default=0.05, type=float, dest='infonce_t',
+                        help='InfoNCE temperature parameter')
     parser.add_argument('--use-amp', action='store_true',
                         help='use AMP if available')
     parser.add_argument('--use-link-graph', action='store_true',
