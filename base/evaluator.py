@@ -19,6 +19,7 @@ from metrics.classification import classification_metrics, find_global_threshold
 from configs.config import args as global_args
 from data.dict_hub import build_tokenizer
 from models.builder import import_module_from_path, load_attr_from_path
+from models.builder import import_module_from_path, load_attr_from_path
 from utils.checkpoint import load_state_dict_clean, load_checkpoint, best_model_path, checkpoint_path
 from configs.config import apply_train_args
 import numpy as np
@@ -51,12 +52,14 @@ def _filter_known(batch_score: torch.Tensor, examples: List[Example], all_triple
 
 def _infer_target_indices(examples: Sequence[Example], entity_dict) -> torch.Tensor:
     """Infer target entity indices for a batch of examples."""
+
     target_indices = [entity_dict.entity_to_idx(ex.tail_id) for ex in examples]
     return torch.LongTensor(target_indices)
 
 
 def _score_by_embedding_adapter(model, examples: List[Example], entity_tensor: torch.Tensor) -> torch.Tensor:
     """Score examples using the model's embedding adapters."""
+
     hr_tensor = model.hr_embeddings(examples, entity_tensor.device)
     if hr_tensor.size(1) != entity_tensor.size(1):
         raise ValueError('hr_embeddings and entity_embeddings must have the same hidden size')
@@ -79,6 +82,7 @@ def evaluate_model(
     Returns:
         topk_scores, topk_indices, metrics
     """
+
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -195,7 +199,7 @@ class Evaluator:
         self.train_args: SimpleNamespace | None = None
         self.use_cuda = False
 
-    def load(self, ckt_path: str, use_data_parallel: bool = False):
+    def load(self, ckt_path: str, use_data_parallel: bool = False) -> None:
         """Load checkpoint, apply training args, build tokenizer and model, and load weights."""
 
         checkpoint = load_checkpoint(ckt_path, map_location='cpu')
@@ -214,6 +218,13 @@ class Evaluator:
         if encoder_path.endswith('bert_encoder.py'):
             build_tokenizer(self.train_args)
 
+        encoder_path = getattr(self.train_args, 'model_encoder_path', '') or 'models/encoders/bert_encoder.py'
+        try:
+            build_model = load_attr_from_path(encoder_path, 'build_model')
+        except Exception:
+            encoder_mod = import_module_from_path(encoder_path)
+            build_model = getattr(encoder_mod, 'build_model')
+
         self.model = build_model(self.train_args)
         load_state_dict_clean(self.model, ckt_path)
         self.model.eval()
@@ -229,7 +240,7 @@ class Evaluator:
         logger.info('Load model from %s successfully', ckt_path)
 
     @torch.no_grad()
-    def evaluate_triple_classification_inplace(self, model, label_file, output_log_path, batch_size=128):
+    def evaluate_triple_classification_inplace(self, model, label_file, output_log_path, batch_size=128) -> dict:
         """Evaluate triple classification using the model's forward pass."""
 
         model = get_model_obj(model)
@@ -294,14 +305,14 @@ class Evaluator:
         return metrics_cls
 
     @torch.no_grad()
-    def evaluate_link_prediction_inplace(self, model, eval_path, entity_dict, output_log_path, batch_size=128, eval_forward=True):
+    def evaluate_link_prediction_inplace(self, model, eval_path, entity_dict, output_log_path, batch_size=128, eval_forward=True) -> dict:
         """Evaluate link prediction using the model's forward pass."""
 
         model = get_model_obj(model)
         model.eval()
         if not os.path.exists(eval_path):
             print(f"[EVAL] {eval_path} not found, skip link prediction evaluation.")
-            return
+            return {}
         eval_set = 'TEST' if 'test' in eval_path else 'VALID'
         print(f"\n[{eval_set}] Evaluating link prediction inplace on {eval_path} ...")
         examples = load_data(eval_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
@@ -332,7 +343,7 @@ class Evaluator:
             score = torch.mm(hr_tensor, entities_tensor.t())
         all_triplet_dict = get_all_triplet_dict()
         _filter_known(score, examples, all_triplet_dict, entity_dict)
-        target = torch.LongTensor([entity_dict.entity_to_idx(ex.tail_id) for ex in examples])
+        target = torch.LongTensor([entity_dict.entity_to_idx(ex.tail_id) for ex in examples]).to(score.device)
         sorted_indices = torch.sort(score, dim=-1, descending=True).indices
         target_rank = torch.nonzero(sorted_indices.eq(target.unsqueeze(-1)).long(), as_tuple=False)
         if target_rank.size(0) != score.size(0):
@@ -350,7 +361,7 @@ class Evaluator:
         print(log_str)
         return metrics
 
-    def evaluate_test_triple_classification(self, epoch=None):
+    def evaluate_test_triple_classification(self, epoch=None) -> dict:
         """Evaluate triple classification on the test split using the loaded checkpoint."""
 
         args = self.args if self.args is not None else global_args
@@ -373,7 +384,7 @@ class Evaluator:
 
         if not os.path.exists(test_label_path):
             print('[TEST] test_w_label.txt not found, skip test evaluation.')
-            return
+            return {}
 
         print('\n[TEST] Evaluating triple classification on test set...')
         test_exs = [ex for ex in load_data(test_label_path, add_forward_triplet=False, add_backward_triplet=False) if ex.label is not None]
@@ -432,4 +443,3 @@ class Evaluator:
         logger.info(log_cls)
 
         return metrics_cls
-

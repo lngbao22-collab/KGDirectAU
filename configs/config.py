@@ -164,6 +164,8 @@ def _resolve_output_dir() -> str:
 
 
 def _format_model_name(model: str) -> str:
+    """Format the model name for consistent config lookup and output naming."""
+
     mapping = {
         'simkgc': 'SimKGC',
         'transe': 'TransE',
@@ -174,6 +176,8 @@ def _format_model_name(model: str) -> str:
 
 
 def _format_dataset_name(dataset: str) -> str:
+    """Format the dataset name for consistent config lookup and output naming."""
+
     mapping = {
         'wn18rr': 'WN18RR',
         'fb15k237': 'FB15k237',
@@ -321,6 +325,38 @@ def _cuda_unavailable_reason() -> str:
     )
 
 
+def _resolve_data_path(path: str) -> str:
+    """Resolve a dataset path against the repo root and common layout variants."""
+
+    if not path:
+        return path
+    if os.path.isabs(path) and os.path.exists(path):
+        return path
+
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidates = [
+        path,
+        os.path.join(os.getcwd(), path),
+        os.path.join(repo_root, path),
+    ]
+
+    if '/preprocessed/' in path:
+        candidates.append(path.replace('/preprocessed/', '/'))
+        candidates.append(os.path.join(repo_root, path.replace('/preprocessed/', '/')))
+
+    if path.endswith('.json'):
+        candidates.append(path[:-5])
+        candidates.append(os.path.join(repo_root, path[:-5]))
+    elif path.endswith('.txt'):
+        candidates.append(path + '.json')
+        candidates.append(os.path.join(repo_root, path + '.json'))
+
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return path
+
+
 parser = build_parser()
 args, unknown_args = parser.parse_known_args()
 
@@ -442,6 +478,7 @@ if getattr(args, 'output_dir_prefix', ''):
 if not args.model_dir:
     args.model_dir = _resolve_output_dir()
     args.output_dir = args.model_dir
+    
 def apply_train_args(train_args: SimpleNamespace) -> SimpleNamespace:
     """Merge training-time args from a checkpoint with current global `args`.
 

@@ -4,7 +4,7 @@ import json
 import os
 from collections import deque
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import torch
 import torch.utils.data.dataset
@@ -16,25 +16,25 @@ from utils.logger import logger
 from data.dict_hub import get_entity_dict, get_link_graph, get_tokenizer
 
 
-def _get_entity_dict():
+def _get_entity_dict() -> EntityDict:
 	"""Get the entity dictionary, which provides mapping from entity IDs to their descriptions."""
 
 	return get_entity_dict()
 
 
-def _get_link_graph():
+def _get_link_graph() -> TripletDict:
 	"""Get the link graph, which provides neighbor information for entities."""
 
 	return get_link_graph()
 
 
-def _get_tokenizer():
+def _get_tokenizer() -> Any:
 	"""Get the tokenizer, which is used to tokenize text inputs."""
 
 	return get_tokenizer()
 
 
-def reverse_triplet(obj):
+def reverse_triplet(obj) -> dict:
 	"""Given a triplet object, return a new triplet object with head and tail reversed, and relation modified to indicate inversion."""
 
 	return {
@@ -69,7 +69,7 @@ class TripletDict:
 			self._load(path)
 		logger.info('Triplet statistics: {} relations, {} triplets'.format(len(self.relations), self.triplet_cnt))
 
-	def _load(self, path: str):
+	def _load(self, path: str) -> None:
 		"""Load triplets from a given path and populate the internal data structures for neighbor retrieval."""
 
 		examples = []
@@ -197,7 +197,7 @@ class EntityDict:
 
 		return self.entity_exs[idx]
 
-	def __len__(self):
+	def __len__(self) -> int:
 		"""Return the total number of entities in the dictionary."""
 
 		return len(self.entity_exs)
@@ -269,7 +269,7 @@ class Example:
 		self.label = int(label) if label is not None else None
 
 	@property
-	def head_desc(self):
+	def head_desc(self) -> str:
 		"""Return the description of the head entity, or an empty string if the head ID is not provided."""
 
 		if not self.head_id:
@@ -277,7 +277,7 @@ class Example:
 		return _get_entity_dict().get_entity_by_id(self.head_id).entity_desc
 
 	@property
-	def tail_desc(self):
+	def tail_desc(self) -> str:
 		"""Return the description of the tail entity, or an empty string if the tail ID is not provided."""
 
 		if not self.tail_id:
@@ -285,7 +285,7 @@ class Example:
 		return _get_entity_dict().get_entity_by_id(self.tail_id).entity_desc
 
 	@property
-	def head(self):
+	def head(self) -> str:
 		"""Return the name of the head entity, or an empty string if the head ID is not provided."""
 
 		if not self.head_id:
@@ -293,7 +293,7 @@ class Example:
 		return _get_entity_dict().get_entity_by_id(self.head_id).entity
 
 	@property
-	def tail(self):
+	def tail(self) -> str:
 		"""Return the name of the tail entity, or an empty string if the tail ID is not provided."""
 
 		if not self.tail_id:
@@ -376,12 +376,12 @@ class Dataset(torch.utils.data.dataset.Dataset):
 				else:
 					self.examples.extend(load_data(path))
 
-	def __len__(self):
+	def __len__(self) -> int:
 		"""Return the total number of examples in the dataset."""
 
 		return len(self.examples)
 
-	def __getitem__(self, index):
+	def __getitem__(self, index) -> dict:
 		"""Given an index, return the vectorized representation of the corresponding example."""
 
 		return self.examples[index].vectorize()

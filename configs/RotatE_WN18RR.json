@@ -1,11 +1,6 @@
 {
-  "model": "DistMult",
-  "model_encoder_path": "models/encoders/distmult_encoder.py",
-  "model_loss_path": "models/losses/infonce_loss.py",
-  "model_sampler_path": "models/samplers/bernoulli_sampler.py",
-  "model_strategy_path": "models/strategies/softmax_strategy.py",
-
-  "model_encoder_path": "models/encoders/distmult_encoder.py",
+  "model": "RotatE",
+  "model_encoder_path": "models/encoders/rotate_encoder.py",
   "model_loss_path": "models/losses/infonce_loss.py",
   "model_sampler_path": "models/samplers/bernoulli_sampler.py",
   "model_strategy_path": "models/strategies/softmax_strategy.py",
@@ -14,24 +9,24 @@
   "train_path": "data/WN18RR/preprocessed/train.txt",
   "valid_path": "data/WN18RR/preprocessed/valid.txt.json",
   "test_path": "data/WN18RR/preprocessed/test.txt.json",
-  "valid_w_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
-  "test_w_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
-
-  "output_dir_prefix": "logs/DistMult_WN18RR",
   "valid_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
   "test_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
 
   "task": "both",
   "eval_model_path": "",
-  "output_dir_prefix": "logs/DistMult_WN18RR",
+  "output_dir_prefix": "logs/RotatE_WN18RR",
 
-  "dim": 50,
+  "dim": 500,
+  "margin": 6.0,
+  "lr": 5e-05,
+  "batch_size": 1024,
+  "n_sample": 512,
+  "epochs": 80000,
+  "pre_batch_weight": 0.5,
   "weight_decay": 0.1,
   "pre_batch": 20,
   "eval_every_n_step": 50,
-  "epochs": 1000,
-  "batch_size": 100,
   "epoch_per_test": 50,
   "sample_freq": 1,
-  "n_sample": 20
+  "test_batch_size": 8
 }

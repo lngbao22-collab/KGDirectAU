@@ -8,7 +8,7 @@ from data.dict_hub import get_tokenizer
 from models.samplers.masking_sampler import construct_mask, construct_self_negative_mask
 
 
-def to_indices_and_mask(batch_tensor, pad_token_id=0, need_mask=True):
+def to_indices_and_mask(batch_tensor, pad_token_id=0, need_mask=True) -> torch.Tensor | tuple[torch.Tensor, torch.ByteTensor]:
 	"""Convert a list of variable-length tensors into a padded tensor and an optional mask."""
 
 	mx_len = max([t.size(0) for t in batch_tensor])

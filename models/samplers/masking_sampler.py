@@ -1,15 +1,15 @@
-"""Masking triplets for:
-    + IB (in-batch) negatives
-    + PB (pre-batch) negatives
-    + SN (self-negatives)
-for models: SimKGC.
-"""
+"""Masking triplets for IB (in-batch) negatives, PB (pre-batch) negatives, SN (self-negatives) of models: SimKGC."""
 
 import torch
 
 from typing import List, TYPE_CHECKING
 
 from configs.config import args
+# from data.dict_hub import get_train_triplet_dict, get_entity_dict, EntityDict, TripletDict
+from data.dict_hub import get_train_triplet_dict, get_entity_dict
+from data.dataset import EntityDict, TripletDict
+entity_dict: EntityDict = get_entity_dict()
+train_triplet_dict: TripletDict = get_train_triplet_dict() if not args.is_test else None
 from data.dict_hub import get_train_triplet_dict, get_entity_dict
 
 if TYPE_CHECKING:

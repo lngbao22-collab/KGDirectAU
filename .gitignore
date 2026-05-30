@@ -1,9 +1,10 @@
 *.pyc
 __pycache__/
 *.txt.json
-entities.json
 *.csv
 *.tsv
 .idea/
-checkpoint/
+logs/
+entities.json
 relations.json
+data/**/preprocessed/

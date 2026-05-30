@@ -13,6 +13,7 @@ def topk_accuracy(output: torch.Tensor, target: torch.Tensor, topk: Tuple[int, .
 
     Returns a list of tensors containing the percentage accuracy for each requested k.
     """
+
     with torch.no_grad():
         maxk = max(topk)
         batch_size = target.size(0)
@@ -39,6 +40,7 @@ def ranking_metrics_from_ranks(ranks: Sequence[int]) -> dict:
 
     Returns a dictionary containing 'mr'/'mean_rank', 'mrr', and hit@k metrics.
     """
+
     ranks_list = list(ranks)
     if not ranks_list:
         raise ValueError('ranks must not be empty')
@@ -98,6 +100,7 @@ def ranking_metrics_from_scores(scores: torch.Tensor, targets: torch.Tensor, top
 
 def link_prediction_metrics(ranks: Sequence[int]) -> dict:
     """Alias for ranking_metrics_from_ranks for link prediction tasks."""
+
     return ranking_metrics_from_ranks(ranks)
 
 
@@ -107,6 +110,7 @@ def rerank_by_graph(batch_score: torch.Tensor, examples: Sequence[Example], enti
     Modifies `batch_score` in-place by adding a small delta to entities
     that are within `args.rerank_n_hop` hops in the training graph.
     """
+    
     if args.dataset == 'wiki5m_ind':
         assert args.neighbor_weight < 1e-6, 'Inductive setting can not use re-rank strategy'
 

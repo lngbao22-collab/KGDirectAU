@@ -8,7 +8,7 @@ class BaseModel(nn.Module, ABC):
 	"""Abstract base class for KG models. Defines the expected interface for forward passes and logit computation."""
 
 	@abstractmethod
-	def forward(self, *args, **kwargs):
+	def forward(self, *args, **kwargs) -> dict:
 		"""Run a forward pass and return model-specific outputs."""
 
 	@abstractmethod

@@ -125,7 +125,13 @@ def main():
     # Dynamically load the strategy/trainer class from config
     strategy_path = args.model_def or args.model_strategy_path or 'models/strategies/simkgc_strategy.py'
     strategy_mod = import_module_from_path(strategy_path)
-    # prefer concrete trainer classes defined in the selected strategy module
+    # prefer common trainer names
+    # trainer_cls = None
+    # for cand in ('ContrastiveTrainer', 'Trainer', 'SimKGCStrategy', 'SimKGCTrainer', 'Strategy'):
+    #     if hasattr(strategy_mod, cand):
+    #         trainer_cls = getattr(strategy_mod, cand)
+    #         break
+
     trainer_cls = None
     preferred_names = (
         'DistMultTrainer',
@@ -140,17 +146,22 @@ def main():
         if inspect.isclass(cls) and cls.__module__ == strategy_mod.__name__ and not inspect.isabstract(cls):
             trainer_cls = cls
             break
+
     if trainer_cls is None:
-        for v in vars(strategy_mod).values():
-            try:
-                if inspect.isclass(v) and v.__module__ == strategy_mod.__name__ and not inspect.isabstract(v):
-                    trainer_cls = v
-                    break
-            except Exception:
-                continue
+        for name, obj in vars(strategy_mod).items():
+            if (
+                isinstance(obj, type)
+                and obj.__module__ == strategy_mod.__name__
+                and name != 'Trainer'
+            ):
+                trainer_cls = obj
+                break
+
     if trainer_cls is None:
         raise ImportError(f'Could not find a Trainer class in {strategy_path}')
 
+    print("trainer_cls =", trainer_cls)
+    print("trainer_cls module =", trainer_cls.__module__)
     trainer = trainer_cls(args, ngpus_per_node=ngpus_per_node)
     train_summary = trainer.train_loop()
 
