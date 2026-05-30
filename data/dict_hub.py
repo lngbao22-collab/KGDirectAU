@@ -2,8 +2,6 @@
 
 import os
 import glob
-
-from data.dataset import EntityDict, LinkGraph, TripletDict
 from transformers import AutoTokenizer
 
 from configs.config import args
