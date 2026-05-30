@@ -1,55 +1,55 @@
-# KGDirectAU
+# KGDirectAU - KGAU's repo
 
-Repository layout
+## Repository layout
 ```
 KGDirectAU_root/
 ├── base/
-│   ├── evaluator.py        # Testing loop
-│   ├── model.py            # Abstract Base
+│   ├── evaluator.py       	# Testing loop
+│   ├── model.py            # Abstract base
 │   └── trainer.py          # Training loop
 ├── configs/
 │   ├── config.py           # Argument parser
-│   └── <model-dataset configs>.json # Hyperparameters
+│   └── MODEL_DATASET.json 	# Hyperparameters
 ├── data/
-│   ├── <dataset>/
+│   ├── DATASET/
+│   │   ├── preprocessed/
+│   │   │   └── <.txt.json, .json preprocessed data files>
+│   │   └── <.txt, .dict, .json data files>
 │   ├── dataloader.py
 │   ├── dataset.py
 │   ├── dict_hub.py
 │   └── preprocess.py
 ├── metrics/
-│   ├── classification.py   # for Triple classification
-│   └── ranking.py          # for Link prediction
+│   ├── classification.py   # for triple classification
+│   └── ranking.py          # for link prediction
 ├── models/
 │   ├── encoders/      
-│   │   └── <encoder models>.py
+│   │   └── <_encoder.py model's encoder implementations>
 │   ├── losses/
-│   │   ├── pointwise.py    # Sigmoid / Logistic
-│   │   ├── pairwise.py     # Margin / Ranking
-│   │   ├── listwise.py     # NCE / Cross-Entropy
-│   │   └── <other loss formulas>.py
+│   │   ├── au_loss.py		# Alignment - Uniformity loss
+│   │   └── <_loss.py model's loss implementations>
 │   ├── samplers/
-│   │   ├── uniform.py
-│   │   └── <other sampling strategies>.py
-│   └── strategies/         
-│       ├── standard.py     # Simple encoder + uniform sampling + pairwise loss
-│       ├── kgdirectau.py 
-│       └── <other training strategies>.py 
+│   │   └── <_sampler.py model's negative sampling implementations>
+│   ├── strategies/         
+│   │   ├── kgau.py 		# KGAU training strategy
+│   │   └── <_strategy.py model's training strategy implementations>
+│   └── builder.py      # Model loading and attribute access
 ├── utils/
-│   ├── checkpoint.py   # Save/Load weights
+│   ├── checkpoint.py   # Save and load weights
 │   ├── device.py       # GPU setup, parameter reporting, DDP unwrapping
 │   └── logger.py       # ProgressMeter, AverageMeter, logging setup
 ├── logs/
-│   └── <model-dataset logs>/
-│       ├── train.log       # Training text output
+│   └── MODEL_DATASET_YYYY-MM-DD_HH-MM-SS/
+│       ├── run.log       	# Running text output
 │       ├── results.txt     # Final result metrics, best valid, time, configs
-│       ├── best_model.mdl   # Best model's weights
-│       └── last_model.mdl   # Last trained model's weights
+│       ├── best_model.mdl  # Best model's weights
+│       └── last_model.mdl  # Last trained model's weights
 ├── main.py                 # THE START BUTTON
 ├── README.md
 └── requirements.txt
 ```
 
-Quickstart
+## Quickstart
 
 0) Start from scratch by creating a virtual environment and activating it.
 
@@ -155,3 +155,18 @@ Each model implementation should be split into four composable pieces so the rep
 The `model_def` field in each JSON config should point to the strategy implementation (e.g. `models/strategies/transe.py`) and specify which encoder, loss, and sampler to use. This keeps the training loop (`main.py` / `base/trainer.py`) generic and lets you add new models by dropping well-formed components into these folders.
 
 If you'd like, I can also update `requirements.txt` to pin versions or add a short `examples/` section with commands for FB15k-237 and Wikidata5M.
+
+## Implemented Models & Components
+
+This repository uses a modular, component-driven architecture. Each experiment is defined by a combination of an **Encoder**, a **Loss Function**, a **Sampler**, and a **Training Strategy**.
+
+| Model | Encoder (`models/encoders/`) | Loss (`models/losses/`) | Sampler (`models/samplers/`) | Strategy (`models/strategies/`) |
+| :--- | :--- | :--- | :--- | :--- |
+| **DistMult** | `distmult_encoder.py` | `infonce_loss.py` | `bernoulli_sampler.py` | `softmax_strategy.py` |
+| **ComplEx** | `complex_encoder.py` | `infonce_loss.py` | `bernoulli_sampler.py` | `softmax_strategy.py` |
+| **SimKGC** | `bert_encoder.py` | `infonce_loss.py` | `masking_sampler.py` | `contrastive_strategy.py` |
+| **DaBR** | `dabr_encoder.py` | `pointwise_logistic_loss.py`| `uniform_pointwise_sampler.py` | `pointwise_strategy.py` |
+| **RotatE** | `rotate_encoder.py` | `adversarial_bce_loss.py` | `filtered_1_to_n_sampler.py`| `adversarial_strategy.py` |
+| **<X>-AU** | `<X>_encoder.py` | `au_loss.py` | *(None)* | `kgau_strategy.py` |
+
+> **Note:** The KGAU (Alignment and Uniformity) strategy computes the loss directly on the positive batch embeddings and does not require negative sampling.

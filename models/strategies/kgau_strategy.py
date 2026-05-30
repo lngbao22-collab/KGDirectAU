@@ -248,5 +248,4 @@ class KGAUStrategy(Evaluator):
 			'best_checkpoint_path': self.best_checkpoint_path,
 		}
 
-
 Strategy = KGAUStrategy

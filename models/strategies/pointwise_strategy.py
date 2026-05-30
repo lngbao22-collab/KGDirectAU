@@ -47,7 +47,6 @@ class PointwiseStrategy:
             total.backward()
             torch.nn.utils.clip_grad_norm_(self.encoder.parameters(), 0.5)
             self.optimizer.step()
-
             total_loss += total.item() * (batch['head_id'].size(0) if isinstance(batch['head_id'], torch.Tensor) else 1)
 
         return total_loss

@@ -1,9 +1,4 @@
-"""Dynamic import helpers to load modules/attributes from config-specified paths.
-
-This module was previously named `loader.py` and provides small helpers used
-by `main.py` and strategy modules to import modules and attributes by either
-dot-path or filesystem path.
-"""
+"""A utility module for dynamically importing modules and attributes based on flexible path specifications."""
 
 from importlib import import_module
 import importlib.util
@@ -49,6 +44,7 @@ def load_attr_from_path(path: str, attr: str) -> Any:
 
 	Path can be a dotted module string or a .py file path. Attr is the symbol name inside.
 	"""
+
 	module = import_module_from_path(path)
 	if not hasattr(module, attr):
 		raise AttributeError(f"Module {path} has no attribute {attr}")

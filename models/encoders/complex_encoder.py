@@ -14,47 +14,14 @@ from data.dataset import Example, load_data
 from data.dict_hub import get_entity_dict
 
 
-def _relation_path_candidates(args) -> list[str]:
-	"""Return a list of candidate paths for loading the relation-to-index mapping."""
+def build_model(args) -> ComplExEncoder:
+	"""Factory helper used by the evaluator to rebuild the model from checkpoints."""
 
-	paths = []
-	for source_path in [getattr(args, 'train_path', ''), getattr(args, 'valid_path', ''), getattr(args, 'test_path', '')]:
-		if not source_path:
-			continue
-		paths.append(os.path.join(os.path.dirname(source_path), 'relation2id.json'))
-		paths.append(os.path.join(os.path.dirname(source_path), 'relations.json'))
-		paths.append(os.path.join(os.path.dirname(source_path), 'relation2idx.json'))
-	paths.append(os.path.join('data', getattr(args, 'dataset', ''), 'relation2id.json'))
-	paths.append(os.path.join('data', getattr(args, 'dataset', ''), 'preprocessed', 'relation2id.json'))
-	return paths
-
-
-def _load_relation_to_idx(args) -> dict[str, int]:
-	"""Load the relation-to-index mapping from candidate paths or construct it from training data."""
-
-	for path in _relation_path_candidates(args):
-		if not path or not os.path.exists(path):
-			continue
-		with open(path, 'r', encoding='utf-8') as handle:
-			mapping = json.load(handle)
-		if isinstance(mapping, dict):
-			return {str(key): int(value) for key, value in mapping.items()}
-
-	relations = []
-	seen = set()
-	for example in load_data(getattr(args, 'train_path', ''), add_forward_triplet=False, add_backward_triplet=False):
-		if example.relation not in seen:
-			seen.add(example.relation)
-			relations.append(example.relation)
-	return {relation: idx for idx, relation in enumerate(relations)}
-
-
-def _as_index_tensor(values, lookup, device: torch.device) -> torch.Tensor:
-	"""Convert a list of values into a tensor of corresponding indices using the provided lookup."""
-
-	if torch.is_tensor(values):
-		return values.to(device=device, dtype=torch.long)
-	return torch.tensor([lookup(value) for value in values], dtype=torch.long, device=device)
+	entity_dict = get_entity_dict()
+	relation_to_idx = _load_relation_to_idx(args)
+	model = ComplExEncoder(len(entity_dict), len(relation_to_idx), args)
+	model.rel_to_idx = relation_to_idx
+	return model
 
 
 class ComplExEncoder(nn.Module):
@@ -202,11 +169,44 @@ class ComplExEncoder(nn.Module):
 		raise TypeError('Unsupported model output type for logits computation')
 
 
-def build_model(args) -> ComplExEncoder:
-	"""Factory helper used by the evaluator to rebuild the model from checkpoints."""
+def _relation_path_candidates(args) -> list[str]:
+	"""Return a list of candidate paths for loading the relation-to-index mapping."""
 
-	entity_dict = get_entity_dict()
-	relation_to_idx = _load_relation_to_idx(args)
-	model = ComplExEncoder(len(entity_dict), len(relation_to_idx), args)
-	model.rel_to_idx = relation_to_idx
-	return model
+	paths = []
+	for source_path in [getattr(args, 'train_path', ''), getattr(args, 'valid_path', ''), getattr(args, 'test_path', '')]:
+		if not source_path:
+			continue
+		paths.append(os.path.join(os.path.dirname(source_path), 'relation2id.json'))
+		paths.append(os.path.join(os.path.dirname(source_path), 'relations.json'))
+		paths.append(os.path.join(os.path.dirname(source_path), 'relation2idx.json'))
+	paths.append(os.path.join('data', getattr(args, 'dataset', ''), 'relation2id.json'))
+	paths.append(os.path.join('data', getattr(args, 'dataset', ''), 'preprocessed', 'relation2id.json'))
+	return paths
+
+
+def _load_relation_to_idx(args) -> dict[str, int]:
+	"""Load the relation-to-index mapping from candidate paths or construct it from training data."""
+
+	for path in _relation_path_candidates(args):
+		if not path or not os.path.exists(path):
+			continue
+		with open(path, 'r', encoding='utf-8') as handle:
+			mapping = json.load(handle)
+		if isinstance(mapping, dict):
+			return {str(key): int(value) for key, value in mapping.items()}
+
+	relations = []
+	seen = set()
+	for example in load_data(getattr(args, 'train_path', ''), add_forward_triplet=False, add_backward_triplet=False):
+		if example.relation not in seen:
+			seen.add(example.relation)
+			relations.append(example.relation)
+	return {relation: idx for idx, relation in enumerate(relations)}
+
+
+def _as_index_tensor(values, lookup, device: torch.device) -> torch.Tensor:
+	"""Convert a list of values into a tensor of corresponding indices using the provided lookup."""
+
+	if torch.is_tensor(values):
+		return values.to(device=device, dtype=torch.long)
+	return torch.tensor([lookup(value) for value in values], dtype=torch.long, device=device)
