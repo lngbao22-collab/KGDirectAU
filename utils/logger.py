@@ -119,7 +119,7 @@ def format_duration(seconds: float) -> str:
 
 def _format_metric_key(key: str) -> str:
     mapping = {
-        'mean_rank': 'MR',
+        'mr': 'MR',
         'mrr': 'MRR',
         'hit@1': 'Hit@1',
         'hit@3': 'Hit@3',
@@ -147,7 +147,7 @@ def write_results_report(path: Union[str, Path], *, link_metrics: Optional[dict]
 
     if link_metrics:
         lines.append('Link Prediction')
-        for key in ['mean_rank', 'mrr', 'hit@1', 'hit@3', 'hit@10']:
+        for key in ['mr', 'mrr', 'hit@1', 'hit@3', 'hit@10']:
             if key in link_metrics:
                 lines.append(f'  {_format_metric_key(key)}: {_format_metric_value(link_metrics[key])}')
         lines.append('')

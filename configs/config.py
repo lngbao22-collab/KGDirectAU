@@ -334,7 +334,7 @@ def _resolve_data_path(path: str) -> str:
     if os.path.isabs(path) and os.path.exists(path):
         return path
 
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(_file_)))
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     candidates = [
         path,
         os.path.join(os.getcwd(), path),

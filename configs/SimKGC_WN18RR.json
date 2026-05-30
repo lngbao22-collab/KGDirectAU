@@ -7,7 +7,6 @@
 
   "dataset": "WN18RR",
   "task": "both",
-
   "train_path": "data/WN18RR/preprocessed/train.txt",
   "valid_path": "data/WN18RR/preprocessed/valid.txt.json",
   "test_path": "data/WN18RR/preprocessed/test.txt.json",
@@ -15,10 +14,10 @@
   "test_w_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
 
   "output_dir_prefix": "logs/SimKGC_WN18RR",
-  "bert_encoder": "distilbert-base-uncased",
 
   "additive_margin": 0.02,
   "batch_size": 512,
+  "bert_encoder": "distilbert-base-uncased",
   "dim": 768,
   "dropout": 0.1,
   "epochs": 50,
