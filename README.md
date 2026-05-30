@@ -167,6 +167,6 @@ This repository uses a modular, component-driven architecture. Each experiment i
 | **SimKGC** | `bert_encoder.py` | `infonce_loss.py` | `masking_sampler.py` | `contrastive_strategy.py` |
 | **DaBR** | `dabr_encoder.py` | `pointwise_logistic_loss.py`| `uniform_pointwise_sampler.py` | `pointwise_strategy.py` |
 | **RotatE** | `rotate_encoder.py` | `adversarial_bce_loss.py` | `filtered_1_to_n_sampler.py`| `adversarial_strategy.py` |
-| **ModelX-AU** | `ModelX_encoder.py` | `au_loss.py` | *(None)* | `kgau_strategy.py` |
+| **X-AU** | `X_encoder.py` | `au_loss.py` | *(None)* | `kgau_strategy.py` |
 
 > **Note:** The KGAU (Alignment and Uniformity) strategy computes the loss directly on the positive batch embeddings and does not require negative sampling.
