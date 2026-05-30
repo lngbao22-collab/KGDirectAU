@@ -305,7 +305,7 @@ class Evaluator:
         score = torch.mm(hr_tensor, entities_tensor.t())
         all_triplet_dict = get_all_triplet_dict()
         _filter_known(score, examples, all_triplet_dict, entity_dict)
-        target = torch.LongTensor([entity_dict.entity_to_idx(ex.tail_id) for ex in examples])
+        target = torch.LongTensor([entity_dict.entity_to_idx(ex.tail_id) for ex in examples]).to(score.device)
         sorted_indices = torch.sort(score, dim=-1, descending=True).indices
         target_rank = torch.nonzero(sorted_indices.eq(target.unsqueeze(-1)).long(), as_tuple=False)
         if target_rank.size(0) != score.size(0):

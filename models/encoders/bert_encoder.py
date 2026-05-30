@@ -171,7 +171,14 @@ class CustomBertModel(BaseModel, ABC):
     def predict_by_entities(self, entity_exs, batch_size: Optional[int] = None, num_workers: int = 2) -> torch.Tensor:
         """Predict entity embeddings for a list of entity examples, used for efficient inference of all entities."""
 
-        examples = [Example(head_id='', relation='', tail_id=entity_ex.entity_id) for entity_ex in entity_exs]
+        examples = []
+        for entity_ex in entity_exs:
+            entity_id = getattr(entity_ex, 'entity_id', None)
+            if entity_id is None:
+                entity_id = getattr(entity_ex, 'tail_id', None)
+            if entity_id is None:
+                raise AttributeError('Expected entity examples with an entity_id or tail_id attribute')
+            examples.append(Example(head_id='', relation='', tail_id=entity_id))
         if batch_size is None:
             batch_size = max(self.args.batch_size, 1024)
 
