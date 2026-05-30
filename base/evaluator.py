@@ -246,10 +246,9 @@ class Evaluator:
         model = get_model_obj(model)
         model.eval()
         if not os.path.exists(label_file):
-            print(f"[EVAL] {label_file} not found, skip evaluation.")
+            logger.info(f"[EVAL] {label_file} not found, skip evaluation.")
             return
         eval_set = 'TEST' if 'test' in label_file else 'VALID'
-        print(f"\n[{eval_set}] Evaluating triple classification inplace on {label_file} ...")
         eval_exs = [
             ex for ex in load_data(
                 label_file,
@@ -262,7 +261,7 @@ class Evaluator:
         y_prob = []
         if hasattr(model, 'score_batch'):
             if not eval_exs:
-                print(f"[EVAL] {label_file} has no labeled examples, skip evaluation.")
+                logger.info(f"[EVAL] {label_file} has no labeled examples, skip evaluation.")
                 return
             for i in range(0, len(eval_exs), batch_size):
                 batch = eval_exs[i:i + batch_size]
@@ -295,8 +294,6 @@ class Evaluator:
         metrics_cls = classification_metrics(y_true, y_pred, y_prob)
         log_thresh = f"[{eval_set}] Best threshold: {threshold:.6f}"
         log_cls = f"[{eval_set}] Triple Classification: {json.dumps(metrics_cls)}"
-        print(log_thresh)
-        print(log_cls)
         logger.info(log_thresh)
         logger.info(log_cls)
         with open(output_log_path, 'a', encoding='utf-8') as f:
@@ -311,7 +308,7 @@ class Evaluator:
         model = get_model_obj(model)
         model.eval()
         if not os.path.exists(eval_path):
-            print(f"[EVAL] {eval_path} not found, skip link prediction evaluation.")
+            logger.info(f"[EVAL] {eval_path} not found, skip link prediction evaluation.")
             return {}
         eval_set = 'TEST' if 'test' in eval_path else 'VALID'
         if examples is None:
@@ -357,9 +354,6 @@ class Evaluator:
             ranks.append(row[1] + 1)
 
         metrics = ranking_metrics_from_ranks(ranks)
-        direction = 'forward' if eval_forward else 'backward'
-        log_str = f"[{eval_set}][{direction}] Link Prediction Metrics: {json.dumps(metrics)}"
-        print(log_str)
         return metrics
 
     def evaluate_test_triple_classification(self, epoch=None) -> dict:
@@ -384,10 +378,10 @@ class Evaluator:
                     break
 
         if not os.path.exists(test_label_path):
-            print('[TEST] test_w_label.txt not found, skip test evaluation.')
+            logger.info('[TEST] test_w_label.txt not found, skip test evaluation.')
             return {}
 
-        print('\n[TEST] Evaluating triple classification on test set...')
+        logger.info('[TEST] Evaluating triple classification on test set...')
         test_exs = [
             ex
             for ex in load_data(
@@ -398,7 +392,7 @@ class Evaluator:
             if ex.label is not None
         ]
         if not test_exs:
-            print(f"[TEST] {test_label_path} has no labeled examples, skip test evaluation.")
+            logger.info(f"[TEST] {test_label_path} has no labeled examples, skip test evaluation.")
             return {}
         y_true = [int(ex.label) for ex in test_exs]
         y_prob = []
@@ -449,8 +443,6 @@ class Evaluator:
         metrics_cls = classification_metrics(y_true, y_pred, y_prob)
         log_thresh = f'[TEST] Best threshold on test: {threshold:.6f}'
         log_cls = f'[TEST] Triple Classification: {json.dumps(metrics_cls)}'
-        print(log_thresh)
-        print(log_cls)
         logger.info(log_thresh)
         logger.info(log_cls)
 

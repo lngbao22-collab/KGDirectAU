@@ -180,7 +180,6 @@ class SimKGCStrategy(Trainer, Evaluator):
 
         logger.info('Learning rate: {}'.format(self.scheduler.get_last_lr()[0]))
         log_str = f"[EPOCH {epoch}] Loss: {losses.avg:.4f} | Acc@1: {top1.avg:.2f} | Acc@3: {top3.avg:.2f}"
-        print(log_str)
         logger.info(log_str)
 
     @torch.no_grad()

@@ -81,9 +81,6 @@ class Trainer(ABC):
             self._run_eval(epoch=epoch)
 
         self.total_time = time.time() - total_start_time
-        print(f"[Timing] Training time (s): {round(self.train_time, 2)}")
-        print(f"[Timing] Valid time (s): {round(self.valid_time, 2)}")
-        print(f"[Timing] Total run time (s): {round(self.total_time, 2)}")
         logger.info(f"[Timing] Training time (s): {round(self.train_time, 2)}")
         logger.info(f"[Timing] Valid time (s): {round(self.valid_time, 2)}")
         logger.info(f"[Timing] Total run time (s): {round(self.total_time, 2)}")

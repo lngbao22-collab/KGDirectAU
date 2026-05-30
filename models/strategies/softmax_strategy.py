@@ -207,7 +207,7 @@ class DistMultTrainer:
 			epoch_loss += loss.item() * ss.size(0)
 
 		display_epoch = epoch + 1
-		log_str = f"[EPOCH {display_epoch}] Loss: {epoch_loss / max(len(src), 1):.4f}"
+		log_str = f"[EPOCH {display_epoch}] Train | Loss: {epoch_loss / max(len(src), 1):.4f}"
 		logger.info(log_str)
 
 	@torch.no_grad()
@@ -249,20 +249,46 @@ class DistMultTrainer:
 			valid_entity_dict = get_entity_dict()
 			valid_output_path = os.path.join(self.args.output_dir, 'valid_link_prediction.log')
 			display_epoch = epoch + 1
-			logger.info('[EPOCH %s] Validation link prediction forward pass on %s', display_epoch, valid_eval_path)
 			forward_metrics = self.evaluator.evaluate_link_prediction_inplace(
 				self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=True, examples=valid_exs)
-			logger.info('[EPOCH %s] Validation link prediction backward pass on %s', display_epoch, valid_eval_path)
 			backward_metrics = self.evaluator.evaluate_link_prediction_inplace(
 				self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=False, examples=valid_backward_exs)
+			forward_line = self._format_link_metrics(display_epoch, 'Fwd', forward_metrics)
+			backward_line = self._format_link_metrics(display_epoch, 'Bwd', backward_metrics)
+			logger.info(forward_line)
+			logger.info(backward_line)
 			metric_dict.update(self._average_metric_dict(forward_metrics, backward_metrics))
-			logger.info('[EPOCH %s] Validation link prediction average metrics: %s', display_epoch, metric_dict)
+			avg_metrics = dict(metric_dict)
+			avg_metrics['loss'] = metric_dict.get('loss', 0.0)
+			avg_line = self._format_avg_metrics(display_epoch, avg_metrics)
+			logger.info(avg_line)
 
 		metric_dict = {key: metric_dict[key] for key in ('loss', 'mrr') if key in metric_dict}
-
-		if metric_dict:
-			logger.info('Epoch {}, valid metric: {}'.format(epoch + 1, metric_dict))
 		return metric_dict
+
+	def _format_link_metrics(self, epoch: int, direction: str, metrics: dict) -> str:
+		"""Format link prediction metrics for a single direction."""
+
+		return (
+			f"[EPOCH {epoch}] Valid ({direction}) | "
+			f"MR: {metrics.get('mr', metrics.get('mean_rank', 0.0)):.4f} | "
+			f"MRR: {metrics.get('mrr', 0.0):.4f} | "
+			f"H@1: {metrics.get('hit@1', metrics.get('hits@1', 0.0)):.4f} | "
+			f"H@3: {metrics.get('hit@3', metrics.get('hits@3', 0.0)):.4f} | "
+			f"H@10: {metrics.get('hit@10', metrics.get('hits@10', 0.0)):.4f}"
+		)
+
+	def _format_avg_metrics(self, epoch: int, metrics: dict) -> str:
+		"""Format averaged validation metrics for logging."""
+
+		return (
+			f"[EPOCH {epoch}] Valid (Avg) | Loss: {metrics.get('loss', 0.0):.4f} | "
+			f"MR: {metrics.get('mr', metrics.get('mean_rank', 0.0)):.4f} | "
+			f"MRR: {metrics.get('mrr', 0.0):.4f} | "
+			f"H@1: {metrics.get('hit@1', metrics.get('hits@1', 0.0)):.4f} | "
+			f"H@3: {metrics.get('hit@3', metrics.get('hits@3', 0.0)):.4f} | "
+			f"H@10: {metrics.get('hit@10', metrics.get('hits@10', 0.0)):.4f}\n---\n"
+		)
 
 	def _extract_monitor_value(self, metric_dict):
 		if not metric_dict:

@@ -291,9 +291,9 @@ def check_missing_entity_ids(def_path: str, split_paths: Sequence[str]) -> Dict[
         missing = sorted(split_ids - def_ids)
         missing_by_split[split_path] = missing
         if missing:
-            print(f"Missing in {split_path}: {set(missing)}")
+            logger.info(f"Missing in {split_path}: {set(missing)}")
         else:
-            print(f"All entity IDs in {split_path} are present in definitions.")
+            logger.info(f"All entity IDs in {split_path} are present in definitions.")
     return missing_by_split
 
 
@@ -404,7 +404,7 @@ def preprocess_dataset(args) -> None:
     output_dir = _resolve_output_dir(args)
 
     if _has_entries(output_dir) and _output_has_expected_label_schema(output_dir):
-        print(f"Dataset has been preprocessed and saved in {output_dir}")
+        logger.info(f"Dataset has been preprocessed and saved in {output_dir}")
         return
 
     if dataset == "wn18rr":
@@ -471,10 +471,10 @@ def preprocess_dataset(args) -> None:
                 example_dict.pop("label", None)
             payload.append(example_dict)
         _save_json(out_path, payload)
-        print(f"Save {len(examples)} examples to {out_path}")
+        logger.info(f"Save {len(examples)} examples to {out_path}")
 
-    print(f"Save {len(entity2id)} entities to {os.path.join(output_dir, 'entity2id.json')}")
-    print(f"Save {len(relation2id)} relations to {os.path.join(output_dir, 'relation2id.json')}")
+    logger.info(f"Save {len(entity2id)} entities to {os.path.join(output_dir, 'entity2id.json')}")
+    logger.info(f"Save {len(relation2id)} relations to {os.path.join(output_dir, 'relation2id.json')}")
 
 
 def check_missing_entities_from_args(args) -> Dict[str, List[str]]:
