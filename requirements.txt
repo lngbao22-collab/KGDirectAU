@@ -1,6 +1,5 @@
 ### SOURCE: SimKGC
-# Minimum Python version
-python>=3.8
+# Minimum Python version: 3.8+ (enforce outside pip requirements)
 
 # Core ML libraries
 torch>=1.6

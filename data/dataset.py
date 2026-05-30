@@ -1,5 +1,7 @@
 """Dataset and graph helpers for generic KG workloads."""
 
+from __future__ import annotations
+
 import json
 import os
 from collections import deque

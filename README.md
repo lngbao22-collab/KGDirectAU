@@ -55,7 +55,11 @@ Quickstart
 
 ```bash
 python -m venv .venv
-.venv\Scripts\activate
+# Linux/macOS
+source .venv/bin/activate
+
+# Windows (PowerShell)
+.venv\Scripts\Activate.ps1
 ```
 
 1) Install dependencies (recommended inside a virtualenv):
