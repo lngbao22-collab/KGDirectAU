@@ -20,7 +20,7 @@ class TripleExample:
     tail: str
     head_desc: str = ""
     tail_desc: str = ""
-    label: str = ""
+    label: Optional[str] = None
 
 
 def _parse_entity_name(entity: str, task: str = "") -> str:
@@ -144,7 +144,7 @@ def _map_examples(
             tail=entity_text.get(tail_id, tail_id),
             head_desc=entity_desc.get(head_id, ""),
             tail_desc=entity_desc.get(tail_id, ""),
-            label=label,
+            label=label or None,
         )
 
     if workers <= 1:
@@ -345,10 +345,13 @@ def _has_entries(path: str) -> bool:
         return any(True for _ in entries)
 
 
-def _output_has_labeled_splits(output_dir: str) -> bool:
-    """Return True when the labeled classification splits already contain a label field."""
+def _output_has_expected_label_schema(output_dir: str) -> bool:
+    """Return True when cached preprocessing outputs match the current label schema."""
 
-    for split_name in ("valid_w_label.txt.json", "test_w_label.txt.json"):
+    labeled_splits = {"valid_w_label.txt.json", "test_w_label.txt.json"}
+    unlabeled_splits = {"train.txt.json", "valid.txt.json", "test.txt.json"}
+
+    for split_name in labeled_splits | unlabeled_splits:
         split_path = os.path.join(output_dir, split_name)
         if not os.path.exists(split_path):
             return False
@@ -361,8 +364,15 @@ def _output_has_labeled_splits(output_dir: str) -> bool:
 
         if not isinstance(payload, list) or not payload:
             return False
+
         first_example = payload[0]
-        if not isinstance(first_example, dict) or "label" not in first_example:
+        if not isinstance(first_example, dict):
+            return False
+
+        has_label = "label" in first_example
+        if split_name in labeled_splits and not has_label:
+            return False
+        if split_name in unlabeled_splits and has_label:
             return False
 
     return True
@@ -393,7 +403,7 @@ def preprocess_dataset(args) -> None:
     data_dir = _resolve_data_dir(args)
     output_dir = _resolve_output_dir(args)
 
-    if _has_entries(output_dir) and _output_has_labeled_splits(output_dir):
+    if _has_entries(output_dir) and _output_has_expected_label_schema(output_dir):
         print(f"Dataset has been preprocessed and saved in {output_dir}")
         return
 
@@ -454,7 +464,13 @@ def preprocess_dataset(args) -> None:
 
     for split_name, path, examples in split_examples:
         out_path = os.path.join(output_dir, f"{os.path.basename(path)}.json")
-        _save_json(out_path, [asdict(example) for example in examples])
+        payload = []
+        for example in examples:
+            example_dict = asdict(example)
+            if example_dict.get("label") is None:
+                example_dict.pop("label", None)
+            payload.append(example_dict)
+        _save_json(out_path, payload)
         print(f"Save {len(examples)} examples to {out_path}")
 
     print(f"Save {len(entity2id)} entities to {os.path.join(output_dir, 'entity2id.json')}")
