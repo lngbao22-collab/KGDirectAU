@@ -11,7 +11,7 @@ from torch.optim import Adam
 
 from base.evaluator import Evaluator
 from data.dataset import load_data
-from data.dict_hub import get_entity_dict
+from data.dict_hub import build_tokenizer, get_entity_dict
 from models.builder import load_attr_from_path
 from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, save_checkpoint
 from utils.device import get_model_obj, report_num_trainable_parameters
@@ -67,6 +67,7 @@ class KGAUStrategy(Evaluator):
 	def __init__(self, args, ngpus_per_node):
 		super().__init__(args)
 		self.ngpus_per_node = ngpus_per_node
+		build_tokenizer(args)
 		self.entity_dict = get_entity_dict()
 		self.relation_to_idx = _load_relation_to_idx(args)
 		self.model = _load_encoder(args)
@@ -99,7 +100,7 @@ class KGAUStrategy(Evaluator):
 			tuni=tuni_val,
 		).to(self.device)
 
-		self.train_examples = load_data(args.train_path, add_forward_triplet=False, add_backward_triplet=False)
+		self.train_examples = load_data(args.train_path, add_forward_triplet=True, add_backward_triplet=False)
 		self.train_src, self.train_rel, self.train_dst = self._examples_to_tensors(self.train_examples)
 		self.best_metric = None
 		self.best_checkpoint_path = None
