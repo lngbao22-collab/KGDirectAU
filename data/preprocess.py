@@ -2,10 +2,15 @@
 
 import argparse
 import json
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)

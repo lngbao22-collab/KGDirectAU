@@ -140,8 +140,8 @@ class KGAUStrategy(Evaluator):
 		"""Determine the path to use for validation evaluation."""
 
 		candidates = [getattr(self.args, 'valid_path', '')]
-		if self.args.valid_label_path:
-			label_dir = os.path.dirname(self.args.valid_label_path)
+		if self.args.valid_w_label_path:
+			label_dir = os.path.dirname(self.args.valid_w_label_path)
 			candidates.extend([
 				os.path.join(label_dir, 'valid.txt.json'),
 				os.path.join(label_dir, 'valid.txt'),
