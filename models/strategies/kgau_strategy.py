@@ -12,12 +12,12 @@ from torch.optim import Adam
 
 from base.evaluator import Evaluator
 from data.dataloader import collate
-from data.dataset import load_data
+from data.dataset import Dataset, load_data
 from data.dict_hub import build_tokenizer, get_entity_dict
 from models.builder import load_attr_from_path
 from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, save_checkpoint
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
-from utils.logger import logger
+from utils.logger import AverageMeter, ProgressMeter, logger
 from models.losses.au_loss import KGAULoss
 
 
@@ -89,6 +89,15 @@ class KGAUStrategy(Evaluator):
 			self.train_src, self.train_rel, self.train_dst = self._examples_to_tensors(self.train_examples)
 		else:
 			self.relation_to_idx = None
+			self.train_loader = torch.utils.data.DataLoader(
+				Dataset(path='', examples=self.train_examples, task=args.dataset),
+				batch_size=max(getattr(args, 'batch_size', 1), 1),
+				shuffle=True,
+				collate_fn=collate,
+				num_workers=getattr(args, 'workers', 0),
+				pin_memory=True,
+				drop_last=True,
+			)
 
 		if torch.cuda.device_count() > 1:
 			self.model = torch.nn.DataParallel(self.model).cuda()
@@ -174,9 +183,10 @@ class KGAUStrategy(Evaluator):
 		use_amp = bool(getattr(self.args, 'use_amp', False))
 
 		if self.uses_text_inputs:
-			for start in range(0, len(self.train_examples), batch_size):
-				batch_examples = self.train_examples[start:start + batch_size]
-				batch_dict = collate([example.vectorize() for example in batch_examples])
+			losses = AverageMeter('Loss', ':.4')
+			progress = ProgressMeter(len(self.train_loader), [losses], prefix='Epoch: [{}]'.format(epoch))
+			for i, batch_dict in enumerate(self.train_loader):
+				self.model.train()
 				if torch.cuda.is_available():
 					batch_dict = move_to_cuda(batch_dict)
 				self.optimizer.zero_grad()
@@ -203,7 +213,10 @@ class KGAUStrategy(Evaluator):
 					loss.backward()
 					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
 					self.optimizer.step()
-				epoch_loss += loss.item() * len(batch_examples)
+				losses.update(loss.item(), len(batch_dict['batch_data']))
+				epoch_loss += loss.item() * len(batch_dict['batch_data'])
+				if i % self.args.print_freq == 0:
+					progress.display(i)
 		else:
 			for ss, rs, ts in self._iter_batches(self.train_src, self.train_rel, self.train_dst, batch_size):
 				ss = ss.to(self.device)
