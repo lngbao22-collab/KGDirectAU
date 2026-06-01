@@ -11,11 +11,12 @@ import torch
 from torch.optim import Adam
 
 from base.evaluator import Evaluator
+from data.dataloader import collate
 from data.dataset import load_data
 from data.dict_hub import build_tokenizer, get_entity_dict
 from models.builder import load_attr_from_path
 from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, save_checkpoint
-from utils.device import get_model_obj, report_num_trainable_parameters
+from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
 from utils.logger import logger
 from models.losses.au_loss import KGAULoss
 
@@ -63,6 +64,13 @@ def _load_encoder(args) -> torch.nn.Module:
 	return build_model(args)
 
 
+def _uses_text_inputs(args) -> bool:
+	"""Return True when the configured encoder consumes tokenized text inputs."""
+
+	encoder_path = getattr(args, 'model_encoder_path', '') or ''
+	return os.path.basename(encoder_path) == 'bert_encoder.py'
+
+
 class KGAUStrategy(Evaluator):
 	"""Knowledge Graph Alignment and Uniformity training loop for KG encoders."""
 
@@ -70,11 +78,17 @@ class KGAUStrategy(Evaluator):
 		super().__init__(args)
 		self.ngpus_per_node = ngpus_per_node
 		build_tokenizer(args)
+		self.uses_text_inputs = _uses_text_inputs(args)
+		self.train_examples = load_data(args.train_path, add_forward_triplet=True, add_backward_triplet=False)
 		self.entity_dict = get_entity_dict()
-		self.relation_to_idx = _load_relation_to_idx(args)
 		self.model = _load_encoder(args)
 		logger.info('=> creating model')
 		logger.info(self.model)
+		if not self.uses_text_inputs:
+			self.relation_to_idx = _load_relation_to_idx(args)
+			self.train_src, self.train_rel, self.train_dst = self._examples_to_tensors(self.train_examples)
+		else:
+			self.relation_to_idx = None
 
 		if torch.cuda.device_count() > 1:
 			self.model = torch.nn.DataParallel(self.model).cuda()
@@ -100,9 +114,6 @@ class KGAUStrategy(Evaluator):
 			gamma_ent=getattr(args, 'gamma_ent', 0.0),
 			tuni=tuni_val,
 		).to(self.device)
-
-		self.train_examples = load_data(args.train_path, add_forward_triplet=True, add_backward_triplet=False)
-		self.train_src, self.train_rel, self.train_dst = self._examples_to_tensors(self.train_examples)
 		self.best_metric = None
 		self.best_checkpoint_path = None
 		self.train_time = 0.0
@@ -161,17 +172,34 @@ class KGAUStrategy(Evaluator):
 		batch_size = max(getattr(self.args, 'batch_size', 1024), 1)
 		model = get_model_obj(self.model)
 
-		for ss, rs, ts in self._iter_batches(self.train_src, self.train_rel, self.train_dst, batch_size):
-			ss = ss.to(self.device)
-			rs = rs.to(self.device)
-			ts = ts.to(self.device)
-			self.optimizer.zero_grad()
-			q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
-			ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
-			loss, _, _ = self.criterion(q_raw, t_raw, h_raw, ent_raw)
-			loss.backward()
-			self.optimizer.step()
-			epoch_loss += loss.item() * ss.size(0)
+		if self.uses_text_inputs:
+			for start in range(0, len(self.train_examples), batch_size):
+				batch_examples = self.train_examples[start:start + batch_size]
+				batch_dict = collate([example.vectorize() for example in batch_examples])
+				if torch.cuda.is_available():
+					batch_dict = move_to_cuda(batch_dict)
+				self.optimizer.zero_grad()
+				outputs = model(**batch_dict)
+				q_raw = outputs['hr_vector']
+				t_raw = outputs['tail_vector']
+				h_raw = outputs['head_vector']
+				ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
+				loss, _, _ = self.criterion(q_raw, t_raw, h_raw, ent_raw)
+				loss.backward()
+				self.optimizer.step()
+				epoch_loss += loss.item() * len(batch_examples)
+		else:
+			for ss, rs, ts in self._iter_batches(self.train_src, self.train_rel, self.train_dst, batch_size):
+				ss = ss.to(self.device)
+				rs = rs.to(self.device)
+				ts = ts.to(self.device)
+				self.optimizer.zero_grad()
+				q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
+				ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
+				loss, _, _ = self.criterion(q_raw, t_raw, h_raw, ent_raw)
+				loss.backward()
+				self.optimizer.step()
+				epoch_loss += loss.item() * ss.size(0)
 
 		avg_loss = epoch_loss / max(len(self.train_src), 1)
 		logger.info('[EPOCH %s] train loss: %.6f', epoch, avg_loss)
