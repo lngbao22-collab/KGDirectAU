@@ -3,13 +3,17 @@ import inspect
 import os
 import time
 
+import torch
+
 from configs.config import args
 from base.evaluator import Evaluator
-from models.builder import import_module_from_path
+from data.dataset import load_data
+from data.dict_hub import get_entity_dict, get_relation_id_map
+from models.builder import import_module_from_path, load_attr_from_path
+from models.samplers.bernoulli_sampler import BernoulliListwiseSampler
 from utils.device import init_hardware
 from utils.checkpoint import best_model_path
 from utils.logger import setup_logger, write_results_report
-from data.dict_hub import get_entity_dict
 
 
 logger = setup_logger(log_file=os.path.join(args.output_dir, 'run.log'))
@@ -85,6 +89,50 @@ def _average_link_metrics(forward_metrics, backward_metrics) -> dict:
     return averaged_metrics
 
 
+def _examples_to_tensors(examples, entity_dict, relation_to_idx):
+    """Convert examples into head, relation, and tail index tensors."""
+
+    head_indices = torch.tensor([entity_dict.entity_to_idx(example.head_id) for example in examples], dtype=torch.long)
+    relation_indices = torch.tensor([relation_to_idx.get(example.relation, relation_to_idx.get(example.relation.replace('inverse ', ''), 0)) for example in examples], dtype=torch.long)
+    tail_indices = torch.tensor([entity_dict.entity_to_idx(example.tail_id) for example in examples], dtype=torch.long)
+    return head_indices, relation_indices, tail_indices
+
+
+def _build_softmax_trainer(current_args):
+    """Build the encoder, sampler, and strategy used by the softmax configs."""
+
+    strategy_mod = import_module_from_path(current_args.model_strategy_path)
+    strategy_cls = getattr(strategy_mod, 'SoftmaxStrategy', None)
+    if strategy_cls is None:
+        raise ImportError(f'Could not find SoftmaxStrategy in {current_args.model_strategy_path}')
+
+    encoder_path = getattr(current_args, 'model_encoder_path', '') or 'models/encoders/distmult_encoder.py'
+    try:
+        build_model = load_attr_from_path(encoder_path, 'build_model')
+    except Exception:
+        encoder_mod = import_module_from_path(encoder_path)
+        build_model = getattr(encoder_mod, 'build_model')
+
+    model = build_model(current_args)
+    if torch.cuda.is_available():
+        model.cuda()
+
+    entity_dict = get_entity_dict()
+    relation_to_idx = get_relation_id_map()
+    train_examples = load_data(current_args.train_path, add_forward_triplet=True, add_backward_triplet=False)
+    if not train_examples:
+        raise ValueError(f'No training examples loaded from {current_args.train_path}')
+
+    train_tensors = _examples_to_tensors(train_examples, entity_dict, relation_to_idx)
+    sampler = BernoulliListwiseSampler(
+        train_tensors,
+        len(entity_dict),
+        max(len(relation_to_idx), 1),
+        getattr(current_args, 'n_sample', getattr(current_args, 'batch_size', 1)),
+    )
+    return strategy_cls(model, sampler, current_args, len(train_examples), train_data=train_tensors)
+
+
 def main():
     ngpus_per_node = init_hardware(args)
 
@@ -127,45 +175,39 @@ def main():
         _write_results(args, None, evaluator, link_metrics, triple_metrics, test_time, config_snapshot)
         return
 
-    # Dynamically load the strategy/trainer class from config
     strategy_path = args.model_strategy_path
-    strategy_mod = import_module_from_path(strategy_path)
-    # prefer common trainer names
-    # trainer_cls = None
-    # for cand in ('ContrastiveTrainer', 'Trainer', 'SimKGCStrategy', 'SimKGCTrainer', 'Strategy'):
-    #     if hasattr(strategy_mod, cand):
-    #         trainer_cls = getattr(strategy_mod, cand)
-    #         break
-
-    trainer_cls = None
-    preferred_names = (
-        'DistMultTrainer',
-        'SoftmaxTrainer',
-        'SimKGCStrategy',
-        'ContrastiveTrainer',
-        'SimKGCTrainer',
-        'Strategy',
-    )
-    for cand in preferred_names:
-        cls = getattr(strategy_mod, cand, None)
-        if inspect.isclass(cls) and cls.__module__ == strategy_mod.__name__ and not inspect.isabstract(cls):
-            trainer_cls = cls
-            break
-
-    if trainer_cls is None:
-        for name, obj in vars(strategy_mod).items():
-            if (
-                isinstance(obj, type)
-                and obj.__module__ == strategy_mod.__name__
-                and name != 'Trainer'
-            ):
-                trainer_cls = obj
+    if strategy_path.replace('\\', '/').endswith('softmax_strategy.py'):
+        trainer = _build_softmax_trainer(args)
+    else:
+        strategy_mod = import_module_from_path(strategy_path)
+        trainer_cls = None
+        preferred_names = (
+            'SoftmaxTrainer',
+            'SimKGCStrategy',
+            'ContrastiveTrainer',
+            'SimKGCTrainer',
+            'Strategy',
+        )
+        for cand in preferred_names:
+            cls = getattr(strategy_mod, cand, None)
+            if inspect.isclass(cls) and cls.__module__ == strategy_mod.__name__ and not inspect.isabstract(cls):
+                trainer_cls = cls
                 break
 
-    if trainer_cls is None:
-        raise ImportError(f'Could not find a Trainer class in {strategy_path}')
+        if trainer_cls is None:
+            for name, obj in vars(strategy_mod).items():
+                if (
+                    isinstance(obj, type)
+                    and obj.__module__ == strategy_mod.__name__
+                    and name != 'Trainer'
+                ):
+                    trainer_cls = obj
+                    break
 
-    trainer = trainer_cls(args, ngpus_per_node=ngpus_per_node)
+        if trainer_cls is None:
+            raise ImportError(f'Could not find a Trainer class in {strategy_path}')
+
+        trainer = trainer_cls(args, ngpus_per_node=ngpus_per_node)
     train_summary = trainer.train_loop()
 
     evaluator = Evaluator(args)
