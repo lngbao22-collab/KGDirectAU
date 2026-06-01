@@ -94,7 +94,7 @@ class RotatEEncoder(BaseModel):
             if negative_sample is None:
                 raise ValueError("negative_sample is required for head-batch")
             batch_size, negative_sample_size = negative_sample.size(0), negative_sample.size(1)
-            head = torch.index_select(self.entity_embedding, dim=0, index=negative_sample.view(-1)).view(batch_size, negative_sample_size, -1)
+            head = torch.index_select(self.entity_embedding, dim=0, index=negative_sample.reshape(-1)).reshape(batch_size, negative_sample_size, -1)
             relation = torch.index_select(self.relation_embedding, dim=0, index=positive_sample[:, 1]).unsqueeze(1)
             tail = torch.index_select(self.entity_embedding, dim=0, index=positive_sample[:, 2]).unsqueeze(1)
         elif mode == "tail-batch":
@@ -103,7 +103,7 @@ class RotatEEncoder(BaseModel):
             batch_size, negative_sample_size = negative_sample.size(0), negative_sample.size(1)
             head = torch.index_select(self.entity_embedding, dim=0, index=positive_sample[:, 0]).unsqueeze(1)
             relation = torch.index_select(self.relation_embedding, dim=0, index=positive_sample[:, 1]).unsqueeze(1)
-            tail = torch.index_select(self.entity_embedding, dim=0, index=negative_sample.view(-1)).view(batch_size, negative_sample_size, -1)
+            tail = torch.index_select(self.entity_embedding, dim=0, index=negative_sample.reshape(-1)).reshape(batch_size, negative_sample_size, -1)
         else:
             raise ValueError(f"mode {mode} not supported")
 
