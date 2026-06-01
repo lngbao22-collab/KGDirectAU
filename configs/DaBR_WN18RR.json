@@ -15,10 +15,10 @@
 
   "output_dir_prefix": "logs/DaBR_WN18RR",
 
-  "dim": 500,
+  "dim": 100,
   "lr": 0.1,
   "batch_size": 100,
-  "epochs": 40000,
+  "epochs": 400,
   "n_sample": 5,
   "eval_every_n_step": 400,
   "epoch_per_test": 400,
@@ -26,8 +26,6 @@
   "lmbda": 0.5,
   "lmbda_two": 0.01,
   "optim": "adagrad",
-  "workers": 8,
-  "early_stopping_patience": 10,
   "test_link": true,
   "test_triple": false
 }

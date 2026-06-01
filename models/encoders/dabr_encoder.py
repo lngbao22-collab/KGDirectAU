@@ -1,32 +1,34 @@
 """DaBR encoder adapted from classic DaBR implementation."""
 
+import json
+import os
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+
 from base.model import BaseModel
+from data.dataset import load_data
+from data.dict_hub import get_entity_dict
 
 
 def build_model(args) -> nn.Module:
-    """Factory function to build the DaBR encoder."""
-
-    return DaBREncoder(args)
+    entity_dict = get_entity_dict()
+    relation_to_idx = _load_relation_to_idx(args)
+    model = DaBREncoder(args, len(entity_dict), len(relation_to_idx))
+    model.rel_to_idx = relation_to_idx
+    model.entity_dict = entity_dict
+    return model
 
 
 class DaBREncoder(BaseModel):
-    """DaBR encoder adapted from classic DaBR implementation.
-
-    Exposes quaternion utilities and a `forward(batch_dict)` returning scores and embeddings for regularization.
-    """
-
-    def __init__(self, args):
+    def __init__(self, args, n_ent=None, n_rel=None):
         super().__init__()
         self.config = args
         dim = getattr(args, 'dim', getattr(args, 'hidden_size', 100))
         emb_dim = 4 * int(dim)
-        n_ent = getattr(args, 'ent_total', None)
-        n_rel = getattr(args, 'rel_total', None)
-        # Fallback: many training code builds embeddings later; if counts are missing,
-        # create placeholders and expect calling code to set them.
+        n_ent = getattr(args, 'ent_total', n_ent)
+        n_rel = getattr(args, 'rel_total', n_rel)
+
         self.ent_embeddings = nn.Embedding(n_ent or 1, emb_dim)
         self.rel_embeddings = nn.Embedding(n_rel or 1, emb_dim)
         self.Dr = nn.Embedding(n_rel or 1, emb_dim)
@@ -34,26 +36,19 @@ class DaBREncoder(BaseModel):
         self.init_parameters()
 
     def init_parameters(self) -> None:
-        """Initialize model parameters using Xavier uniform initialization."""
-
         nn.init.xavier_uniform_(self.ent_embeddings.weight.data)
         nn.init.xavier_uniform_(self.rel_embeddings.weight.data)
         nn.init.xavier_uniform_(self.Dr.weight.data)
 
     @staticmethod
-    def normalization(quaternion, split_dim=1) -> torch.Tensor:
-        """Normalize a quaternion tensor."""
-
+    def normalization(quaternion, split_dim=1):
         size = quaternion.size(split_dim) // 4
         quaternion = quaternion.reshape(-1, 4, size)
-        quaternion = quaternion / torch.sqrt(torch.sum(quaternion ** 2, 1, True))
-        quaternion = quaternion.reshape(-1, 4 * size)
-        return quaternion
+        quaternion = quaternion / torch.sqrt(torch.sum(quaternion ** 2, 1, True).clamp_min(1e-12))
+        return quaternion.reshape(-1, 4 * size)
 
     @staticmethod
-    def make_wise_quaternion(quaternion) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Convert a quaternion tensor into its component parts."""
-
+    def make_wise_quaternion(quaternion):
         if len(quaternion.size()) == 1:
             quaternion = quaternion.unsqueeze(0)
         size = quaternion.size(1) // 4
@@ -65,18 +60,13 @@ class DaBREncoder(BaseModel):
         return r2, i2, j2, k2
 
     @staticmethod
-    def get_quaternion_wise_mul(quaternion) -> torch.Tensor:
-        """Compute the element-wise multiplication of a quaternion tensor."""
-
+    def get_quaternion_wise_mul(quaternion):
         size = quaternion.size(1) // 4
         quaternion = quaternion.view(-1, 4, size)
-        quaternion = torch.sum(quaternion, 1)
-        return quaternion
+        return torch.sum(quaternion, 1)
 
     @staticmethod
-    def vec_vec_wise_multiplication(q, p) -> torch.Tensor:
-        """Compute the element-wise multiplication of two quaternion tensors."""
-
+    def vec_vec_wise_multiplication(q, p):
         normalized_p = DaBREncoder.normalization(p)
         q_r, q_i, q_j, q_k = DaBREncoder.make_wise_quaternion(q)
 
@@ -88,45 +78,108 @@ class DaBREncoder(BaseModel):
         return torch.cat([qp_r, qp_i, qp_j, qp_k], dim=1)
 
     @staticmethod
-    def get_inv(quaternion) -> torch.Tensor:
-        """Compute the inverse of a quaternion tensor."""
-
+    def get_inv(quaternion):
         q_r, q_i, q_j, q_k = torch.chunk(quaternion, 4, dim=1)
-        quaternion_norm = q_r ** 2 + q_i ** 2 + q_j ** 2 + q_k ** 2
-        r_inv = torch.cat([q_r / quaternion_norm, -q_i / quaternion_norm, -q_j / quaternion_norm, -q_k / quaternion_norm], dim=1)
-        return r_inv
+        quaternion_norm = (q_r ** 2 + q_i ** 2 + q_j ** 2 + q_k ** 2).clamp_min(1e-12)
+        return torch.cat([q_r / quaternion_norm, -q_i / quaternion_norm, -q_j / quaternion_norm, -q_k / quaternion_norm], dim=1)
 
     @staticmethod
-    def _calc(h, r, t, dr, para) -> torch.Tensor:
-        """Calculate the DaBR score for a batch of triples."""
-
+    def _calc(h, r, t, dr, para):
         hr = DaBREncoder.vec_vec_wise_multiplication(h, r)
         r_inv = DaBREncoder.get_inv(r)
         tr = DaBREncoder.vec_vec_wise_multiplication(t, r_inv)
         score_s = hr * tr
+
         hrt = h + dr - t
         s_d, x_d, y_d, z_d = torch.chunk(hrt, 4, dim=1)
         score_d = s_d + x_d + y_d + z_d
         return -torch.sum(score_s, -1) - para * torch.norm(score_d, p=1, dim=-1)
 
     @staticmethod
-    def regularization(quaternion) -> torch.Tensor:
-        """Compute the regularization term for a quaternion tensor."""
-
+    def regularization(quaternion):
         size = quaternion.size(1) // 4
         r, i, j, k = torch.split(quaternion, size, dim=1)
         return torch.mean(r ** 2) + torch.mean(i ** 2) + torch.mean(j ** 2) + torch.mean(k ** 2)
 
     def forward(self, batch_dict: dict) -> dict:
-        """Compute scores and embeddings for a batch of triples."""
-
         h = self.ent_embeddings(batch_dict['head_id'])
         r = self.rel_embeddings(batch_dict['relation'])
         t = self.ent_embeddings(batch_dict['tail_id'])
         dr = self.Dr(batch_dict['relation'])
         score = DaBREncoder._calc(h, r, t, dr, self.para)
-        return {
-            'scores': score,
-            'ent_emb': (h, t),
-            'rel_emb': (r, dr),
-        }
+        return {'scores': score, 'ent_emb': (h, t), 'rel_emb': (r, dr)}
+
+    def score_batch(self, head_ids, relations, tail_entity_ids) -> torch.Tensor:
+        """Memory-safe evaluation loop for DaBR."""
+
+        device = self.ent_embeddings.weight.device
+        head_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
+        relation_indices = _as_index_tensor(relations, self._relation_to_idx, device)
+        candidate_indices = _as_index_tensor(tail_entity_ids, self.entity_dict.entity_to_idx, device)
+
+        h = self.ent_embeddings(head_indices)
+        r = self.rel_embeddings(relation_indices)
+        dr = self.Dr(relation_indices)
+        t = self.ent_embeddings(candidate_indices)
+
+        batch_size, num_candidates = h.size(0), t.size(0)
+        scores = []
+
+        for i in range(batch_size):
+            h_i = h[i:i + 1].expand(num_candidates, -1)
+            r_i = r[i:i + 1].expand(num_candidates, -1)
+            dr_i = dr[i:i + 1].expand(num_candidates, -1)
+            s = self._calc(h_i, r_i, t, dr_i, self.para)
+            scores.append(s)
+
+        return torch.stack(scores, dim=0)
+
+    def _relation_to_idx(self, relation: str) -> int:
+        if relation in self.rel_to_idx:
+            return self.rel_to_idx[relation]
+        if relation.startswith('inverse '):
+            base_relation = relation[len('inverse '):]
+            if base_relation in self.rel_to_idx:
+                return self.rel_to_idx[base_relation]
+        if relation.startswith('inverse_'):
+            base_relation = relation[len('inverse_'):]
+            candidate = '_' + base_relation if not base_relation.startswith('_') else base_relation
+            if candidate in self.rel_to_idx:
+                return self.rel_to_idx[candidate]
+        normalized = ' '.join(relation.split())
+        if normalized in self.rel_to_idx:
+            return self.rel_to_idx[normalized]
+        raise KeyError(relation)
+
+
+def _relation_path_candidates(args):
+    paths = []
+    for source_path in [getattr(args, 'train_path', ''), getattr(args, 'valid_path', ''), getattr(args, 'test_path', '')]:
+        if not source_path:
+            continue
+        paths.append(os.path.join(os.path.dirname(source_path), 'relation2id.json'))
+    paths.append(os.path.join('data', getattr(args, 'dataset', ''), 'relation2id.json'))
+    return paths
+
+
+def _load_relation_to_idx(args):
+    for path in _relation_path_candidates(args):
+        if not path or not os.path.exists(path):
+            continue
+        with open(path, 'r', encoding='utf-8') as handle:
+            mapping = json.load(handle)
+        if isinstance(mapping, dict):
+            return {str(key): int(value) for key, value in mapping.items()}
+
+    relations, seen = [], set()
+    for example in load_data(getattr(args, 'train_path', ''), add_forward_triplet=False, add_backward_triplet=False):
+        if example.relation not in seen:
+            seen.add(example.relation)
+            relations.append(example.relation)
+    return {relation: idx for idx, relation in enumerate(relations)}
+
+
+def _as_index_tensor(values, lookup, device: torch.device) -> torch.Tensor:
+    if torch.is_tensor(values):
+        return values.to(device=device, dtype=torch.long)
+    return torch.tensor([lookup(value) for value in values], dtype=torch.long, device=device)

@@ -7,7 +7,8 @@ import torch
 
 from configs.config import args
 from base.evaluator import Evaluator
-from data.dataset import load_data
+from data.dataset import Dataset, load_data
+from data.dataloader import collate
 from data.dict_hub import get_entity_dict, get_relation_id_map
 from models.builder import import_module_from_path, load_attr_from_path
 from models.samplers.bernoulli_sampler import BernoulliListwiseSampler
@@ -165,6 +166,41 @@ def _build_adversarial_trainer(current_args):
     return strategy_cls(model, current_args, train_triples)
 
 
+def _build_pointwise_trainer(current_args):
+    """Build the encoder and dataloader for DaBR pointwise training."""
+
+    strategy_mod = import_module_from_path(current_args.model_strategy_path)
+    strategy_cls = getattr(strategy_mod, 'PointwiseStrategy', None)
+    if strategy_cls is None:
+        strategy_cls = getattr(strategy_mod, 'Strategy', None)
+    if strategy_cls is None:
+        raise ImportError(f'Could not find PointwiseStrategy in {current_args.model_strategy_path}')
+
+    encoder_path = getattr(current_args, 'model_encoder_path', '') or 'models/encoders/dabr_encoder.py'
+    try:
+        build_model = load_attr_from_path(encoder_path, 'build_model')
+    except Exception:
+        encoder_mod = import_module_from_path(encoder_path)
+        build_model = getattr(encoder_mod, 'build_model')
+
+    model = build_model(current_args)
+    if torch.cuda.is_available():
+        model.cuda()
+
+    train_examples = load_data(current_args.train_path, add_forward_triplet=True, add_backward_triplet=False)
+    train_dataset = Dataset(path=current_args.train_path, task=current_args.dataset, examples=train_examples)
+    train_dataloader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=max(getattr(current_args, 'batch_size', 1), 1),
+        shuffle=True,
+        collate_fn=collate,
+        num_workers=getattr(current_args, 'workers', 2),
+        pin_memory=True,
+        drop_last=True,
+    )
+    return strategy_cls(model, current_args), train_dataloader
+
+
 def main():
     ngpus_per_node = init_hardware(args)
 
@@ -212,6 +248,29 @@ def main():
         trainer = _build_softmax_trainer(args)
     elif strategy_path.replace('\\', '/').endswith('adversarial_strategy.py'):
         trainer = _build_adversarial_trainer(args)
+    elif strategy_path.replace('\\', '/').endswith('pointwise_strategy.py'):
+        trainer, train_dataloader = _build_pointwise_trainer(args)
+        train_summary = trainer.train_loop(train_dataloader)
+        evaluator = Evaluator(args)
+        eval_model_path = train_summary.get('best_checkpoint_path') or best_model_path(args.output_dir)
+        evaluator.load(eval_model_path)
+        test_start = time.time()
+        link_metrics = None
+        triple_metrics = None
+        test_lp_path = _resolve_test_lp_path(args)
+        if run_lp and test_lp_path:
+            entity_dict = get_entity_dict()
+            test_lp_log_path = os.path.join(args.output_dir, 'test_link_prediction.log')
+            forward_metrics = evaluator.evaluate_link_prediction_inplace(
+                evaluator.model, test_lp_path, entity_dict, test_lp_log_path, eval_forward=True)
+            backward_metrics = evaluator.evaluate_link_prediction_inplace(
+                evaluator.model, test_lp_path, entity_dict, test_lp_log_path, eval_forward=False)
+            link_metrics = _average_link_metrics(forward_metrics, backward_metrics)
+        if run_tc:
+            triple_metrics = evaluator.evaluate_test_triple_classification()
+        test_time = time.time() - test_start
+        _write_results(args, train_summary, evaluator, link_metrics, triple_metrics, test_time, config_snapshot)
+        return
     else:
         strategy_mod = import_module_from_path(strategy_path)
         trainer_cls = None
