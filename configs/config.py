@@ -166,6 +166,8 @@ def _format_model_name(model: str) -> str:
     """Format the model name for consistent config lookup and output naming."""
 
     mapping = {
+        'dabr': 'DaBR',
+        'dabr-au': 'DaBR-AU',
         'simkgc': 'SimKGC',
         'transe': 'TransE',
         'transd': 'TransD',
@@ -385,7 +387,7 @@ assert args.lr_scheduler in ['linear', 'cosine']
 args.config_path = config_path
 
 _model_name = (args.model or '').lower()
-_is_text_model = _model_name not in {'distmult', 'complex'}
+_is_text_model = _model_name not in {'distmult', 'complex', 'dabr', 'dabr-au'}
 
 if _is_text_model:
     args.encoder = args.bert_encoder
