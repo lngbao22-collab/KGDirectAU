@@ -181,7 +181,7 @@ class KGAUStrategy(Evaluator):
 					batch_dict = move_to_cuda(batch_dict)
 				self.optimizer.zero_grad()
 				if use_amp:
-					with torch.cuda.amp.autocast():
+					with torch.amp.autocast(device_type='cuda'):
 						outputs = self.model(**batch_dict)
 						q_raw = outputs['hr_vector']
 						t_raw = outputs['tail_vector']
@@ -211,7 +211,7 @@ class KGAUStrategy(Evaluator):
 				ts = ts.to(self.device)
 				self.optimizer.zero_grad()
 				if use_amp:
-					with torch.cuda.amp.autocast():
+					with torch.amp.autocast(device_type='cuda'):
 						q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
 						ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
 						loss, _, _ = self.criterion(q_raw, t_raw, h_raw, ent_raw)
@@ -258,7 +258,7 @@ class KGAUStrategy(Evaluator):
 		"""Execute the full training loop over multiple epochs, including checkpointing and timing."""
 
 		if self.args.use_amp:
-			self.scaler = torch.cuda.amp.GradScaler()
+			self.scaler = torch.amp.GradScaler('cuda')
 
 		total_start_time = time.time()
 		for epoch in range(self.args.epochs):
