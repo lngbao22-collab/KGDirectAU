@@ -108,9 +108,9 @@ class FilteredSubsampler:
             while negative_sample_size < self.num_negatives:
                 candidate = np.random.randint(self.nentity, size=self.num_negatives * 2)
                 if mode == "head-batch":
-                    mask = np.in1d(candidate, self.true_head.get((int(r), int(t)), np.array([], dtype=np.int64)), assume_unique=True, invert=True)
+                    mask = np.isin(candidate, self.true_head.get((int(r), int(t)), np.array([], dtype=np.int64)), assume_unique=True, invert=True)
                 elif mode == "tail-batch":
-                    mask = np.in1d(candidate, self.true_tail.get((int(h), int(r)), np.array([], dtype=np.int64)), assume_unique=True, invert=True)
+                    mask = np.isin(candidate, self.true_tail.get((int(h), int(r)), np.array([], dtype=np.int64)), assume_unique=True, invert=True)
                 else:
                     raise ValueError(f"Training batch mode {mode} not supported")
                 candidate = candidate[mask]
