@@ -15,7 +15,7 @@
 
   "output_dir_prefix": "logs/RotatE_WN18RR",
 
-  "dim": 500,
+  "dim": 200,
   "margin": 6.0,
   "lr": 5e-05,
   "batch_size": 512,
