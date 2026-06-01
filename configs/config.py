@@ -387,7 +387,7 @@ assert args.lr_scheduler in ['linear', 'cosine']
 args.config_path = config_path
 
 _model_name = (args.model or '').lower()
-_is_text_model = _model_name not in {'distmult', 'complex', 'dabr', 'dabr-au'}
+_is_text_model = _model_name not in {'distmult', 'distmult-au', 'complex', 'complex-au', 'dabr', 'dabr-au'}
 
 if _is_text_model:
     args.encoder = args.bert_encoder
@@ -398,7 +398,7 @@ else:
     args.pretrained_model = ''
 
 if not args.model_strategy_path:
-    if _model_name in {'distmult', 'complex'}:
+    if _model_name in {'distmult', 'distmult-au', 'complex', 'complex-au', 'dabr', 'dabr-au'}:
         args.model_strategy_path = 'models/strategies/softmax_strategy.py'
     else:
         args.model_strategy_path = 'models/strategies/simkgc_strategy.py'
@@ -406,18 +406,26 @@ if not args.model_strategy_path:
 if not args.model_encoder_path:
     if _model_name == 'distmult':
         args.model_encoder_path = 'models/encoders/distmult_encoder.py'
+    elif _model_name == 'distmult-au':
+        args.model_encoder_path = 'models/encoders/distmult-au_encoder.py'
     elif _model_name == 'complex':
         args.model_encoder_path = 'models/encoders/complex_encoder.py'
+    elif _model_name == 'complex-au':
+        args.model_encoder_path = 'models/encoders/complex-au_encoder.py'
+    elif _model_name == 'dabr':
+        args.model_encoder_path = 'models/encoders/dabr_encoder.py'
+    elif _model_name == 'dabr-au':
+        args.model_encoder_path = 'models/encoders/dabr-au_encoder.py'
     else:
         args.model_encoder_path = 'models/encoders/bert_encoder.py'
 
 if not args.model_sampler_path:
-    if _model_name in {'distmult', 'complex'}:
+    if _model_name in {'distmult', 'distmult-au', 'complex', 'complex-au', 'dabr', 'dabr-au'}:
         args.model_sampler_path = 'models/samplers/bernoulli_sampler.py'
     else:
         args.model_sampler_path = 'models/samplers/masking_sampler.py'
 
-if not args.model_loss_path and _model_name in {'distmult', 'complex'}:
+if not args.model_loss_path and _model_name in {'distmult', 'distmult-au', 'complex', 'complex-au', 'dabr', 'dabr-au'}:
     args.model_loss_path = 'models/losses/infonce_loss.py'
 
 # --task is a separate flag controlling which evaluations to run
