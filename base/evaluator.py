@@ -83,6 +83,7 @@ def evaluate_model(
         topk_scores, topk_indices, metrics
     """
 
+    model = get_model_obj(model)
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -307,6 +308,7 @@ class Evaluator:
         import json
         from data.dataset import load_data
 
+        model = get_model_obj(model)
         model.eval()
         if not os.path.exists(eval_path):
             return {}
@@ -418,12 +420,13 @@ class Evaluator:
 
         if self.model is None:
             self.load(ckt_path)
-        self.model.eval()
+        eval_model = get_model_obj(self.model)
+        eval_model.eval()
 
-        if hasattr(self.model, 'score_batch'):
+        if hasattr(eval_model, 'score_batch'):
             for i in range(0, len(test_exs), batch_size):
                 batch = test_exs[i:i + batch_size]
-                scores = self.model.score_batch(
+                scores = eval_model.score_batch(
                     [ex.head_id for ex in batch],
                     [ex.relation for ex in batch],
                     [ex.tail_id for ex in batch],
@@ -441,9 +444,9 @@ class Evaluator:
                 batch_dict = collate(batch_vec)
                 if torch.cuda.is_available():
                     batch_dict = move_to_cuda(batch_dict)
-                    self.model.cuda()
-                output_dict = self.model(**batch_dict)
-                logits = self.model.compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
+                    eval_model.cuda()
+                output_dict = eval_model(**batch_dict)
+                logits = eval_model.compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
                 prob = torch.sigmoid(logits.diag()).detach().cpu().numpy().reshape(-1)
                 y_prob.extend(prob.tolist())
 
