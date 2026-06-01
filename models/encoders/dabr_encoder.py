@@ -109,6 +109,18 @@ class DaBREncoder(BaseModel):
         score = DaBREncoder._calc(h, r, t, dr, self.para)
         return {'scores': score, 'ent_emb': (h, t), 'rel_emb': (r, dr)}
 
+    def compute_logits(self, output_dict: dict, batch_dict: dict) -> dict:
+        """Adapt DaBR forward outputs to the generic logits interface."""
+
+        if torch.is_tensor(output_dict):
+            return {'logits': output_dict}
+        if isinstance(output_dict, dict):
+            if 'logits' in output_dict:
+                return output_dict
+            if 'scores' in output_dict:
+                return {'logits': output_dict['scores']}
+        raise TypeError('Unsupported model output type for logits computation')
+
     def score_batch(self, head_ids, relations, tail_entity_ids) -> torch.Tensor:
         """Memory-safe evaluation loop for DaBR."""
 
