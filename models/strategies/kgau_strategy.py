@@ -179,7 +179,7 @@ class KGAUStrategy(Evaluator):
 				if torch.cuda.is_available():
 					batch_dict = move_to_cuda(batch_dict)
 				self.optimizer.zero_grad()
-				outputs = model(**batch_dict)
+				outputs = self.model(**batch_dict)
 				q_raw = outputs['hr_vector']
 				t_raw = outputs['tail_vector']
 				h_raw = outputs['head_vector']
