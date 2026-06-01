@@ -8,7 +8,6 @@ from typing import Sequence
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from data.dataset import Example, load_data
 from data.dict_hub import get_entity_dict
@@ -94,7 +93,7 @@ class ComplExEncoder(nn.Module):
 		if device is None:
 			device = self.ent_re_embed.weight.device
 		head_indices = _as_index_tensor([example.head_id for example in examples], self.entity_dict.entity_to_idx, device)
-		relation_indices = _as_index_tensor([example.relation for example in examples], self.rel_to_idx.__getitem__, device)
+		relation_indices = _as_index_tensor([example.relation for example in examples], self._relation_to_idx, device)
 		h_re = self.ent_re_embed(head_indices)
 		h_im = self.ent_im_embed(head_indices)
 		r_re = self.rel_re_embed(relation_indices)
@@ -107,7 +106,7 @@ class ComplExEncoder(nn.Module):
 
 		device = self.ent_re_embed.weight.device
 		head_indices = _as_index_tensor([example.head_id for example in examples], self.entity_dict.entity_to_idx, device)
-		relation_indices = _as_index_tensor([example.relation for example in examples], self.rel_to_idx.__getitem__, device)
+		relation_indices = _as_index_tensor([example.relation for example in examples], self._relation_to_idx, device)
 		tail_indices = _as_index_tensor([example.tail_id for example in examples], self.entity_dict.entity_to_idx, device)
 		h_re = self.ent_re_embed(head_indices)
 		h_im = self.ent_im_embed(head_indices)
@@ -130,7 +129,7 @@ class ComplExEncoder(nn.Module):
 
 		device = self.ent_re_embed.weight.device
 		head_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
-		relation_indices = _as_index_tensor(relations, self.rel_to_idx.__getitem__, device)
+		relation_indices = _as_index_tensor(relations, self._relation_to_idx, device)
 		candidate_indices = _as_index_tensor(tail_entity_ids, self.entity_dict.entity_to_idx, device)
 		h_re = self.ent_re_embed(head_indices)
 		h_im = self.ent_im_embed(head_indices)
@@ -139,6 +138,25 @@ class ComplExEncoder(nn.Module):
 		query_vectors = torch.cat([h_re * r_re - h_im * r_im, h_re * r_im + h_im * r_re], dim=-1)
 		candidate_vectors = self.entity_embeddings(device=device)[candidate_indices]
 		return torch.mm(query_vectors, candidate_vectors.t())
+
+	def _relation_to_idx(self, relation: str) -> int:
+		"""Resolve relation variants used by preprocessing and inverse triplet generation."""
+
+		if relation in self.rel_to_idx:
+			return self.rel_to_idx[relation]
+		if relation.startswith('inverse '):
+			base_relation = relation[len('inverse '):]
+			if base_relation in self.rel_to_idx:
+				return self.rel_to_idx[base_relation]
+		if relation.startswith('inverse_'):
+			base_relation = relation[len('inverse_'):]
+			candidate = '_' + base_relation if not base_relation.startswith('_') else base_relation
+			if candidate in self.rel_to_idx:
+				return self.rel_to_idx[candidate]
+		normalized = ' '.join(relation.split())
+		if normalized in self.rel_to_idx:
+			return self.rel_to_idx[normalized]
+		raise KeyError(relation)
 
 	def compute_logits(self, output_dict: dict | torch.Tensor, batch_dict: dict) -> dict:
 		"""Convert a forward pass into logits for triple classification."""
