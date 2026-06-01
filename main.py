@@ -45,6 +45,9 @@ def _resolve_test_lp_path(current_args) -> str:
 def _write_results(current_args, train_summary, evaluator, link_metrics, triple_metrics, test_time, configs_snapshot) -> None:
     """Write the evaluation results and training summary to a report file."""
 
+    if link_metrics:
+        logger.info('Link prediction metrics on test set:\n{}'.format(json.dumps(link_metrics, indent=4)))
+
     checkpoint = getattr(evaluator, 'checkpoint', {}) or {}
     best_metric = checkpoint.get('best_metric') or {}
     best_epoch = train_summary.get('best_epoch') if train_summary else None
