@@ -303,57 +303,66 @@ class Evaluator:
 
     @torch.no_grad()
     def evaluate_link_prediction_inplace(self, model, eval_path, entity_dict, output_log_path, batch_size=128, eval_forward=True, examples=None) -> dict:
-        """Evaluate link prediction using the model's forward pass."""
+        import torch
+        import json
+        from data.dataset import load_data
 
-        model = get_model_obj(model)
         model.eval()
         if not os.path.exists(eval_path):
-            logger.info(f"[EVAL] {eval_path} not found, skip link prediction evaluation.")
             return {}
-        eval_set = 'TEST' if 'test' in eval_path else 'VALID'
+
         if examples is None:
             examples = load_data(eval_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
 
-        if hasattr(model, 'score_batch'):
-            all_entity_ids = [entity_ex.entity_id for entity_ex in entity_dict.entity_exs]
-            score = torch.zeros(len(examples), len(all_entity_ids))
-            for start in range(0, len(all_entity_ids), max(batch_size, 512)):
-                end = min(start + max(batch_size, 512), len(all_entity_ids))
-                entity_chunk = all_entity_ids[start:end]
-                chunk_score = model.score_batch(
-                    [ex.head_id for ex in examples],
-                    [ex.relation for ex in examples],
-                    entity_chunk,
-                )
-                if not isinstance(chunk_score, torch.Tensor):
-                    chunk_score = torch.tensor(chunk_score)
-                score[:, start:end] = chunk_score.detach().cpu()
-        else:
-            hr_tensor, _ = model.predict_by_examples(examples, batch_size=batch_size)
-            entity_examples = [Example(head_id='', relation='', tail_id=entity_ex.entity_id) for entity_ex in entity_dict.entity_exs]
-            entities_tensor = model.predict_by_entities(entity_examples, batch_size=max(batch_size, 512))
+        entity_ids = [ex.entity_id for ex in entity_dict.entity_exs]
+        all_scores = []
+        target_indices = []
 
-            if torch.cuda.is_available():
-                hr_tensor = hr_tensor.cuda()
-                entities_tensor = entities_tensor.cuda()
+        with torch.no_grad():
+            # Model-Agnostic Evaluation Loop (No Tokenizer/DataLoader needed!)
+            for i in range(0, len(examples), batch_size):
+                batch = examples[i:i + batch_size]
+                heads = [ex.head_id for ex in batch]
+                rels = [ex.relation for ex in batch]
 
-            score = torch.mm(hr_tensor, entities_tensor.t())
-        all_triplet_dict = get_all_triplet_dict()
-        _filter_known(score, examples, all_triplet_dict, entity_dict)
-        target = torch.LongTensor([entity_dict.entity_to_idx(ex.tail_id) for ex in examples]).to(score.device)
-        sorted_indices = torch.sort(score, dim=-1, descending=True).indices
-        target_rank = torch.nonzero(sorted_indices.eq(target.unsqueeze(-1)).long(), as_tuple=False)
-        if target_rank.size(0) != score.size(0):
-            raise RuntimeError('Unable to compute one rank per example')
+                # Use the standardized API
+                scores = model.score_batch(heads, rels, entity_ids)
+                all_scores.append(scores.cpu())
 
+                # Record the ground truth index
+                targets = [entity_dict.entity_to_idx(ex.tail_id) for ex in batch]
+                target_indices.extend(targets)
+
+        # Compute standard ranking metrics from the raw score matrix
+        all_scores = torch.cat(all_scores, dim=0)
+        target_indices = torch.tensor(target_indices, dtype=torch.long)
+
+        # Sort scores in descending order (highest score first)
+        sorted_indices = torch.argsort(all_scores, dim=-1, descending=True)
+
+        # Find the rank of the true target
         ranks = []
-        for idx in range(target_rank.size(0)):
-            row = target_rank[idx].tolist()
-            if row[0] != idx:
-                raise RuntimeError('Target rank rows are misaligned')
-            ranks.append(row[1] + 1)
+        for i in range(len(target_indices)):
+            true_idx = target_indices[i].item()
+            rank = (sorted_indices[i] == true_idx).nonzero(as_tuple=True)[0].item() + 1
+            ranks.append(rank)
 
-        metrics = ranking_metrics_from_ranks(ranks)
+        ranks = torch.tensor(ranks, dtype=torch.float)
+        metrics = {
+            'mr': ranks.mean().item(),
+            'mrr': (1.0 / ranks).mean().item(),
+            'hit@1': (ranks <= 1).float().mean().item(),
+            'hit@3': (ranks <= 3).float().mean().item(),
+            'hit@10': (ranks <= 10).float().mean().item(),
+        }
+
+        # Log it
+        eval_set = 'TEST' if 'test' in eval_path.lower() else 'VALID'
+        log_str = f"[{eval_set}] Link Prediction Metrics: {json.dumps(metrics)}"
+        print(log_str)
+        with open(output_log_path, 'a', encoding='utf-8') as f:
+            f.write(log_str + '\n')
+
         return metrics
 
     def evaluate_test_triple_classification(self, epoch=None) -> dict:
