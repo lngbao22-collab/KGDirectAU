@@ -194,6 +194,8 @@ class KGAUStrategy(Evaluator):
 
 		self.model.train()
 		epoch_loss = 0.0
+		epoch_align_loss = 0.0
+		epoch_unif_loss = 0.0
 		batch_size = max(getattr(self.args, 'batch_size', 1024), 1)
 		model = get_model_obj(self.model)
 		use_amp = bool(getattr(self.args, 'use_amp', False))
@@ -213,7 +215,7 @@ class KGAUStrategy(Evaluator):
 						t_raw = outputs['tail_vector']
 						h_raw = outputs['head_vector']
 						ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
-						loss, _, _ = self.criterion(q_raw, t_raw, h_raw, ent_raw)
+						loss, l_align, l_unif = self.criterion(q_raw, t_raw, h_raw, ent_raw)
 					self.scaler.scale(loss).backward()
 					self.scaler.unscale_(self.optimizer)
 					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
@@ -225,11 +227,13 @@ class KGAUStrategy(Evaluator):
 					t_raw = outputs['tail_vector']
 					h_raw = outputs['head_vector']
 					ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
-					loss, _, _ = self.criterion(q_raw, t_raw, h_raw, ent_raw)
+					loss, l_align, l_unif = self.criterion(q_raw, t_raw, h_raw, ent_raw)
 					loss.backward()
 					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
 					self.optimizer.step()
 				losses.update(loss.item(), len(batch_dict['batch_data']))
+				epoch_align_loss += l_align.item() * len(batch_dict['batch_data'])
+				epoch_unif_loss += l_unif.item() * len(batch_dict['batch_data'])
 				epoch_loss += loss.item() * len(batch_dict['batch_data'])
 				if i % self.args.print_freq == 0:
 					progress.display(i)
@@ -243,7 +247,7 @@ class KGAUStrategy(Evaluator):
 					with torch.amp.autocast(device_type='cuda'):
 						q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
 						ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
-						loss, _, _ = self.criterion(q_raw, t_raw, h_raw, ent_raw)
+						loss, l_align, l_unif = self.criterion(q_raw, t_raw, h_raw, ent_raw)
 					self.scaler.scale(loss).backward()
 					self.scaler.unscale_(self.optimizer)
 					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
@@ -252,14 +256,24 @@ class KGAUStrategy(Evaluator):
 				else:
 					q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
 					ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
-					loss, _, _ = self.criterion(q_raw, t_raw, h_raw, ent_raw)
+					loss, l_align, l_unif = self.criterion(q_raw, t_raw, h_raw, ent_raw)
 					loss.backward()
 					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
 					self.optimizer.step()
+				epoch_align_loss += l_align.item() * ss.size(0)
+				epoch_unif_loss += l_unif.item() * ss.size(0)
 				epoch_loss += loss.item() * ss.size(0)
 
-		avg_loss = epoch_loss / max(len(self.train_examples), 1)
-		logger.info('[EPOCH %s] train loss: %.6f', epoch, avg_loss)
+		avg_count = max(len(self.train_examples), 1)
+		avg_loss = epoch_loss / avg_count
+		avg_align_loss = epoch_align_loss / avg_count
+		avg_unif_loss = epoch_unif_loss / avg_count
+		logger.info('[EPOCH %s] train loss: %.6f | align: %.6f | uniformity: %.6f', epoch, avg_loss, avg_align_loss, avg_unif_loss)
+		self.train_component_losses = {
+			'loss': avg_loss,
+			'align': avg_align_loss,
+			'uniformity': avg_unif_loss,
+		}
 		return avg_loss
 
 	@torch.no_grad()
