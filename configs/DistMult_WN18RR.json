@@ -19,7 +19,7 @@
   "weight_decay": 0.1,
   "pre_batch": 20,
   "eval_every_n_step": 50,
-  "epochs": 1000,
+  "epochs": 100,
   "batch_size": 100,
   "epoch_per_test": 50,
   "sample_freq": 1,
