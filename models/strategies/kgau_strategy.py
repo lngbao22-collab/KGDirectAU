@@ -17,6 +17,7 @@ from models.builder import load_attr_from_path
 from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, save_checkpoint
 from utils.device import get_model_obj, report_num_trainable_parameters
 from utils.logger import logger
+from models.losses.au_loss import KGAULoss
 
 
 def _relation_path_candidates(args) -> list[str]:
@@ -88,8 +89,6 @@ class KGAUStrategy(Evaluator):
 		num_batches = max(math.ceil(len(self.train_examples) / batch_size), 1)
 		self.weight_decay = lam / num_batches
 		self.optimizer = Adam(self.model.parameters(), lr=args.lr, weight_decay=self.weight_decay)
-
-		from models.losses.au_loss import KGAULoss
 
 		# Support multiple config names: `tuni` preferred, fall back to `temperature` or `t`.
 		tuni_val = getattr(args, 'tuni', getattr(args, 'temperature', getattr(args, 't', 2.0)))
