@@ -171,6 +171,7 @@ class KGAUStrategy(Evaluator):
 		epoch_loss = 0.0
 		batch_size = max(getattr(self.args, 'batch_size', 1024), 1)
 		model = get_model_obj(self.model)
+		use_amp = bool(getattr(self.args, 'use_amp', False))
 
 		if self.uses_text_inputs:
 			for start in range(0, len(self.train_examples), batch_size):
@@ -179,14 +180,29 @@ class KGAUStrategy(Evaluator):
 				if torch.cuda.is_available():
 					batch_dict = move_to_cuda(batch_dict)
 				self.optimizer.zero_grad()
-				outputs = self.model(**batch_dict)
-				q_raw = outputs['hr_vector']
-				t_raw = outputs['tail_vector']
-				h_raw = outputs['head_vector']
-				ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
-				loss, _, _ = self.criterion(q_raw, t_raw, h_raw, ent_raw)
-				loss.backward()
-				self.optimizer.step()
+				if use_amp:
+					with torch.cuda.amp.autocast():
+						outputs = self.model(**batch_dict)
+						q_raw = outputs['hr_vector']
+						t_raw = outputs['tail_vector']
+						h_raw = outputs['head_vector']
+						ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
+						loss, _, _ = self.criterion(q_raw, t_raw, h_raw, ent_raw)
+					self.scaler.scale(loss).backward()
+					self.scaler.unscale_(self.optimizer)
+					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
+					self.scaler.step(self.optimizer)
+					self.scaler.update()
+				else:
+					outputs = self.model(**batch_dict)
+					q_raw = outputs['hr_vector']
+					t_raw = outputs['tail_vector']
+					h_raw = outputs['head_vector']
+					ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
+					loss, _, _ = self.criterion(q_raw, t_raw, h_raw, ent_raw)
+					loss.backward()
+					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
+					self.optimizer.step()
 				epoch_loss += loss.item() * len(batch_examples)
 		else:
 			for ss, rs, ts in self._iter_batches(self.train_src, self.train_rel, self.train_dst, batch_size):
@@ -194,11 +210,23 @@ class KGAUStrategy(Evaluator):
 				rs = rs.to(self.device)
 				ts = ts.to(self.device)
 				self.optimizer.zero_grad()
-				q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
-				ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
-				loss, _, _ = self.criterion(q_raw, t_raw, h_raw, ent_raw)
-				loss.backward()
-				self.optimizer.step()
+				if use_amp:
+					with torch.cuda.amp.autocast():
+						q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
+						ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
+						loss, _, _ = self.criterion(q_raw, t_raw, h_raw, ent_raw)
+					self.scaler.scale(loss).backward()
+					self.scaler.unscale_(self.optimizer)
+					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
+					self.scaler.step(self.optimizer)
+					self.scaler.update()
+				else:
+					q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
+					ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
+					loss, _, _ = self.criterion(q_raw, t_raw, h_raw, ent_raw)
+					loss.backward()
+					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
+					self.optimizer.step()
 				epoch_loss += loss.item() * ss.size(0)
 
 		avg_loss = epoch_loss / max(len(self.train_src), 1)
@@ -230,7 +258,7 @@ class KGAUStrategy(Evaluator):
 		"""Execute the full training loop over multiple epochs, including checkpointing and timing."""
 
 		if self.args.use_amp:
-			logger.info('AMP is ignored for KGDirectAU and will not be used.')
+			self.scaler = torch.cuda.amp.GradScaler()
 
 		total_start_time = time.time()
 		for epoch in range(self.args.epochs):
