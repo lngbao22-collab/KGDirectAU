@@ -12,6 +12,7 @@ from transformers import AutoConfig, AutoModel
 from base.model import BaseModel
 from data.dataloader import collate
 from data.dataset import Dataset, Example
+from data.dict_hub import build_tokenizer, get_entity_dict, get_relation_id_map
 from models.losses.infonce_loss import compute_infonce_logits
 from utils.device import move_to_cuda
 
@@ -99,7 +100,7 @@ class CustomBertModel(BaseModel, ABC):
             self.tail_bert,
             token_ids=head_token_ids,
             mask=head_mask,
-            token_type_ids=head_token_type_ids,
+        token_type_ids=head_token_type_ids,
         )
 
         return {
@@ -129,6 +130,36 @@ class CustomBertModel(BaseModel, ABC):
             'hr_vector': hr_vector.detach(),
             'tail_vector': tail_vector.detach(),
         }
+
+    def get_queries_targets(self, head_indices, relation_indices, tail_indices) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Build query, target, and head representations from indexed triples via the encoder forward path."""
+
+        entity_dict = get_entity_dict()
+        relation_id_map = get_relation_id_map() or {}
+        idx_to_relation = {int(value): key for key, value in relation_id_map.items()}
+
+        examples = []
+        for head_idx, relation_idx, tail_idx in zip(head_indices.tolist(), relation_indices.tolist(), tail_indices.tolist()):
+            head_entity = entity_dict.get_entity_by_idx(int(head_idx))
+            tail_entity = entity_dict.get_entity_by_idx(int(tail_idx))
+            relation = idx_to_relation.get(int(relation_idx), str(int(relation_idx)))
+            examples.append(Example(head_id=head_entity.entity_id, relation=relation, tail_id=tail_entity.entity_id))
+
+        batch_dict = collate([example.vectorize() for example in examples])
+        if torch.cuda.is_available():
+            batch_dict = move_to_cuda(batch_dict)
+
+        outputs = self(**batch_dict)
+        return outputs['hr_vector'], outputs['tail_vector'], outputs['head_vector']
+
+    @torch.no_grad()
+    def entity_embeddings(self, device: torch.device | None = None, batch_size: Optional[int] = None, num_workers: int = 2) -> torch.Tensor:
+        """Encode all entities into embeddings using the tail BERT encoder."""
+
+        entity_embeddings = self.predict_by_entities(get_entity_dict().entity_exs, batch_size=batch_size, num_workers=num_workers)
+        if device is not None:
+            entity_embeddings = entity_embeddings.to(device)
+        return entity_embeddings
 
     @torch.no_grad()
     def predict_ent_embedding(self, tail_token_ids, tail_mask, tail_token_type_ids, **kwargs) -> dict:

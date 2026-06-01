@@ -69,6 +69,7 @@ class ComplExEncoder(nn.Module):
 	def get_queries_targets(self, src, rel, dst) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 		"""Return query, target, and head embeddings for AU training."""
 
+		
 		h_re = self.ent_re_embed(src)
 		h_im = self.ent_im_embed(src)
 		r_re = self.rel_re_embed(rel)
