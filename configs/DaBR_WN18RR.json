@@ -1,8 +1,8 @@
 {
   "model": "DaBR",
   "model_encoder_path": "models/encoders/dabr_encoder.py",
-  "model_loss_path": "models/losses/softplus_loss.py",
-  "model_sampler_path": "models/samplers/pointwise_sampler.py",
+  "model_loss_path": "models/losses/pointwise_logistic_loss.py",
+  "model_sampler_path": "models/samplers/uniform_pointwise_sampler.py",
   "model_strategy_path": "models/strategies/pointwise_strategy.py",
 
   "dataset": "WN18RR",
