@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import math
 import time
 
 import torch
@@ -16,6 +17,7 @@ from models.builder import load_attr_from_path
 from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, save_checkpoint
 from utils.device import get_model_obj, report_num_trainable_parameters
 from utils.logger import logger
+from models.losses.au_loss import KGAULoss
 
 
 def _relation_path_candidates(args) -> list[str]:
@@ -83,11 +85,10 @@ class KGAUStrategy(Evaluator):
 		report_num_trainable_parameters(get_model_obj(self.model))
 
 		lam = getattr(args, 'lam', getattr(args, 'weight_decay', 0.0))
-		n_batch = getattr(args, 'n_batch', getattr(args, 'batch_size', 1))
-		self.weight_decay = lam / max(n_batch, 1)
+		batch_size = max(getattr(args, 'batch_size', 1), 1)
+		num_batches = max(math.ceil(len(self.train_examples) / batch_size), 1)
+		self.weight_decay = lam / num_batches
 		self.optimizer = Adam(self.model.parameters(), lr=args.lr, weight_decay=self.weight_decay)
-
-		from models.losses.au_loss import KGAULoss
 
 		# Support multiple config names: `tuni` preferred, fall back to `temperature` or `t`.
 		tuni_val = getattr(args, 'tuni', getattr(args, 'temperature', getattr(args, 't', 2.0)))
@@ -157,7 +158,7 @@ class KGAUStrategy(Evaluator):
 
 		self.model.train()
 		epoch_loss = 0.0
-		batch_size = getattr(self.args, 'n_batch', getattr(self.args, 'batch_size', 1024))
+		batch_size = max(getattr(self.args, 'batch_size', 1024), 1)
 		model = get_model_obj(self.model)
 
 		for ss, rs, ts in self._iter_batches(self.train_src, self.train_rel, self.train_dst, batch_size):

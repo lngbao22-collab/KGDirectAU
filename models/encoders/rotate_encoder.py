@@ -8,7 +8,6 @@ from typing import Sequence
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from base.model import BaseModel
 from data.dataset import Example, load_data
@@ -134,21 +133,21 @@ class RotatEEncoder(BaseModel):
         }
 
     def entity_embeddings(self, device: torch.device | None = None) -> torch.Tensor:
-        """Return L2-normalized entity embeddings for retrieval."""
+        """Return raw entity embeddings for retrieval."""
 
-        entity_vectors = F.normalize(self.entity_embedding, p=2, dim=-1)
+        entity_vectors = self.entity_embedding
         if device is not None:
             entity_vectors = entity_vectors.to(device)
         return entity_vectors
 
     def hr_embeddings(self, examples: Sequence[Example], device: torch.device | None = None) -> torch.Tensor:
-        """Build query vectors as rotated heads for evaluation retrieval."""
+        """Build query vectors as rotated heads."""
 
         if device is None:
             device = self.entity_embedding.device
 
         head_indices = _as_index_tensor([example.head_id for example in examples], self.entity_dict.entity_to_idx, device)
-        relation_indices = _as_index_tensor([example.relation for example in examples], self.rel_to_idx.__getitem__, device)
+        relation_indices = _as_index_tensor([example.relation for example in examples], self._relation_to_idx, device)
 
         head = torch.index_select(self.entity_embedding, dim=0, index=head_indices).unsqueeze(1)
         relation = torch.index_select(self.relation_embedding, dim=0, index=relation_indices).unsqueeze(1)
@@ -161,7 +160,7 @@ class RotatEEncoder(BaseModel):
         re_query = re_head * re_relation - im_head * im_relation
         im_query = re_head * im_relation + im_head * re_relation
         query = torch.cat([re_query.squeeze(1), im_query.squeeze(1)], dim=-1)
-        return F.normalize(query, p=2, dim=-1)
+        return query
 
     def predict_by_examples(self, examples: Sequence[Example], batch_size: int | None = None, num_workers: int = 1) -> tuple[torch.Tensor, torch.Tensor]:
         """Return query and target embeddings for link prediction evaluation."""
@@ -181,16 +180,36 @@ class RotatEEncoder(BaseModel):
         return self.entity_embeddings(device=device)[entity_indices]
 
     def score_batch(self, head_ids, relations, tail_entity_ids) -> torch.Tensor:
-        """Score a batch of heads/relations against a candidate tail set."""
+        """Score a batch using RotatE tail-batch distance scores."""
 
         device = self.entity_embedding.device
-        query = self.hr_embeddings(
-            [Example(head_id=h, relation=r, tail_id="") for h, r in zip(head_ids, relations)],
-            device=device,
-        )
+
+        head_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
+        relation_indices = _as_index_tensor(relations, self._relation_to_idx, device)
         candidate_indices = _as_index_tensor(tail_entity_ids, self.entity_dict.entity_to_idx, device)
-        candidate_vectors = self.entity_embeddings(device=device)[candidate_indices]
-        return torch.mm(query, candidate_vectors.t())
+
+        positive_sample = torch.stack([head_indices, relation_indices, torch.zeros_like(head_indices)], dim=-1)
+        negative_sample = candidate_indices.unsqueeze(0).expand(len(head_ids), len(candidate_indices))
+        return self._score(positive_sample, negative_sample, mode="tail-batch")
+
+    def _relation_to_idx(self, relation: str) -> int:
+        """Resolve relation variants used by preprocessing and inverse triplet generation."""
+
+        if relation in self.rel_to_idx:
+            return self.rel_to_idx[relation]
+        if relation.startswith('inverse '):
+            base_relation = relation[len('inverse '):]
+            if base_relation in self.rel_to_idx:
+                return self.rel_to_idx[base_relation]
+        if relation.startswith('inverse_'):
+            base_relation = relation[len('inverse_'):]
+            candidate = '_' + base_relation if not base_relation.startswith('_') else base_relation
+            if candidate in self.rel_to_idx:
+                return self.rel_to_idx[candidate]
+        normalized = ' '.join(relation.split())
+        if normalized in self.rel_to_idx:
+            return self.rel_to_idx[normalized]
+        raise KeyError(relation)
 
 
 def _relation_path_candidates(args) -> list[str]:
