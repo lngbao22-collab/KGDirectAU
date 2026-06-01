@@ -93,8 +93,9 @@ class KGAUStrategy(Evaluator):
 	def __init__(self, args, ngpus_per_node):
 		super().__init__(args)
 		self.ngpus_per_node = ngpus_per_node
-		build_tokenizer(args)
 		self.uses_text_inputs = _uses_text_inputs(args)
+		if self.uses_text_inputs:
+			build_tokenizer(args)
 		self.train_examples = load_data(args.train_path, add_forward_triplet=True, add_backward_triplet=True)
 		self.entity_dict = get_entity_dict()
 		self.model = _load_encoder(args)
