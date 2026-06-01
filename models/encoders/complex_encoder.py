@@ -81,16 +81,15 @@ class ComplExEncoder(nn.Module):
 		return q, t, h
 
 	def entity_embeddings(self, device: torch.device | None = None) -> torch.Tensor:
-		"""Return L2-normalized entity embeddings for retrieval."""
+		"""Return entity embeddings for retrieval."""
 
 		entity_vectors = torch.cat([self.ent_re_embed.weight, self.ent_im_embed.weight], dim=-1)
-		entity_vectors = F.normalize(entity_vectors, p=2, dim=-1)
 		if device is not None:
 			entity_vectors = entity_vectors.to(device)
 		return entity_vectors
 
 	def hr_embeddings(self, examples: Sequence[Example], device: torch.device | None = None) -> torch.Tensor:
-		"""Return L2-normalized query embeddings for a list of examples."""
+		"""Return query embeddings for a list of examples."""
 
 		if device is None:
 			device = self.ent_re_embed.weight.device
@@ -101,7 +100,7 @@ class ComplExEncoder(nn.Module):
 		r_re = self.rel_re_embed(relation_indices)
 		r_im = self.rel_im_embed(relation_indices)
 		query_vectors = torch.cat([h_re * r_re - h_im * r_im, h_re * r_im + h_im * r_re], dim=-1)
-		return F.normalize(query_vectors, p=2, dim=-1)
+		return query_vectors
 
 	def predict_by_examples(self, examples: Sequence[Example], batch_size: int | None = None, num_workers: int = 1) -> tuple[torch.Tensor, torch.Tensor]:
 		"""Return query and target embeddings for link prediction evaluation."""
@@ -114,8 +113,8 @@ class ComplExEncoder(nn.Module):
 		h_im = self.ent_im_embed(head_indices)
 		r_re = self.rel_re_embed(relation_indices)
 		r_im = self.rel_im_embed(relation_indices)
-		query_vectors = F.normalize(torch.cat([h_re * r_re - h_im * r_im, h_re * r_im + h_im * r_re], dim=-1), p=2, dim=-1)
-		tail_vectors = F.normalize(torch.cat([self.ent_re_embed(tail_indices), self.ent_im_embed(tail_indices)], dim=-1), p=2, dim=-1)
+		query_vectors = torch.cat([h_re * r_re - h_im * r_im, h_re * r_im + h_im * r_re], dim=-1)
+		tail_vectors = torch.cat([self.ent_re_embed(tail_indices), self.ent_im_embed(tail_indices)], dim=-1)
 		return query_vectors, tail_vectors
 
 	def predict_by_entities(self, entity_exs, batch_size: int | None = None, num_workers: int = 2) -> torch.Tensor:
@@ -137,7 +136,7 @@ class ComplExEncoder(nn.Module):
 		h_im = self.ent_im_embed(head_indices)
 		r_re = self.rel_re_embed(relation_indices)
 		r_im = self.rel_im_embed(relation_indices)
-		query_vectors = F.normalize(torch.cat([h_re * r_re - h_im * r_im, h_re * r_im + h_im * r_re], dim=-1), p=2, dim=-1)
+		query_vectors = torch.cat([h_re * r_re - h_im * r_im, h_re * r_im + h_im * r_re], dim=-1)
 		candidate_vectors = self.entity_embeddings(device=device)[candidate_indices]
 		return torch.mm(query_vectors, candidate_vectors.t())
 
@@ -162,8 +161,6 @@ class ComplExEncoder(nn.Module):
 				target_vectors = output_dict.get('tail_vector')
 			if query_vectors is None or target_vectors is None:
 				raise KeyError('Output dict must contain query and target vectors')
-			query_vectors = F.normalize(query_vectors, p=2, dim=-1)
-			target_vectors = F.normalize(target_vectors, p=2, dim=-1)
 			return {'logits': torch.mm(query_vectors, target_vectors.t())}
 
 		raise TypeError('Unsupported model output type for logits computation')

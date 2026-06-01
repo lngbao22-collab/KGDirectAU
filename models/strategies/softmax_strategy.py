@@ -129,7 +129,7 @@ class SoftmaxStrategy(object):
 			f"MRR: {metrics.get('mrr', 0.0):.4f} | "
 			f"H@1: {metrics.get('hit@1', metrics.get('hits@1', 0.0)):.4f} | "
 			f"H@3: {metrics.get('hit@3', metrics.get('hits@3', 0.0)):.4f} | "
-			f"H@10: {metrics.get('hit@10', metrics.get('hits@10', 0.0)):.4f}\n---\n"
+			f"H@10: {metrics.get('hit@10', metrics.get('hits@10', 0.0)):.4f}\n"
 		)
 
 	def _extract_monitor_value(self, metric_dict):
