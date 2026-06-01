@@ -45,15 +45,31 @@ def _load_relation_to_idx(args) -> dict[str, int]:
 		with open(path, 'r', encoding='utf-8') as handle:
 			mapping = json.load(handle)
 		if isinstance(mapping, dict):
-			return {str(key): int(value) for key, value in mapping.items()}
+			relation_to_idx = {str(key): int(value) for key, value in mapping.items()}
+			return _add_inverse_relations(relation_to_idx)
 
 	relations = []
 	seen = set()
-	for example in load_data(getattr(args, 'train_path', ''), add_forward_triplet=False, add_backward_triplet=False):
+	for example in load_data(getattr(args, 'train_path', ''), add_forward_triplet=False, add_backward_triplet=True):
 		if example.relation not in seen:
 			seen.add(example.relation)
 			relations.append(example.relation)
-	return {relation: idx for idx, relation in enumerate(relations)}
+	return _add_inverse_relations({relation: idx for idx, relation in enumerate(relations)})
+
+
+def _add_inverse_relations(relation_to_idx: dict[str, int]) -> dict[str, int]:
+	"""Ensure every forward relation has a distinct inverse relation ID."""
+
+	updated = dict(relation_to_idx)
+	next_idx = max(updated.values(), default=-1) + 1
+	for relation in list(updated.keys()):
+		if relation.startswith('inverse '):
+			continue
+		inverse_relation = f'inverse {relation}'
+		if inverse_relation not in updated:
+			updated[inverse_relation] = next_idx
+			next_idx += 1
+	return updated
 
 
 def _load_encoder(args) -> torch.nn.Module:
@@ -79,7 +95,7 @@ class KGAUStrategy(Evaluator):
 		self.ngpus_per_node = ngpus_per_node
 		build_tokenizer(args)
 		self.uses_text_inputs = _uses_text_inputs(args)
-		self.train_examples = load_data(args.train_path, add_forward_triplet=True, add_backward_triplet=False)
+		self.train_examples = load_data(args.train_path, add_forward_triplet=True, add_backward_triplet=True)
 		self.entity_dict = get_entity_dict()
 		self.model = _load_encoder(args)
 		logger.info('=> creating model')
@@ -242,7 +258,7 @@ class KGAUStrategy(Evaluator):
 					self.optimizer.step()
 				epoch_loss += loss.item() * ss.size(0)
 
-		avg_loss = epoch_loss / max(len(self.train_src), 1)
+		avg_loss = epoch_loss / max(len(self.train_examples), 1)
 		logger.info('[EPOCH %s] train loss: %.6f', epoch, avg_loss)
 		return avg_loss
 
