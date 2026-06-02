@@ -16,17 +16,13 @@
   "output_dir_prefix": "logs/DistMult-AU_WN18RR",
 
   "dim": 50,
+  "lr": 0.001,
   "weight_decay": 0.1,
   "gamma_q": 1.0,
   "gamma_t": 1.0,
-  "gamma_h": 0.5,
   "gamma_ent": 0.0,
   "tuni": 2.0,
-  "pre_batch": 20,
-  "eval_every_n_step": 50,
   "epochs": 1000,
   "batch_size": 100,
-  "epoch_per_test": 50,
-  "sample_freq": 1,
-  "n_sample": 20
+  "epoch_per_test": 50
 }
