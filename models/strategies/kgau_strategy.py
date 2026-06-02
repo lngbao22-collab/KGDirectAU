@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import math
 import time
@@ -13,63 +12,12 @@ from torch.optim import Adam
 from base.evaluator import Evaluator
 from data.dataloader import collate
 from data.dataset import Dataset, load_data
-from data.dict_hub import build_tokenizer, get_entity_dict
+from data.dict_hub import build_tokenizer, get_entity_dict, get_relation_id_map
 from models.builder import load_attr_from_path
 from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, save_checkpoint
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
 from utils.logger import AverageMeter, ProgressMeter, logger
 from models.losses.au_loss import KGAULoss
-
-
-def _relation_path_candidates(args) -> list[str]:
-	"""Return a list of candidate paths for loading the relation-to-index mapping."""
-
-	paths = []
-	for source_path in [getattr(args, 'train_path', ''), getattr(args, 'valid_path', ''), getattr(args, 'test_path', '')]:
-		if not source_path:
-			continue
-		paths.append(os.path.join(os.path.dirname(source_path), 'relation2id.json'))
-		paths.append(os.path.join(os.path.dirname(source_path), 'relations.json'))
-		paths.append(os.path.join(os.path.dirname(source_path), 'relation2idx.json'))
-	paths.append(os.path.join('data', getattr(args, 'dataset', ''), 'relation2id.json'))
-	paths.append(os.path.join('data', getattr(args, 'dataset', ''), 'preprocessed', 'relation2id.json'))
-	return paths
-
-
-def _load_relation_to_idx(args) -> dict[str, int]:
-	"""Load the relation-to-index mapping from candidate paths or construct it from training data."""
-
-	for path in _relation_path_candidates(args):
-		if not path or not os.path.exists(path):
-			continue
-		with open(path, 'r', encoding='utf-8') as handle:
-			mapping = json.load(handle)
-		if isinstance(mapping, dict):
-			relation_to_idx = {str(key): int(value) for key, value in mapping.items()}
-			return _add_inverse_relations(relation_to_idx)
-
-	relations = []
-	seen = set()
-	for example in load_data(getattr(args, 'train_path', ''), add_forward_triplet=False, add_backward_triplet=True):
-		if example.relation not in seen:
-			seen.add(example.relation)
-			relations.append(example.relation)
-	return _add_inverse_relations({relation: idx for idx, relation in enumerate(relations)})
-
-
-def _add_inverse_relations(relation_to_idx: dict[str, int]) -> dict[str, int]:
-	"""Ensure every forward relation has a distinct inverse relation ID."""
-
-	updated = dict(relation_to_idx)
-	next_idx = max(updated.values(), default=-1) + 1
-	for relation in list(updated.keys()):
-		if relation.startswith('inverse '):
-			continue
-		inverse_relation = f'inverse {relation}'
-		if inverse_relation not in updated:
-			updated[inverse_relation] = next_idx
-			next_idx += 1
-	return updated
 
 
 def _load_encoder(args) -> torch.nn.Module:
@@ -96,13 +44,16 @@ class KGAUStrategy(Evaluator):
 		self.uses_text_inputs = _uses_text_inputs(args)
 		if self.uses_text_inputs:
 			build_tokenizer(args)
-		self.train_examples = load_data(args.train_path, add_forward_triplet=True, add_backward_triplet=True)
+		# Inverse triplets (reverse_triplet) are only used by text encoders (e.g. SimKGC/BERT).
+		add_backward_triplet = self.uses_text_inputs
+		self.train_examples = load_data(
+			args.train_path, add_forward_triplet=True, add_backward_triplet=add_backward_triplet)
 		self.entity_dict = get_entity_dict()
 		self.model = _load_encoder(args)
 		logger.info('=> creating model')
 		logger.info(self.model)
 		if not self.uses_text_inputs:
-			self.relation_to_idx = _load_relation_to_idx(args)
+			self.relation_to_idx = {str(k): int(v) for k, v in get_relation_id_map().items()}
 			self.train_src, self.train_rel, self.train_dst = self._examples_to_tensors(self.train_examples)
 		else:
 			self.relation_to_idx = None
