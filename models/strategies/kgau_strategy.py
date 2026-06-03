@@ -99,6 +99,7 @@ class KGAUStrategy(Evaluator):
 			gamma_ent=_config_float(args, 'gamma_ent', 0.0),
 			tuni=tuni_val,
 			max_uniformity_samples=int(_config_float(args, 'max_uniformity_samples', 1024)),
+			additive_margin=_config_float(args, 'additive_margin', 0.0),
 		).to(self.device)
 		self.best_metric = None
 		self.best_checkpoint_path = None

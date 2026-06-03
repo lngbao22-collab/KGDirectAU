@@ -49,6 +49,7 @@ class KGAULoss(nn.Module):
 		gamma_ent=0.0,
 		tuni=2.0,
 		max_uniformity_samples: int = 1024,
+		additive_margin: float = 0.0,
 	):
 		super().__init__()
 		self.gamma_q = _coalesce_float(gamma_q, 1.0)
@@ -58,6 +59,8 @@ class KGAULoss(nn.Module):
 		# `tuni` is the uniformity temperature/scaling factor
 		self.tuni = _coalesce_float(tuni, 2.0)
 		self.max_uniformity_samples = max_uniformity_samples
+		# InfoNCE additive margin gamma; geometric threshold m = 2 * gamma on squared L2.
+		self.additive_margin = _coalesce_float(additive_margin, 0.0)
 
 	def alignment_loss(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
 		"""Expected squared L2 distance between paired positive query and target embeddings."""
@@ -66,24 +69,45 @@ class KGAULoss(nn.Module):
 		t = F.normalize(t, p=2, dim=-1)
 		return (q - t).pow(2).sum(dim=-1).mean()
 
-	def uniformity_loss(self, x: torch.Tensor) -> torch.Tensor:
-		"""Gaussian potential based uniformity loss on the hypersphere."""
+	def _prepare_uniformity_pairs(self, x: torch.Tensor) -> torch.Tensor | None:
+		"""Normalize and subsample embeddings; return squared pairwise L2 distances."""
 
 		if x is None:
-			return torch.tensor(0.0)
+			return None
 		if x.size(0) < 2:
-			return x.new_zeros(())
+			return None
 		max_samples = int(getattr(self, 'max_uniformity_samples', 0) or 0)
 		if max_samples > 0 and x.size(0) > max_samples:
 			indices = torch.randperm(x.size(0), device=x.device)[:max_samples]
 			x = x.index_select(0, indices)
 			if x.size(0) < 2:
-				return x.new_zeros(())
+				return None
 		x = F.normalize(x, p=2, dim=-1)
 		pairwise = torch.pdist(x, p=2)
 		if pairwise.numel() == 0:
+			return None
+		return pairwise.pow(2)
+
+	def uniformity_loss(self, x: torch.Tensor) -> torch.Tensor:
+		"""Uniformity on the unit hypersphere.
+
+		When additive_margin is 0, uses the original Gaussian-potential AU term.
+		When additive_margin > 0, uses margin-aware repulsion with m = 2 * additive_margin.
+		"""
+
+		if x is None:
+			return torch.tensor(0.0)
+		if x.size(0) < 2:
 			return x.new_zeros(())
-		potential = torch.exp(-self.tuni * pairwise.pow(2))
+		dist_sq = self._prepare_uniformity_pairs(x)
+		if dist_sq is None:
+			return x.new_zeros(())
+		margin = float(self.additive_margin)
+		if margin <= 0.0:
+			potential = torch.exp(-self.tuni * dist_sq)
+			return potential.mean().log()
+		geom_margin = 2.0 * margin
+		potential = torch.exp(self.tuni * F.relu(geom_margin - dist_sq))
 		return potential.mean().log()
 
 	def forward(

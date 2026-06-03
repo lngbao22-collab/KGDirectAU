@@ -63,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Hyperparameters and settings.
     parser.add_argument('--additive-margin', default=0.0, type=float,
-                        help='additive margin for contrastive loss')
+                        help='additive margin for contrastive loss and AU loss')
     parser.add_argument('-b', '--batch-size', default=64, type=int,
                         help='mini-batch size')
     parser.add_argument('--dim', default=768, type=int,
