@@ -119,6 +119,42 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--warmup', default=400, type=int,
                         help='warmup steps')
 
+    # Softmax / Bernoulli negative-sampling (DistMult, ComplEx, etc.).
+    parser.add_argument('--epoch-per-test', '--epoch_per_test', default=None, type=int,
+                        help='evaluate on validation every N epochs (0 = every epoch)')
+    parser.add_argument('--sample-freq', '--sample_freq', default=None, type=int,
+                        help='negative sampling frequency')
+    parser.add_argument('-ns', '--n-sample', '--n_sample', default=None, type=int,
+                        help='number of negative samples per positive')
+    parser.add_argument('--lam', default=None, type=float,
+                        help='L2 regularization strength (kgau/softmax; overrides weight_decay when set)')
+
+    # KGAU alignment-uniformity hyperparameters (DistMult-AU, ComplEx-AU, etc.).
+    parser.add_argument('--gamma-q', '--gamma_q', default=None, type=float,
+                        help='uniformity weight for query embeddings')
+    parser.add_argument('--gamma-t', '--gamma_t', default=None, type=float,
+                        help='uniformity weight for target embeddings')
+    parser.add_argument('--gamma-h', '--gamma_h', default=None, type=float,
+                        help='uniformity weight for head embeddings (default 0 when omitted)')
+    parser.add_argument('--gamma-ent', '--gamma_ent', default=None, type=float,
+                        help='uniformity weight for all entity embeddings')
+    parser.add_argument('--tuni', default=None, type=float,
+                        help='AU uniformity temperature (Gaussian potential scale)')
+    normalize_group = parser.add_mutually_exclusive_group()
+    normalize_group.add_argument(
+        '--normalize-lp-scores', '--normalize_lp_scores',
+        dest='normalize_lp_scores',
+        action='store_true',
+        default=None,
+        help='L2-normalize query/tail vectors for link-prediction scoring',
+    )
+    normalize_group.add_argument(
+        '--no-normalize-lp-scores', '--no_normalize_lp_scores',
+        dest='normalize_lp_scores',
+        action='store_false',
+        help='disable normalized link-prediction scoring',
+    )
+
     return parser
 
 
