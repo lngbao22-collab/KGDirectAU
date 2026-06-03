@@ -15,7 +15,7 @@
 
   "output_dir_prefix": "logs/DistMult-AU_WN18RR",
 
-  "dim": 200,
+  "dim": 50,
   "lr": 0.001,
   "weight_decay": 0.0001,
   "epochs": 100,
