@@ -19,9 +19,11 @@
   "lr": 0.001,
   "weight_decay": 0.0001,
   "epochs": 100,
-  "batch_size": 1024,
+  "batch_size": 256,
   "gamma_q": 1.0,
   "gamma_t": 1.0,
+  "gamma_h": 1.0,
+  "gamma_ent": 1.0,
   "normalize_lp_scores": true,
-  "tuni": 1
+  "tuni": 2
 }
