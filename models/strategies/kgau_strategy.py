@@ -285,7 +285,8 @@ class KGAUStrategy(Evaluator):
 		avg_loss = epoch_loss / avg_count
 		avg_align_loss = epoch_align_loss / avg_count
 		avg_unif_loss = epoch_unif_loss / avg_count
-		logger.info('[EPOCH %s] train loss: %.6f | align: %.6f | uniformity: %.6f', epoch, avg_loss, avg_align_loss, avg_unif_loss)
+		display_epoch = epoch + 1
+		logger.info('[EPOCH %s] train loss: %.6f | align: %.6f | uniformity: %.6f', display_epoch, avg_loss, avg_align_loss, avg_unif_loss)
 		self.train_component_losses = {
 			'loss': avg_loss,
 			'align': avg_align_loss,
