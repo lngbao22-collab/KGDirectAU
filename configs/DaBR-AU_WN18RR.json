@@ -19,15 +19,12 @@
   "lr": 0.1,
   "batch_size": 512,
   "epochs": 400,
-  "lam": 0.5,
-  "lmbda": 0.5,
-  "lmbda_two": 0.01,
+  "weight_decay": 0.1,
   "optim": "adagrad",
   "workers": 8,
   "gamma_q": 1.0,
   "gamma_t": 1.0,
   "tuni": 2.0,
   "pre_batch": 20,
-  "weight_decay": 0.1,
   "sample_freq": 1
 }

@@ -75,10 +75,12 @@ class KGAUStrategy(Evaluator):
 
 		report_num_trainable_parameters(get_model_obj(self.model))
 
-		lam = getattr(args, 'lam', getattr(args, 'weight_decay', 0.0))
+		weight_decay = getattr(args, 'weight_decay', None)
+		if weight_decay is None:
+			weight_decay = 0.0
 		batch_size = max(getattr(args, 'batch_size', 1), 1)
 		num_batches = max(math.ceil(len(self.train_examples) / batch_size), 1)
-		self.weight_decay = lam / num_batches
+		self.weight_decay = float(weight_decay) / num_batches
 		self.optimizer = Adam(self.model.parameters(), lr=args.lr, weight_decay=self.weight_decay)
 
 		# Support multiple config names: `tuni` preferred, fall back to `temperature` or `t`.

@@ -39,8 +39,10 @@ class SoftmaxStrategy(object):
 
 		batch_size = max(getattr(args, 'batch_size', 1), 1)
 		num_batches = max(num_train_triples // batch_size, 1)
-		lam = getattr(args, 'lam', getattr(args, 'weight_decay', 0.0))
-		self.weight_decay = lam / num_batches
+		weight_decay = getattr(args, 'weight_decay', None)
+		if weight_decay is None:
+			weight_decay = 0.0
+		self.weight_decay = float(weight_decay) / num_batches
 		self.optimizer = Adam(self.model.parameters(), lr=getattr(args, 'lr', 2e-5), weight_decay=self.weight_decay)
 
 	def _iter_batches(self, src, rel, dst, batch_size):
