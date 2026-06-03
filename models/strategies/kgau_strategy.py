@@ -18,7 +18,7 @@ from models.builder import load_attr_from_path
 from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, save_checkpoint
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
 from utils.logger import AverageMeter, ProgressMeter, logger
-from models.losses.au_loss import KGAULoss
+from models.losses.au_loss import KGAULoss, select_distinct_rows
 
 
 def _load_encoder(args) -> torch.nn.Module:
@@ -56,7 +56,7 @@ class KGAUStrategy(Evaluator):
 			self.relation_to_idx = {str(k): int(v) for k, v in get_relation_id_map().items()}
 			self.train_src, self.train_rel, self.train_dst = self._examples_to_tensors(self.train_examples)
 		else:
-			self.relation_to_idx = None
+			self.relation_to_idx = {str(k): int(v) for k, v in get_relation_id_map().items()}
 			self.train_loader = torch.utils.data.DataLoader(
 				Dataset(path='', examples=self.train_examples, task=args.dataset),
 				batch_size=max(getattr(args, 'batch_size', 1), 1),
@@ -112,6 +112,63 @@ class KGAUStrategy(Evaluator):
 		for start in range(0, len(src), batch_size):
 			end = start + batch_size
 			yield src[start:end], rel[start:end], dst[start:end]
+
+	def _uniformity_keys(
+		self,
+		head_indices: torch.Tensor,
+		relation_indices: torch.Tensor,
+		tail_indices: torch.Tensor,
+	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+		"""Build deduplication keys for query (head, relation), tail, and head uniformity terms."""
+
+		device = head_indices.device
+		q_keys = torch.stack(
+			[
+				head_indices.to(device=device, dtype=torch.long),
+				relation_indices.to(device=device, dtype=torch.long),
+			],
+			dim=1,
+		)
+		t_keys = tail_indices.to(device=device, dtype=torch.long)
+		h_keys = head_indices.to(device=device, dtype=torch.long)
+		return q_keys, t_keys, h_keys
+
+	def _uniformity_keys_from_examples(self, examples) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+		"""Build deduplication keys from a collated batch of training examples."""
+
+		head_indices, relation_indices, tail_indices = self._examples_to_tensors(examples)
+		return self._uniformity_keys(head_indices, relation_indices, tail_indices)
+
+	def _distinct_uniformity_inputs(
+		self,
+		q_raw: torch.Tensor,
+		t_raw: torch.Tensor,
+		h_raw: torch.Tensor,
+		q_keys: torch.Tensor,
+		t_keys: torch.Tensor,
+		h_keys: torch.Tensor,
+	) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
+		"""Deduplicate embeddings per uniformity type before AU uniformity loss."""
+
+		q_uni = select_distinct_rows(q_raw, q_keys) if self.criterion.gamma_q > 0 else None
+		t_uni = select_distinct_rows(t_raw, t_keys) if self.criterion.gamma_t > 0 else None
+		h_uni = select_distinct_rows(h_raw, h_keys) if self.criterion.gamma_h > 0 else None
+		return q_uni, t_uni, h_uni
+
+	def _au_loss(
+		self,
+		q_raw: torch.Tensor,
+		t_raw: torch.Tensor,
+		h_raw: torch.Tensor,
+		ent_raw: torch.Tensor | None,
+		q_keys: torch.Tensor,
+		t_keys: torch.Tensor,
+		h_keys: torch.Tensor,
+	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+		"""Compute KGAU loss; alignment uses the full batch, uniformity uses distinct keys."""
+
+		q_uni, t_uni, h_uni = self._distinct_uniformity_inputs(q_raw, t_raw, h_raw, q_keys, t_keys, h_keys)
+		return self.criterion(q_raw, t_raw, h_raw, ent_raw, q_uni=q_uni, t_uni=t_uni, h_uni=h_uni)
 
 	def _extract_monitor_value(self, metric_dict, valid_metric='mrr') -> float | None:
 		"""Extract the value to monitor for checkpointing decisions from the metric dictionary."""
@@ -224,6 +281,7 @@ class KGAUStrategy(Evaluator):
 				if torch.cuda.is_available():
 					batch_dict = move_to_cuda(batch_dict)
 				self.optimizer.zero_grad()
+				q_keys, t_keys, h_keys = self._uniformity_keys_from_examples(batch_dict['batch_data'])
 				if use_amp:
 					with torch.amp.autocast(device_type='cuda'):
 						outputs = self.model(**batch_dict)
@@ -231,7 +289,7 @@ class KGAUStrategy(Evaluator):
 						t_raw = outputs['tail_vector']
 						h_raw = outputs['head_vector']
 						ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
-						loss, l_align, l_unif = self.criterion(q_raw, t_raw, h_raw, ent_raw)
+						loss, l_align, l_unif = self._au_loss(q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					self.scaler.scale(loss).backward()
 					self.scaler.unscale_(self.optimizer)
 					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
@@ -243,7 +301,7 @@ class KGAUStrategy(Evaluator):
 					t_raw = outputs['tail_vector']
 					h_raw = outputs['head_vector']
 					ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
-					loss, l_align, l_unif = self.criterion(q_raw, t_raw, h_raw, ent_raw)
+					loss, l_align, l_unif = self._au_loss(q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					loss.backward()
 					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
 					self.optimizer.step()
@@ -259,11 +317,12 @@ class KGAUStrategy(Evaluator):
 				rs = rs.to(self.device)
 				ts = ts.to(self.device)
 				self.optimizer.zero_grad()
+				q_keys, t_keys, h_keys = self._uniformity_keys(ss, rs, ts)
 				if use_amp:
 					with torch.amp.autocast(device_type='cuda'):
 						q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
 						ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
-						loss, l_align, l_unif = self.criterion(q_raw, t_raw, h_raw, ent_raw)
+						loss, l_align, l_unif = self._au_loss(q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					self.scaler.scale(loss).backward()
 					self.scaler.unscale_(self.optimizer)
 					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
@@ -272,7 +331,7 @@ class KGAUStrategy(Evaluator):
 				else:
 					q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
 					ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
-					loss, l_align, l_unif = self.criterion(q_raw, t_raw, h_raw, ent_raw)
+					loss, l_align, l_unif = self._au_loss(q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					loss.backward()
 					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
 					self.optimizer.step()

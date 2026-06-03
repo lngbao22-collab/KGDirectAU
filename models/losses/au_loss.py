@@ -7,6 +7,31 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def distinct_first_indices(keys: torch.Tensor) -> torch.Tensor:
+	"""Return row indices of the first occurrence of each unique key in the batch."""
+
+	if keys.numel() == 0:
+		return keys.new_empty(0, dtype=torch.long)
+	if keys.dim() == 1:
+		_, inverse = torch.unique(keys, sorted=False, return_inverse=True)
+	else:
+		_, inverse = torch.unique(keys, dim=0, sorted=False, return_inverse=True)
+	num_unique = int(inverse.max().item()) + 1
+	indices = torch.full((num_unique,), keys.size(0), dtype=torch.long, device=keys.device)
+	positions = torch.arange(keys.size(0), device=keys.device)
+	indices.scatter_reduce_(0, inverse, positions, reduce='amin')
+	return indices
+
+
+def select_distinct_rows(vectors: torch.Tensor, keys: torch.Tensor) -> torch.Tensor:
+	"""Keep one embedding row per unique key (first occurrence in the batch)."""
+
+	if vectors.size(0) == 0:
+		return vectors
+	indices = distinct_first_indices(keys)
+	return vectors.index_select(0, indices)
+
+
 class KGAULoss(nn.Module):
 	"""Alignment and uniformity loss for knowledge graph embeddings."""
 
@@ -60,32 +85,28 @@ class KGAULoss(nn.Module):
 		q: torch.Tensor,
 		t: torch.Tensor,
 		h: torch.Tensor | None = None,
-		ent: torch.Tensor | None = None
+		ent: torch.Tensor | None = None,
+		q_uni: torch.Tensor | None = None,
+		t_uni: torch.Tensor | None = None,
+		h_uni: torch.Tensor | None = None,
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 		"""Return the total AU loss together with alignment and uniformity terms."""
 
-		# 1. Normalize Query and Target
 		q_norm = F.normalize(q, p=2, dim=-1)
 		t_norm = F.normalize(t, p=2, dim=-1)
-
-		# 2. Calculate Alignment Loss
 		l_align = self.alignment_loss(q_norm, t_norm)
 
-		# 3. Initialize Uniformity Loss Tensor
 		l_unif = q_norm.new_zeros(())
 
-		# 4. Calculate Core Uniformity Losses
 		if self.gamma_q > 0:
-			l_unif = l_unif + self.gamma_q * self.uniformity_loss(q_norm)
+			q_uniformity = q_uni if q_uni is not None else q_norm
+			l_unif = l_unif + self.gamma_q * self.uniformity_loss(q_uniformity)
 		if self.gamma_t > 0:
-			l_unif = l_unif + self.gamma_t * self.uniformity_loss(t_norm)
-
-		# 5. Calculate Bonus Head Uniformity Loss
+			t_uniformity = t_uni if t_uni is not None else t_norm
+			l_unif = l_unif + self.gamma_t * self.uniformity_loss(t_uniformity)
 		if h is not None and self.gamma_h > 0:
-			h_norm = F.normalize(h, p=2, dim=-1)
-			l_unif = l_unif + self.gamma_h * self.uniformity_loss(h_norm)
-
-		# 6. Calculate Bonus Entity Uniformity Loss
+			h_uniformity = h_uni if h_uni is not None else F.normalize(h, p=2, dim=-1)
+			l_unif = l_unif + self.gamma_h * self.uniformity_loss(h_uniformity)
 		if ent is not None and self.gamma_ent > 0:
 			ent_norm = F.normalize(ent, p=2, dim=-1)
 			l_unif = l_unif + self.gamma_ent * self.uniformity_loss(ent_norm)
