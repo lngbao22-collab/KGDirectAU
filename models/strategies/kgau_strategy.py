@@ -165,7 +165,11 @@ class KGAUStrategy(Evaluator):
 		"""Build deduplication keys from a collated batch of training examples."""
 
 		head_indices, relation_indices, tail_indices = self._examples_to_tensors(examples)
-		return self._uniformity_keys(head_indices, relation_indices, tail_indices)
+		return self._uniformity_keys(
+			head_indices.to(self.device),
+			relation_indices.to(self.device),
+			tail_indices.to(self.device),
+		)
 
 	def _distinct_uniformity_inputs(
 		self,

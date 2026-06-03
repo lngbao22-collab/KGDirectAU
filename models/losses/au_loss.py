@@ -34,6 +34,7 @@ def select_distinct_rows(vectors: torch.Tensor, keys: torch.Tensor) -> torch.Ten
 
 	if vectors.size(0) == 0:
 		return vectors
+	keys = keys.to(device=vectors.device)
 	indices = distinct_first_indices(keys)
 	return vectors.index_select(0, indices)
 
