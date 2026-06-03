@@ -118,6 +118,21 @@ class pRotatEEncoder(BaseModel):
             "negative_scores": neg_scores,
         }
 
+    def get_queries_targets(self, src: torch.Tensor, rel: torch.Tensor, dst: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return AU-compatible query, target, and head representations.
+
+        KGAU expects encoders to expose query/target tensors for alignment-uniformity
+        training. For pRotatE, the query is the phase-addition of head and relation,
+        the target is the tail entity embedding, and the head is the raw head embedding.
+        """
+
+        head = torch.index_select(self.entity_embedding, dim=0, index=src).unsqueeze(1)
+        relation = torch.index_select(self.relation_embedding, dim=0, index=rel).unsqueeze(1)
+        tail = torch.index_select(self.entity_embedding, dim=0, index=dst).unsqueeze(1)
+
+        query = (head + relation).squeeze(1)
+        return query, tail.squeeze(1), head.squeeze(1)
+
     def compute_logits(self, output_dict: dict, batch_dict: dict) -> dict:
         """Compatibility adapter used by generic trainer paths."""
 
