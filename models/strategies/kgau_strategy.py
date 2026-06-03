@@ -96,6 +96,10 @@ class KGAUStrategy(Evaluator):
 		elif torch.cuda.is_available():
 			self.model.cuda()
 		self.device = next(self.model.parameters()).device
+		if not self.uses_text_inputs and self.train_src.device != self.device:
+			self.train_src = self.train_src.to(self.device)
+			self.train_rel = self.train_rel.to(self.device)
+			self.train_dst = self.train_dst.to(self.device)
 
 		report_num_trainable_parameters(get_model_obj(self.model))
 
@@ -151,12 +155,46 @@ class KGAUStrategy(Evaluator):
 		tail_indices = torch.tensor([self.entity_dict.entity_to_idx(example.tail_id) for example in examples], dtype=torch.long)
 		return head_indices, relation_indices, tail_indices
 
-	def _iter_batches(self, src, rel, dst, batch_size) -> Iterator[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
-		"""Iterate over batches of examples."""
+	def _iter_batches(
+		self,
+		src,
+		rel,
+		dst,
+		batch_size,
+		shuffle: bool = False,
+	) -> Iterator[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+		"""Iterate over batches of examples; optionally shuffle index order each epoch."""
 
-		for start in range(0, len(src), batch_size):
+		num_examples = len(src)
+		if shuffle and num_examples > 1:
+			order = torch.randperm(num_examples, device=src.device)
+			src = src.index_select(0, order)
+			rel = rel.index_select(0, order)
+			dst = dst.index_select(0, order)
+
+		for start in range(0, num_examples, batch_size):
 			end = start + batch_size
 			yield src[start:end], rel[start:end], dst[start:end]
+
+	def _validation_interval(self) -> int:
+		"""Epochs between full link-prediction validation runs."""
+
+		interval = 0
+		for name in ('epoch_per_test', 'eval_every_n_step'):
+			raw = getattr(self.args, name, None)
+			if raw is not None and int(raw) > 0:
+				interval = int(raw)
+				break
+		if interval <= 0 or interval > int(self.args.epochs):
+			return 1
+		return interval
+
+	def _should_validate(self, epoch: int) -> bool:
+		"""Return True when link-prediction validation should run after this epoch."""
+
+		interval = self._validation_interval()
+		epoch_number = epoch + 1
+		return epoch_number % interval == 0 or epoch_number >= int(self.args.epochs)
 
 	def _uniformity_keys(
 		self,
@@ -390,10 +428,9 @@ class KGAUStrategy(Evaluator):
 				if i % self.args.print_freq == 0:
 					progress.display(i)
 		else:
-			for batch_idx, (ss, rs, ts) in enumerate(self._iter_batches(self.train_src, self.train_rel, self.train_dst, batch_size)):
-				ss = ss.to(self.device)
-				rs = rs.to(self.device)
-				ts = ts.to(self.device)
+			for batch_idx, (ss, rs, ts) in enumerate(
+				self._iter_batches(self.train_src, self.train_rel, self.train_dst, batch_size, shuffle=True),
+			):
 				self.optimizer.zero_grad()
 				q_keys, t_keys, h_keys = self._uniformity_keys(ss, rs, ts)
 				if use_amp:
@@ -499,15 +536,21 @@ class KGAUStrategy(Evaluator):
 		if self.args.use_amp:
 			self.scaler = torch.amp.GradScaler('cuda')
 
+		validation_interval = self._validation_interval()
+		logger.info('KGAU validation interval: every %d epoch(s)', validation_interval)
+
 		total_start_time = time.time()
 		for epoch in range(self.args.epochs):
 			epoch_train_start = time.time()
 			train_loss = self.train_epoch(epoch)
 			self.train_time += time.time() - epoch_train_start
 
-			eval_start = time.time()
-			metric_dict = self.eval_epoch(epoch, train_loss=train_loss)
-			self.valid_time += time.time() - eval_start
+			if self._should_validate(epoch):
+				eval_start = time.time()
+				metric_dict = self.eval_epoch(epoch, train_loss=train_loss)
+				self.valid_time += time.time() - eval_start
+			else:
+				metric_dict = {'loss': round(train_loss, 4)}
 
 			if not metric_dict:
 				metric_dict = {'loss': round(train_loss, 4)}

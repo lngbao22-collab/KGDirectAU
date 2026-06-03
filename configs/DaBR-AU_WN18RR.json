@@ -20,6 +20,8 @@
   "batch_size": 256,
   "max_uniformity_samples": 256,
   "use_amp": true,
+  "eval_every_n_step": 20,
+  "score_query_chunk_size": 128,
   "epochs": 400,
   "weight_decay": 0.0001,
   "optim": "adagrad",
