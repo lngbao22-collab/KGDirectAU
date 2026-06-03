@@ -15,18 +15,19 @@
 
   "output_dir_prefix": "logs/ComplEx-AU_WN18RR",
 
-  "dim": 25,
-  "weight_decay": 0.1,
-  "gamma_q": 1.0,
-  "gamma_t": 1.0,
-  "gamma_h": 0.5,
-  "gamma_ent": 0.0,
-  "tuni": 2.0,
+  "dim": 200,
+  "lr": 0.001,
+  "weight_decay": 0.0001,
   "pre_batch": 20,
   "eval_every_n_step": 50,
-  "epochs": 1000,
+  "epochs": 100,
   "batch_size": 100,
   "epoch_per_test": 50,
   "sample_freq": 1,
-  "n_sample": 20
+  "n_sample": 100,
+  "gamma_q": 1.0,
+  "gamma_t": 1.0,
+  "gamma_h": 1.0,
+  "gamma_ent": 1.0,
+  "tuni": 4.0
 }
