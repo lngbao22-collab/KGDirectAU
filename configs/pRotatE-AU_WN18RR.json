@@ -1,6 +1,6 @@
 {
-  "model": "RotatE-AU",
-  "model_encoder_path": "models/encoders/rotate_encoder.py",
+  "model": "pRotatE-AU",
+  "model_encoder_path": "models/encoders/protate_encoder.py",
   "model_loss_path": "models/losses/au_loss.py",
   "model_sampler_path": "",
   "model_strategy_path": "models/strategies/kgau_strategy.py",
@@ -13,7 +13,7 @@
   "valid_w_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
   "test_w_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
 
-  "output_dir_prefix": "logs/RotatE-AU_WN18RR",
+  "output_dir_prefix": "logs/pRotatE-AU_WN18RR",
 
   "dim": 200,
   "margin": 6.0,

@@ -51,7 +51,6 @@ class KGAUStrategy(Evaluator):
 			args.train_path, add_forward_triplet=True, add_backward_triplet=add_backward_triplet)
 		self.entity_dict = get_entity_dict()
 		self.model = _load_encoder(args)
-		logger.info('=> creating model')
 		logger.info(self.model)
 		if not self.uses_text_inputs:
 			self.relation_to_idx = {str(k): int(v) for k, v in get_relation_id_map().items()}

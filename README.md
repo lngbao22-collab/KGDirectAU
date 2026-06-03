@@ -84,14 +84,41 @@ By default, the script reads from `data/<dataset>/` and writes the processed fil
 
 ```bash
 # Train with default WN18RR config
-## SimKGC
-python main.py --config-path configs/SimKGC_WN18RR.json
-
 ## DistMult
 python main.py --config-path configs/DistMult_WN18RR.json
 
+## DistMult-AU
+python main.py --config-path configs/DistMult-AU_WN18RR.json
+
 ## ComplEx
 python main.py --config-path configs/ComplEx_WN18RR.json
+
+## ComplEx-AU
+python main.py --config-path configs/ComplEx-AU_WN18RR.json
+
+## RotatE
+python main.py --config-path configs/RotatE_WN18RR.json
+
+## RotatE-AU
+python main.py --config-path configs/RotatE-AU_WN18RR.json
+
+## pRotatE
+python main.py --config-path configs/pRotatE_WN18RR.json
+
+## pRotatE-AU
+python main.py --config-path configs/pRotatE-AU_WN18RR.json
+
+## DaBR
+python main.py --config-path configs/DaBR_WN18RR.json
+
+## DaBR-AU
+python main.py --config-path configs/DaBR-AU_WN18RR.json
+
+## SimKGC
+python main.py --config-path configs/SimKGC_WN18RR.json
+
+## SimKGC-AU
+python main.py --config-path configs/SimKGC-AU_WN18RR.json
 
 # Run only link prediction task
 python main.py --config-path configs/SimKGC_WN18RR.json --task lp
@@ -160,9 +187,10 @@ This repository uses a modular, component-driven architecture. Each experiment i
 | :--- | :--- | :--- | :--- | :--- |
 | **DistMult** | `distmult_encoder.py` | `infonce_loss.py` | `bernoulli_sampler.py` | `softmax_strategy.py` |
 | **ComplEx** | `complex_encoder.py` | `infonce_loss.py` | `bernoulli_sampler.py` | `softmax_strategy.py` |
-| **SimKGC** | `bert_encoder.py` | `infonce_loss.py` | `masking_sampler.py` | `contrastive_strategy.py` |
 | **DaBR** | `dabr_encoder.py` | `pointwise_logistic_loss.py`| `uniform_pointwise_sampler.py` | `pointwise_strategy.py` |
 | **RotatE** | `rotate_encoder.py` | `adversarial_bce_loss.py` | `filtered_1_to_n_sampler.py`| `adversarial_strategy.py` |
+| **pRotatE** | `rotate_encoder.py` | `adversarial_bce_loss.py` | `filtered_1_to_n_sampler.py`| `adversarial_strategy.py` |
+| **SimKGC** | `bert_encoder.py` | `infonce_loss.py` | `masking_sampler.py` | `contrastive_strategy.py` |
 | **X-AU** | `X_encoder.py` | `au_loss.py` | *(None)* | `kgau_strategy.py` |
 
 > **Note:** The KGAU (Alignment and Uniformity) strategy computes the loss directly on the positive batch embeddings and does not require negative sampling.
