@@ -8,6 +8,7 @@ import time
 from typing import Iterator
 
 import torch
+from torch import optim
 from torch.optim import Adam
 
 from base.evaluator import Evaluator
@@ -43,6 +44,18 @@ def _config_float(args, name: str, default: float) -> float:
 	return default if value is None else float(value)
 
 
+def _build_optimizer(args, parameters, weight_decay: float):
+	"""Build the training optimizer; respects ``optim`` in config (adam/adagrad/sgd)."""
+
+	lr = float(getattr(args, 'lr', getattr(args, 'learning_rate', 2e-5)))
+	optim_name = str(getattr(args, 'optim', 'adam')).lower()
+	if optim_name == 'adagrad':
+		return optim.Adagrad(parameters, lr=lr, weight_decay=weight_decay)
+	if optim_name == 'sgd':
+		return optim.SGD(parameters, lr=lr, weight_decay=weight_decay)
+	return Adam(parameters, lr=lr, weight_decay=weight_decay)
+
+
 class KGAUStrategy(Evaluator):
 	"""Knowledge Graph Alignment and Uniformity training loop for KG encoders."""
 
@@ -56,6 +69,10 @@ class KGAUStrategy(Evaluator):
 		add_backward_triplet = self.uses_text_inputs
 		self.train_examples = load_data(
 			args.train_path, add_forward_triplet=True, add_backward_triplet=add_backward_triplet)
+		logger.info(
+			'Training examples: %d (backward triplets=%s)',
+			len(self.train_examples), add_backward_triplet,
+		)
 		self.entity_dict = get_entity_dict()
 		self.model = _load_encoder(args)
 		logger.info(self.model)
@@ -79,6 +96,10 @@ class KGAUStrategy(Evaluator):
 		elif torch.cuda.is_available():
 			self.model.cuda()
 		self.device = next(self.model.parameters()).device
+		if not self.uses_text_inputs and self.train_src.device != self.device:
+			self.train_src = self.train_src.to(self.device)
+			self.train_rel = self.train_rel.to(self.device)
+			self.train_dst = self.train_dst.to(self.device)
 
 		report_num_trainable_parameters(get_model_obj(self.model))
 
@@ -88,7 +109,7 @@ class KGAUStrategy(Evaluator):
 		batch_size = max(getattr(args, 'batch_size', 1), 1)
 		num_batches = max(math.ceil(len(self.train_examples) / batch_size), 1)
 		self.weight_decay = float(weight_decay) / num_batches
-		self.optimizer = Adam(self.model.parameters(), lr=args.lr, weight_decay=self.weight_decay)
+		self.optimizer = _build_optimizer(args, self.model.parameters(), self.weight_decay)
 
 		tuni_val = _config_float(args, 'tuni', _config_float(args, 'temperature', _config_float(args, 't', 2.0)))
 
@@ -134,12 +155,46 @@ class KGAUStrategy(Evaluator):
 		tail_indices = torch.tensor([self.entity_dict.entity_to_idx(example.tail_id) for example in examples], dtype=torch.long)
 		return head_indices, relation_indices, tail_indices
 
-	def _iter_batches(self, src, rel, dst, batch_size) -> Iterator[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
-		"""Iterate over batches of examples."""
+	def _iter_batches(
+		self,
+		src,
+		rel,
+		dst,
+		batch_size,
+		shuffle: bool = False,
+	) -> Iterator[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+		"""Iterate over batches of examples; optionally shuffle index order each epoch."""
 
-		for start in range(0, len(src), batch_size):
+		num_examples = len(src)
+		if shuffle and num_examples > 1:
+			order = torch.randperm(num_examples, device=src.device)
+			src = src.index_select(0, order)
+			rel = rel.index_select(0, order)
+			dst = dst.index_select(0, order)
+
+		for start in range(0, num_examples, batch_size):
 			end = start + batch_size
 			yield src[start:end], rel[start:end], dst[start:end]
+
+	def _validation_interval(self) -> int:
+		"""Epochs between full link-prediction validation runs."""
+
+		interval = 0
+		for name in ('epoch_per_test', 'eval_every_n_step'):
+			raw = getattr(self.args, name, None)
+			if raw is not None and int(raw) > 0:
+				interval = int(raw)
+				break
+		if interval <= 0 or interval > int(self.args.epochs):
+			return 1
+		return interval
+
+	def _should_validate(self, epoch: int) -> bool:
+		"""Return True when link-prediction validation should run after this epoch."""
+
+		interval = self._validation_interval()
+		epoch_number = epoch + 1
+		return epoch_number % interval == 0 or epoch_number >= int(self.args.epochs)
 
 	def _uniformity_keys(
 		self,
@@ -179,15 +234,17 @@ class KGAUStrategy(Evaluator):
 		q_keys: torch.Tensor,
 		t_keys: torch.Tensor,
 		h_keys: torch.Tensor,
-	) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
+	) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None, int, int]:
 		"""Deduplicate embeddings per uniformity type before AU uniformity loss."""
 
 		q_uni = select_distinct_rows(q_raw, q_keys) if self.criterion.gamma_q > 0 else None
 		t_uni = select_distinct_rows(t_raw, t_keys) if self.criterion.gamma_t > 0 else None
 		h_uni = select_distinct_rows(h_raw, h_keys) if self.criterion.gamma_h > 0 else None
-		return q_uni, t_uni, h_uni
+		n_unique_q = q_uni.size(0) if q_uni is not None else 0
+		n_unique_t = t_uni.size(0) if t_uni is not None else 0
+		return q_uni, t_uni, h_uni, n_unique_q, n_unique_t
 
-	def _au_loss(
+	def _au_loss_with_distinct_keys(
 		self,
 		q_raw: torch.Tensor,
 		t_raw: torch.Tensor,
@@ -196,11 +253,27 @@ class KGAUStrategy(Evaluator):
 		q_keys: torch.Tensor,
 		t_keys: torch.Tensor,
 		h_keys: torch.Tensor,
-	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-		"""Compute KGAU loss; alignment uses the full batch, uniformity uses distinct keys."""
+	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, int, float]:
+		"""KGAU loss with deduplicated uniformity inputs (by entity/relation id keys)."""
 
-		q_uni, t_uni, h_uni = self._distinct_uniformity_inputs(q_raw, t_raw, h_raw, q_keys, t_keys, h_keys)
-		return self.criterion(q_raw, t_raw, h_raw, ent_raw, q_uni=q_uni, t_uni=t_uni, h_uni=h_uni)
+		q_uni, t_uni, h_uni, n_unique_q, n_unique_t = self._distinct_uniformity_inputs(
+			q_raw, t_raw, h_raw, q_keys, t_keys, h_keys)
+		loss, l_align, l_unif = self.criterion(q_raw, t_raw, h_raw, ent_raw, q_uni=q_uni, t_uni=t_uni, h_uni=h_uni)
+		margin_active_frac = 0.0
+		if float(self.criterion.additive_margin) > 0.0:
+			active_weight = 0.0
+			active_sum = 0.0
+			if self.criterion.gamma_q > 0 and q_uni is not None and q_uni.size(0) >= 2:
+				_, frac = self.criterion.uniformity_loss_with_stats(q_uni)
+				active_sum += self.criterion.gamma_q * frac
+				active_weight += self.criterion.gamma_q
+			if self.criterion.gamma_t > 0 and t_uni is not None and t_uni.size(0) >= 2:
+				_, frac = self.criterion.uniformity_loss_with_stats(t_uni)
+				active_sum += self.criterion.gamma_t * frac
+				active_weight += self.criterion.gamma_t
+			if active_weight > 0:
+				margin_active_frac = active_sum / active_weight
+		return loss, l_align, l_unif, n_unique_q, n_unique_t, margin_active_frac
 
 	def _extract_monitor_value(self, metric_dict, valid_metric='mrr') -> float | None:
 		"""Extract the value to monitor for checkpointing decisions from the metric dictionary."""
@@ -301,6 +374,10 @@ class KGAUStrategy(Evaluator):
 		epoch_loss = 0.0
 		epoch_align_loss = 0.0
 		epoch_unif_loss = 0.0
+		epoch_unique_q = 0.0
+		epoch_unique_t = 0.0
+		epoch_margin_active = 0.0
+		epoch_batches = 0
 		batch_size = max(getattr(self.args, 'batch_size', 1024), 1)
 		model = get_model_obj(self.model)
 		use_amp = bool(getattr(self.args, 'use_amp', False))
@@ -321,7 +398,8 @@ class KGAUStrategy(Evaluator):
 						t_raw = outputs['tail_vector']
 						h_raw = outputs['head_vector']
 						ent_raw = model.entity_embeddings(device=self.device) if self.criterion.gamma_ent > 0 else None
-						loss, l_align, l_unif = self._au_loss(q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
+						loss, l_align, l_unif, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
+							q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					self.scaler.scale(loss).backward()
 					self.scaler.unscale_(self.optimizer)
 					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
@@ -333,28 +411,34 @@ class KGAUStrategy(Evaluator):
 					t_raw = outputs['tail_vector']
 					h_raw = outputs['head_vector']
 					ent_raw = model.entity_embeddings(device=self.device) if self.criterion.gamma_ent > 0 else None
-					loss, l_align, l_unif = self._au_loss(q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
+					loss, l_align, l_unif, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
+						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					loss.backward()
 					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
 					self.optimizer.step()
-				losses.update(loss.item(), len(batch_dict['batch_data']))
-				epoch_align_loss += l_align.item() * len(batch_dict['batch_data'])
-				epoch_unif_loss += l_unif.item() * len(batch_dict['batch_data'])
-				epoch_loss += loss.item() * len(batch_dict['batch_data'])
+				batch_examples = len(batch_dict['batch_data'])
+				losses.update(loss.item(), batch_examples)
+				epoch_align_loss += l_align.item() * batch_examples
+				epoch_unif_loss += l_unif.item() * batch_examples
+				epoch_loss += loss.item() * batch_examples
+				epoch_unique_q += n_uq
+				epoch_unique_t += n_ut
+				epoch_margin_active += margin_active
+				epoch_batches += 1
 				if i % self.args.print_freq == 0:
 					progress.display(i)
 		else:
-			for ss, rs, ts in self._iter_batches(self.train_src, self.train_rel, self.train_dst, batch_size):
-				ss = ss.to(self.device)
-				rs = rs.to(self.device)
-				ts = ts.to(self.device)
+			for batch_idx, (ss, rs, ts) in enumerate(
+				self._iter_batches(self.train_src, self.train_rel, self.train_dst, batch_size, shuffle=True),
+			):
 				self.optimizer.zero_grad()
 				q_keys, t_keys, h_keys = self._uniformity_keys(ss, rs, ts)
 				if use_amp:
 					with torch.amp.autocast(device_type='cuda'):
 						q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
 						ent_raw = model.entity_embeddings(device=self.device) if self.criterion.gamma_ent > 0 else None
-						loss, l_align, l_unif = self._au_loss(q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
+						loss, l_align, l_unif, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
+							q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					self.scaler.scale(loss).backward()
 					self.scaler.unscale_(self.optimizer)
 					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
@@ -363,25 +447,53 @@ class KGAUStrategy(Evaluator):
 				else:
 					q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
 					ent_raw = model.entity_embeddings(device=self.device) if self.criterion.gamma_ent > 0 else None
-					loss, l_align, l_unif = self._au_loss(q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
+					loss, l_align, l_unif, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
+						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					loss.backward()
 					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
 					self.optimizer.step()
 				epoch_align_loss += l_align.item() * ss.size(0)
 				epoch_unif_loss += l_unif.item() * ss.size(0)
 				epoch_loss += loss.item() * ss.size(0)
+				epoch_unique_q += n_uq
+				epoch_unique_t += n_ut
+				epoch_margin_active += margin_active
+				epoch_batches += 1
 
 		avg_count = max(len(self.train_examples), 1)
 		avg_loss = epoch_loss / avg_count
 		avg_align_loss = epoch_align_loss / avg_count
 		avg_unif_loss = epoch_unif_loss / avg_count
 		display_epoch = epoch + 1
-		logger.info('[EPOCH %s] train loss: %.6f | align: %.6f | uniformity: %.6f', display_epoch, avg_loss, avg_align_loss, avg_unif_loss)
+		if epoch_batches > 0:
+			avg_unique_q = epoch_unique_q / epoch_batches
+			avg_unique_t = epoch_unique_t / epoch_batches
+			avg_margin_active = epoch_margin_active / epoch_batches
+		else:
+			avg_unique_q = avg_unique_t = avg_margin_active = 0.0
+		if float(self.criterion.additive_margin) > 0.0:
+			logger.info(
+				'[EPOCH %s] train loss: %.6f | align: %.6f | uniformity: %.6f | '
+				'avg unique q/t per batch: %.0f/%.0f (of %d) | margin-buffer pairs: %.2f%%',
+				display_epoch, avg_loss, avg_align_loss, avg_unif_loss,
+				avg_unique_q, avg_unique_t, batch_size, 100.0 * avg_margin_active,
+			)
+		else:
+			logger.info(
+				'[EPOCH %s] train loss: %.6f | align: %.6f | uniformity: %.6f | '
+				'avg unique q/t per batch: %.0f/%.0f (of %d)',
+				display_epoch, avg_loss, avg_align_loss, avg_unif_loss,
+				avg_unique_q, avg_unique_t, batch_size,
+			)
 		self.train_component_losses = {
 			'loss': avg_loss,
 			'align': avg_align_loss,
 			'uniformity': avg_unif_loss,
+			'avg_unique_q': avg_unique_q,
+			'avg_unique_t': avg_unique_t,
 		}
+		if float(self.criterion.additive_margin) > 0.0:
+			self.train_component_losses['margin_buffer_pair_frac'] = avg_margin_active
 		return avg_loss
 
 	@torch.no_grad()
@@ -424,15 +536,21 @@ class KGAUStrategy(Evaluator):
 		if self.args.use_amp:
 			self.scaler = torch.amp.GradScaler('cuda')
 
+		validation_interval = self._validation_interval()
+		logger.info('KGAU validation interval: every %d epoch(s)', validation_interval)
+
 		total_start_time = time.time()
 		for epoch in range(self.args.epochs):
 			epoch_train_start = time.time()
 			train_loss = self.train_epoch(epoch)
 			self.train_time += time.time() - epoch_train_start
 
-			eval_start = time.time()
-			metric_dict = self.eval_epoch(epoch, train_loss=train_loss)
-			self.valid_time += time.time() - eval_start
+			if self._should_validate(epoch):
+				eval_start = time.time()
+				metric_dict = self.eval_epoch(epoch, train_loss=train_loss)
+				self.valid_time += time.time() - eval_start
+			else:
+				metric_dict = {'loss': round(train_loss, 4)}
 
 			if not metric_dict:
 				metric_dict = {'loss': round(train_loss, 4)}

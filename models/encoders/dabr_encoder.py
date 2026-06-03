@@ -101,6 +101,34 @@ class DaBREncoder(BaseModel):
         r, i, j, k = torch.split(quaternion, size, dim=1)
         return torch.mean(r ** 2) + torch.mean(i ** 2) + torch.mean(j ** 2) + torch.mean(k ** 2)
 
+    def _head_relation_tail(self, src, rel, dst):
+        """Look up head, relation, and tail embeddings for index tensors."""
+
+        h = self.ent_embeddings(src)
+        r = self.rel_embeddings(rel)
+        t = self.ent_embeddings(dst)
+        return h, r, t
+
+    def get_queries_targets(self, src, rel, dst) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return AU query, target, and head vectors aligned with DaBR scoring.
+
+        Query uses h composed with r (hr). Target uses t composed with r^{-1} (tr),
+        matching the multiplicative term in ``_calc``. Head returns raw entity embeddings.
+        """
+
+        h, r, t = self._head_relation_tail(src, rel, dst)
+        q = DaBREncoder.vec_vec_wise_multiplication(h, r)
+        t_target = DaBREncoder.vec_vec_wise_multiplication(t, DaBREncoder.get_inv(r))
+        return q, t_target, h
+
+    def entity_embeddings(self, device: torch.device | None = None) -> torch.Tensor:
+        """Return all entity embeddings (for optional entity-level uniformity)."""
+
+        entity_vectors = self.ent_embeddings.weight
+        if device is not None:
+            entity_vectors = entity_vectors.to(device)
+        return entity_vectors
+
     def forward(self, batch_dict: dict) -> dict:
         h = self.ent_embeddings(batch_dict['head_id'])
         r = self.rel_embeddings(batch_dict['relation'])
@@ -121,8 +149,8 @@ class DaBREncoder(BaseModel):
                 return {'logits': output_dict['scores']}
         raise TypeError('Unsupported model output type for logits computation')
 
-    def score_batch(self, head_ids, relations, tail_entity_ids) -> torch.Tensor:
-        """Memory-safe evaluation loop for DaBR."""
+    def score_batch(self, head_ids, relations, tail_entity_ids, query_chunk_size: int | None = None) -> torch.Tensor:
+        """Score queries against candidate tails; vectorized over candidates per query chunk."""
 
         device = self.ent_embeddings.weight.device
         head_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
@@ -134,17 +162,31 @@ class DaBREncoder(BaseModel):
         dr = self.Dr(relation_indices)
         t = self.ent_embeddings(candidate_indices)
 
-        batch_size, num_candidates = h.size(0), t.size(0)
-        scores = []
+        num_queries, num_candidates = h.size(0), t.size(0)
+        if num_queries == 0 or num_candidates == 0:
+            return torch.empty(num_queries, num_candidates, device=device)
 
-        for i in range(batch_size):
-            h_i = h[i:i + 1].expand(num_candidates, -1)
-            r_i = r[i:i + 1].expand(num_candidates, -1)
-            dr_i = dr[i:i + 1].expand(num_candidates, -1)
-            s = self._calc(h_i, r_i, t, dr_i, self.para)
-            scores.append(s)
+        if query_chunk_size is None:
+            query_chunk_size = getattr(self.config, 'score_query_chunk_size', 64)
+        query_chunk_size = max(int(query_chunk_size), 1)
 
-        return torch.stack(scores, dim=0)
+        score_rows = []
+        for start in range(0, num_queries, query_chunk_size):
+            end = min(start + query_chunk_size, num_queries)
+            h_chunk = h[start:end]
+            r_chunk = r[start:end]
+            dr_chunk = dr[start:end]
+            q_size = h_chunk.size(0)
+
+            h_rep = h_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
+            r_rep = r_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
+            dr_rep = dr_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
+            t_rep = t.unsqueeze(0).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
+
+            chunk_scores = self._calc(h_rep, r_rep, t_rep, dr_rep, self.para).reshape(q_size, num_candidates)
+            score_rows.append(chunk_scores)
+
+        return torch.cat(score_rows, dim=0)
 
     def _relation_to_idx(self, relation: str) -> int:
         if relation in self.rel_to_idx:

@@ -96,20 +96,39 @@ class KGAULoss(nn.Module):
 		When additive_margin > 0, uses margin-aware repulsion with m = 2 * additive_margin.
 		"""
 
+		loss, _ = self.uniformity_loss_with_stats(x)
+		return loss
+
+	def _margin_uniformity_fraction(self, margin: float) -> float:
+		"""Map InfoNCE-style additive margin to a closest-pair fraction for uniformity."""
+
+		# gamma=0.02 -> penalize the closest ~20% of pairs; clamp for stability.
+		return min(0.5, max(0.05, margin * 10.0))
+
+	def uniformity_loss_with_stats(self, x: torch.Tensor) -> tuple[torch.Tensor, float]:
+		"""Return uniformity loss and the fraction of pairs inside the margin buffer (margin mode only)."""
+
 		if x is None:
-			return torch.tensor(0.0)
+			return torch.tensor(0.0), 0.0
 		if x.size(0) < 2:
-			return x.new_zeros(())
+			return x.new_zeros(()), 0.0
 		dist_sq = self._prepare_uniformity_pairs(x)
 		if dist_sq is None:
-			return x.new_zeros(())
+			return x.new_zeros(()), 0.0
 		margin = float(self.additive_margin)
 		if margin <= 0.0:
 			potential = torch.exp(-self.tuni * dist_sq)
-			return potential.mean().log()
-		geom_margin = 2.0 * margin
-		potential = torch.exp(self.tuni * F.relu(geom_margin - dist_sq))
-		return potential.mean().log()
+			return potential.mean().log(), 1.0
+		# Fixed m = 2*gamma is far too small in high dimensions (random pairs have d^2 ~ 2).
+		# Use an adaptive buffer from batch geometry: repel the closest fraction of pairs.
+		target_frac = self._margin_uniformity_fraction(margin)
+		geom_margin = torch.quantile(dist_sq, target_frac)
+		buffer_penalty = torch.exp(self.tuni * F.relu(geom_margin - dist_sq))
+		# Keep classic AU spread so early epochs still have strong uniformity signal.
+		spread = torch.exp(-self.tuni * dist_sq).mean().log()
+		buffer = buffer_penalty.mean().log()
+		active_frac = float((dist_sq < geom_margin).float().mean().item())
+		return spread + buffer, active_frac
 
 	def forward(
 		self,
