@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import math
 import time
+from typing import Iterator
 
 import torch
 from torch.optim import Adam
@@ -90,6 +91,7 @@ class KGAUStrategy(Evaluator):
 			gamma_h=getattr(args, 'gamma_h', 0.5),
 			gamma_ent=getattr(args, 'gamma_ent', 0.0),
 			tuni=tuni_val,
+			max_uniformity_samples=getattr(args, 'max_uniformity_samples', 1024),
 		).to(self.device)
 		self.best_metric = None
 		self.best_checkpoint_path = None
@@ -105,7 +107,7 @@ class KGAUStrategy(Evaluator):
 		tail_indices = torch.tensor([self.entity_dict.entity_to_idx(example.tail_id) for example in examples], dtype=torch.long)
 		return head_indices, relation_indices, tail_indices
 
-	def _iter_batches(self, src, rel, dst, batch_size) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+	def _iter_batches(self, src, rel, dst, batch_size) -> Iterator[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
 		"""Iterate over batches of examples."""
 
 		for start in range(0, len(src), batch_size):

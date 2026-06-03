@@ -86,6 +86,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help='learning-rate scheduler')
     parser.add_argument('--max-num-tokens', default=50, type=int,
                         help='maximum number of tokens for text-based models')
+    parser.add_argument('--max-uniformity-samples', default=1024, type=int,
+                        help='maximum number of embeddings used to estimate the AU uniformity term')
     parser.add_argument('--max-to-keep', default=5, type=int,
                         help='maximum number of checkpoints to keep')
     parser.add_argument('--neighbor-weight', default=0.0, type=float,

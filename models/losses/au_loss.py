@@ -10,7 +10,15 @@ import torch.nn.functional as F
 class KGAULoss(nn.Module):
 	"""Alignment and uniformity loss for knowledge graph embeddings."""
 
-	def __init__(self, gamma_q=1.0, gamma_t=1.0, gamma_h=0.0, gamma_ent=0.0, tuni=2.0):
+	def __init__(
+		self,
+		gamma_q=1.0,
+		gamma_t=1.0,
+		gamma_h=0.0,
+		gamma_ent=0.0,
+		tuni=2.0,
+		max_uniformity_samples: int = 1024,
+	):
 		super().__init__()
 		self.gamma_q = gamma_q
 		self.gamma_t = gamma_t
@@ -18,6 +26,7 @@ class KGAULoss(nn.Module):
 		self.gamma_ent = gamma_ent
 		# `tuni` is the uniformity temperature/scaling factor
 		self.tuni = tuni
+		self.max_uniformity_samples = max_uniformity_samples
 
 	def alignment_loss(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
 		"""Expected squared L2 distance between paired positive query and target embeddings."""
@@ -33,6 +42,12 @@ class KGAULoss(nn.Module):
 			return torch.tensor(0.0)
 		if x.size(0) < 2:
 			return x.new_zeros(())
+		max_samples = int(getattr(self, 'max_uniformity_samples', 0) or 0)
+		if max_samples > 0 and x.size(0) > max_samples:
+			indices = torch.randperm(x.size(0), device=x.device)[:max_samples]
+			x = x.index_select(0, indices)
+			if x.size(0) < 2:
+				return x.new_zeros(())
 		x = F.normalize(x, p=2, dim=-1)
 		pairwise = torch.pdist(x, p=2)
 		if pairwise.numel() == 0:
