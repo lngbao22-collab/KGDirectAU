@@ -250,7 +250,13 @@ def _load_json_defaults(path: str) -> Dict[str, Any]:
     if not path or not os.path.exists(path):
         return {}
     with open(path, 'r', encoding='utf-8') as f:
-        cfg = json.load(f)
+        try:
+            raw = f.read().strip()
+            if not raw:
+                return {}
+            cfg = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
     if not isinstance(cfg, dict):
         raise ValueError(f'Config file must contain a JSON object: {path}')
     return cfg
