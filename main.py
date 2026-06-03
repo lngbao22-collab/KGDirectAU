@@ -47,6 +47,8 @@ def _write_results(current_args, train_summary, evaluator, link_metrics, triple_
 
     if link_metrics:
         logger.info('Link prediction metrics on test set:\n{}'.format(json.dumps(link_metrics, indent=4)))
+    if triple_metrics:
+        logger.info('Triple classification metrics on test set:\n{}'.format(json.dumps(triple_metrics, indent=4)))
 
     checkpoint = getattr(evaluator, 'checkpoint', {}) or {}
     best_metric = checkpoint.get('best_metric') or {}

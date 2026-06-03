@@ -8,6 +8,7 @@ from typing import Sequence
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from data.dataset import Example, load_data
 from data.dict_hub import get_entity_dict
@@ -34,14 +35,31 @@ class DistMultEncoder(nn.Module):
 		self.ent_embed = nn.Embedding(n_ent, args.dim)
 		self.entity_dict = get_entity_dict()
 		self.rel_to_idx = _load_relation_to_idx(args)
+		self.normalize_lp_scores = getattr(
+			args,
+			'normalize_lp_scores',
+			str(getattr(args, 'model', '')).endswith('-AU'),
+		)
 		scale = (args.dim / sigma ** 2) ** (1 / 6)
 		for param in self.parameters():
 			param.data.div_(scale)
 
-	def forward(self, src, rel, dst) -> torch.Tensor:
-		"""Return raw DistMult scores for the provided triples."""
+	def _link_prediction_scores(self, query_vectors: torch.Tensor, candidate_vectors: torch.Tensor) -> torch.Tensor:
+		"""Dot-product scores; L2-normalize when training uses AU loss on unit vectors."""
 
-		return torch.sum(self.ent_embed(src) * self.rel_embed(rel) * self.ent_embed(dst), dim=-1)
+		if self.normalize_lp_scores:
+			query_vectors = F.normalize(query_vectors, p=2, dim=-1)
+			candidate_vectors = F.normalize(candidate_vectors, p=2, dim=-1)
+		return torch.mm(query_vectors, candidate_vectors.t())
+
+	def forward(self, src, rel, dst) -> torch.Tensor:
+		"""Return DistMult scores for the provided triples."""
+
+		query_vectors = self.ent_embed(src) * self.rel_embed(rel)
+		candidate_vectors = self.ent_embed(dst)
+		if self.normalize_lp_scores:
+			return self._link_prediction_scores(query_vectors, candidate_vectors).diag()
+		return torch.sum(query_vectors * candidate_vectors, dim=-1)
 
 	def score(self, src, rel, dst) -> torch.Tensor:
 		"""Alias for forward to compute scores for triples."""
@@ -113,7 +131,7 @@ class DistMultEncoder(nn.Module):
 		candidate_indices = _as_index_tensor(tail_entity_ids, self.entity_dict.entity_to_idx, device)
 		query_vectors = self.ent_embed(head_indices) * self.rel_embed(relation_indices)
 		candidate_vectors = self.ent_embed(candidate_indices)
-		return torch.mm(query_vectors, candidate_vectors.t())
+		return self._link_prediction_scores(query_vectors, candidate_vectors)
 
 	def _relation_to_idx(self, relation: str) -> int:
 		"""Resolve relation variants used by preprocessing and inverse triplet generation."""
@@ -155,7 +173,7 @@ class DistMultEncoder(nn.Module):
 				target_vectors = output_dict.get('tail_vector')
 			if query_vectors is None or target_vectors is None:
 				raise KeyError('Output dict must contain query and target vectors')
-			return {'logits': torch.mm(query_vectors, target_vectors.t())}
+			return {'logits': self._link_prediction_scores(query_vectors, target_vectors)}
 
 		raise TypeError('Unsupported model output type for logits computation')
 

@@ -88,7 +88,7 @@ class KGAUStrategy(Evaluator):
 		self.criterion = KGAULoss(
 			gamma_q=getattr(args, 'gamma_q', 1.0),
 			gamma_t=getattr(args, 'gamma_t', 1.0),
-			gamma_h=getattr(args, 'gamma_h', 0.5),
+			gamma_h=getattr(args, 'gamma_h', 0.0),
 			gamma_ent=getattr(args, 'gamma_ent', 0.0),
 			tuni=tuni_val,
 			max_uniformity_samples=getattr(args, 'max_uniformity_samples', 1024),

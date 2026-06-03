@@ -441,3 +441,4 @@ class Evaluator:
         log_cls = f'[TEST] Triple Classification: {json.dumps(metrics_cls)}'
         logger.info(log_thresh)
         logger.info(log_cls)
+        return metrics_cls
