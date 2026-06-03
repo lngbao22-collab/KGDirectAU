@@ -96,20 +96,27 @@ class KGAULoss(nn.Module):
 		When additive_margin > 0, uses margin-aware repulsion with m = 2 * additive_margin.
 		"""
 
+		loss, _ = self.uniformity_loss_with_stats(x)
+		return loss
+
+	def uniformity_loss_with_stats(self, x: torch.Tensor) -> tuple[torch.Tensor, float]:
+		"""Return uniformity loss and the fraction of pairs inside the margin buffer (margin mode only)."""
+
 		if x is None:
-			return torch.tensor(0.0)
+			return torch.tensor(0.0), 0.0
 		if x.size(0) < 2:
-			return x.new_zeros(())
+			return x.new_zeros(()), 0.0
 		dist_sq = self._prepare_uniformity_pairs(x)
 		if dist_sq is None:
-			return x.new_zeros(())
+			return x.new_zeros(()), 0.0
 		margin = float(self.additive_margin)
 		if margin <= 0.0:
 			potential = torch.exp(-self.tuni * dist_sq)
-			return potential.mean().log()
+			return potential.mean().log(), 1.0
 		geom_margin = 2.0 * margin
+		active_frac = float((dist_sq < geom_margin).float().mean().item())
 		potential = torch.exp(self.tuni * F.relu(geom_margin - dist_sq))
-		return potential.mean().log()
+		return potential.mean().log(), active_frac
 
 	def forward(
 		self,

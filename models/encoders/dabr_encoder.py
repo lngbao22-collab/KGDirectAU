@@ -101,6 +101,34 @@ class DaBREncoder(BaseModel):
         r, i, j, k = torch.split(quaternion, size, dim=1)
         return torch.mean(r ** 2) + torch.mean(i ** 2) + torch.mean(j ** 2) + torch.mean(k ** 2)
 
+    def _head_relation_tail(self, src, rel, dst):
+        """Look up head, relation, and tail embeddings for index tensors."""
+
+        h = self.ent_embeddings(src)
+        r = self.rel_embeddings(rel)
+        t = self.ent_embeddings(dst)
+        return h, r, t
+
+    def get_queries_targets(self, src, rel, dst) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return AU query, target, and head vectors aligned with DaBR scoring.
+
+        Query uses h composed with r (hr). Target uses t composed with r^{-1} (tr),
+        matching the multiplicative term in ``_calc``. Head returns raw entity embeddings.
+        """
+
+        h, r, t = self._head_relation_tail(src, rel, dst)
+        q = DaBREncoder.vec_vec_wise_multiplication(h, r)
+        t_target = DaBREncoder.vec_vec_wise_multiplication(t, DaBREncoder.get_inv(r))
+        return q, t_target, h
+
+    def entity_embeddings(self, device: torch.device | None = None) -> torch.Tensor:
+        """Return all entity embeddings (for optional entity-level uniformity)."""
+
+        entity_vectors = self.ent_embeddings.weight
+        if device is not None:
+            entity_vectors = entity_vectors.to(device)
+        return entity_vectors
+
     def forward(self, batch_dict: dict) -> dict:
         h = self.ent_embeddings(batch_dict['head_id'])
         r = self.rel_embeddings(batch_dict['relation'])

@@ -458,7 +458,7 @@ if not args.model_encoder_path:
     elif _model_name == 'dabr':
         args.model_encoder_path = 'models/encoders/dabr_encoder.py'
     elif _model_name == 'dabr-au':
-        args.model_encoder_path = 'models/encoders/dabr-au_encoder.py'
+        args.model_encoder_path = 'models/encoders/dabr_encoder.py'
     else:
         args.model_encoder_path = 'models/encoders/bert_encoder.py'
 
