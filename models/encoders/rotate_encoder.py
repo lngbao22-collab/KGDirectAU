@@ -34,11 +34,11 @@ class RotatEEncoder(BaseModel):
         self.nrelation = n_rel
         self.hidden_dim = int(getattr(args, "dim", 500))
         self.epsilon = 2.0
-        gamma = float(getattr(args, "margin", getattr(args, "gamma", 6.0)))
+        margin = float(getattr(args, "margin", 6.0))
 
-        self.gamma = nn.Parameter(torch.tensor([gamma]), requires_grad=False)
+        self.margin = nn.Parameter(torch.tensor([margin]), requires_grad=False)
         self.embedding_range = nn.Parameter(
-            torch.tensor([(self.gamma.item() + self.epsilon) / self.hidden_dim]),
+            torch.tensor([(self.margin.item() + self.epsilon) / self.hidden_dim]),
             requires_grad=False,
         )
 
@@ -80,7 +80,7 @@ class RotatEEncoder(BaseModel):
 
         score = torch.stack([re_score, im_score], dim=0)
         score = score.norm(dim=0)
-        score = self.gamma.item() - score.sum(dim=2)
+        score = self.margin.item() - score.sum(dim=2)
         return score
 
     def _score(self, positive_sample: torch.Tensor, negative_sample: torch.Tensor | None = None, mode: str = "single") -> torch.Tensor:

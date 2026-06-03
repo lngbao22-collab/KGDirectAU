@@ -66,7 +66,9 @@ class PointwiseStrategy:
             reg_ent = self.encoder.regularization(h) + self.encoder.regularization(t)
             reg_rel = self.encoder.regularization(r) + self.encoder.regularization(dr)
 
-            total = base_loss + (getattr(self.args, 'lmbda', getattr(self.args, 'lam', 0.0)) * reg_ent) + (getattr(self.args, 'lmbda_two', getattr(self.args, 'lmbda2', 0.0)) * reg_rel)
+            entity_reg_weight = getattr(self.args, 'entity_reg_weight', 0.0)
+            relation_reg_weight = getattr(self.args, 'relation_reg_weight', 0.0)
+            total = base_loss + (entity_reg_weight * reg_ent) + (relation_reg_weight * reg_rel)
 
             total.backward()
             torch.nn.utils.clip_grad_norm_(self.encoder.parameters(), 0.5)

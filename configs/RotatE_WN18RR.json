@@ -16,15 +16,12 @@
   "output_dir_prefix": "logs/RotatE_WN18RR",
 
   "dim": 200,
-  "margin": 6.0,
-  "lr": 5e-05,
   "batch_size": 512,
-  "n_sample": 512,
   "epochs": 800,
-  "adversarial_temperature": 1.0,
+  "lr": 5e-05,
   "weight_decay": 0.0,
-  "eval_every_n_step": 50,
-  "epoch_per_test": 50,
-  "sample_freq": 1,
-  "test_batch_size": 8
+
+  "margin": 6.0,
+  "adversarial_temperature": 1.0,
+  "n_sample": 512
 }

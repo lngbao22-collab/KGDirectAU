@@ -16,15 +16,14 @@
   "output_dir_prefix": "logs/DaBR-AU_WN18RR",
 
   "dim": 500,
-  "lr": 0.1,
   "batch_size": 512,
   "epochs": 400,
+  "lr": 0.1,
   "weight_decay": 0.1,
-  "optim": "adagrad",
-  "workers": 8,
+  "eval_every_n_step": 400,
   "gamma_q": 1.0,
   "gamma_t": 1.0,
-  "tuni": 2.0,
-  "pre_batch": 20,
-  "sample_freq": 1
+  "gamma_h": 1.0,
+  "gamma_ent": 1.0,
+  "tuni": 2.0
 }

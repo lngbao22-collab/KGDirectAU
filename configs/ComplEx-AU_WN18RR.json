@@ -16,19 +16,15 @@
   "output_dir_prefix": "logs/ComplEx-AU_WN18RR",
 
   "dim": 200,
+  "batch_size": 100,
+  "epochs": 100,
   "lr": 0.001,
   "weight_decay": 0.0001,
-  "pre_batch": 20,
-  "eval_every_n_step": 50,
-  "epochs": 100,
-  "batch_size": 100,
-  "epoch_per_test": 50,
-  "sample_freq": 1,
-  "n_sample": 100,
+
+  "normalize_lp_scores": true,
   "gamma_q": 1.0,
   "gamma_t": 1.0,
   "gamma_h": 1.0,
   "gamma_ent": 1.0,
-  "normalize_lp_scores": true,
   "tuni": 6.0
 }
