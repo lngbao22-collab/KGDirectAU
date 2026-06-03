@@ -19,8 +19,10 @@
   "batch_size": 100,
   "epochs": 400,
   "lr": 0.1,
+
   "entity_reg_weight": 0.5,
   "relation_reg_weight": 0.01,
+  
   "eval_every_n_step": 400,
   "optim": "adagrad",
   

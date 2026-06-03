@@ -22,6 +22,8 @@
   "weight_decay": 0.0,
 
   "margin": 6.0,
+
   "adversarial_temperature": 1.0,
+  
   "n_sample": 512
 }
