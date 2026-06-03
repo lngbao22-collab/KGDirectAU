@@ -407,6 +407,11 @@ if config_defaults:
 
 args.unparsed_args = unknown_args
 
+# JSON null or omitted optional AU weights must not propagate as None.
+for _name, _default in (('gamma_h', 0.0), ('gamma_ent', 0.0)):
+    if getattr(args, _name, None) is None:
+        setattr(args, _name, _default)
+
 args.train_path = _resolve_data_path(getattr(args, 'train_path', ''))
 args.valid_path = _resolve_data_path(_derive_split_variant(getattr(args, 'valid_path', ''), split_name='valid', labeled=False))
 args.test_path = _resolve_data_path(_derive_split_variant(getattr(args, 'test_path', ''), split_name='test', labeled=False))

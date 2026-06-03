@@ -36,6 +36,13 @@ def _uses_text_inputs(args) -> bool:
 	return os.path.basename(encoder_path) == 'bert_encoder.py'
 
 
+def _config_float(args, name: str, default: float) -> float:
+	"""Read a float hyperparameter from args, treating JSON null as unset."""
+
+	value = getattr(args, name, None)
+	return default if value is None else float(value)
+
+
 class KGAUStrategy(Evaluator):
 	"""Knowledge Graph Alignment and Uniformity training loop for KG encoders."""
 
@@ -83,16 +90,15 @@ class KGAUStrategy(Evaluator):
 		self.weight_decay = float(weight_decay) / num_batches
 		self.optimizer = Adam(self.model.parameters(), lr=args.lr, weight_decay=self.weight_decay)
 
-		# Support multiple config names: `tuni` preferred, fall back to `temperature` or `t`.
-		tuni_val = getattr(args, 'tuni', getattr(args, 'temperature', getattr(args, 't', 2.0)))
+		tuni_val = _config_float(args, 'tuni', _config_float(args, 'temperature', _config_float(args, 't', 2.0)))
 
 		self.criterion = KGAULoss(
-			gamma_q=getattr(args, 'gamma_q', 1.0),
-			gamma_t=getattr(args, 'gamma_t', 1.0),
-			gamma_h=getattr(args, 'gamma_h', 0.0),
-			gamma_ent=getattr(args, 'gamma_ent', 0.0),
+			gamma_q=_config_float(args, 'gamma_q', 1.0),
+			gamma_t=_config_float(args, 'gamma_t', 1.0),
+			gamma_h=_config_float(args, 'gamma_h', 0.0),
+			gamma_ent=_config_float(args, 'gamma_ent', 0.0),
 			tuni=tuni_val,
-			max_uniformity_samples=getattr(args, 'max_uniformity_samples', 1024),
+			max_uniformity_samples=int(_config_float(args, 'max_uniformity_samples', 1024)),
 		).to(self.device)
 		self.best_metric = None
 		self.best_checkpoint_path = None
@@ -290,7 +296,7 @@ class KGAUStrategy(Evaluator):
 						q_raw = outputs['hr_vector']
 						t_raw = outputs['tail_vector']
 						h_raw = outputs['head_vector']
-						ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
+						ent_raw = model.entity_embeddings(device=self.device) if self.criterion.gamma_ent > 0 else None
 						loss, l_align, l_unif = self._au_loss(q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					self.scaler.scale(loss).backward()
 					self.scaler.unscale_(self.optimizer)
@@ -302,7 +308,7 @@ class KGAUStrategy(Evaluator):
 					q_raw = outputs['hr_vector']
 					t_raw = outputs['tail_vector']
 					h_raw = outputs['head_vector']
-					ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
+					ent_raw = model.entity_embeddings(device=self.device) if self.criterion.gamma_ent > 0 else None
 					loss, l_align, l_unif = self._au_loss(q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					loss.backward()
 					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
@@ -323,7 +329,7 @@ class KGAUStrategy(Evaluator):
 				if use_amp:
 					with torch.amp.autocast(device_type='cuda'):
 						q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
-						ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
+						ent_raw = model.entity_embeddings(device=self.device) if self.criterion.gamma_ent > 0 else None
 						loss, l_align, l_unif = self._au_loss(q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					self.scaler.scale(loss).backward()
 					self.scaler.unscale_(self.optimizer)
@@ -332,7 +338,7 @@ class KGAUStrategy(Evaluator):
 					self.scaler.update()
 				else:
 					q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
-					ent_raw = model.entity_embeddings(device=self.device) if getattr(self.criterion, 'gamma_ent', 0.0) > 0 else None
+					ent_raw = model.entity_embeddings(device=self.device) if self.criterion.gamma_ent > 0 else None
 					loss, l_align, l_unif = self._au_loss(q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					loss.backward()
 					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)

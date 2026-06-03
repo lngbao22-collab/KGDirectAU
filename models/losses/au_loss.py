@@ -23,6 +23,12 @@ def distinct_first_indices(keys: torch.Tensor) -> torch.Tensor:
 	return indices
 
 
+def _coalesce_float(value, default: float) -> float:
+	"""Treat missing or JSON-null hyperparameters as the default."""
+
+	return default if value is None else float(value)
+
+
 def select_distinct_rows(vectors: torch.Tensor, keys: torch.Tensor) -> torch.Tensor:
 	"""Keep one embedding row per unique key (first occurrence in the batch)."""
 
@@ -45,12 +51,12 @@ class KGAULoss(nn.Module):
 		max_uniformity_samples: int = 1024,
 	):
 		super().__init__()
-		self.gamma_q = gamma_q
-		self.gamma_t = gamma_t
-		self.gamma_h = gamma_h
-		self.gamma_ent = gamma_ent
+		self.gamma_q = _coalesce_float(gamma_q, 1.0)
+		self.gamma_t = _coalesce_float(gamma_t, 1.0)
+		self.gamma_h = _coalesce_float(gamma_h, 0.0)
+		self.gamma_ent = _coalesce_float(gamma_ent, 0.0)
 		# `tuni` is the uniformity temperature/scaling factor
-		self.tuni = tuni
+		self.tuni = _coalesce_float(tuni, 2.0)
 		self.max_uniformity_samples = max_uniformity_samples
 
 	def alignment_loss(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
