@@ -122,6 +122,29 @@ class RotatEEncoder(BaseModel):
             "negative_scores": neg_scores,
         }
 
+    def get_queries_targets(self, src: torch.Tensor, rel: torch.Tensor, dst: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return AU-compatible query, target, and head representations.
+
+        KGAU expects encoders to expose query/target tensors for alignment-uniformity
+        training. For RotatE, the query is the rotated head embedding, the target is
+        the tail entity embedding, and the head is the raw head embedding.
+        """
+
+        head = torch.index_select(self.entity_embedding, dim=0, index=src).unsqueeze(1)
+        relation = torch.index_select(self.relation_embedding, dim=0, index=rel).unsqueeze(1)
+        tail = torch.index_select(self.entity_embedding, dim=0, index=dst).unsqueeze(1)
+
+        pi = 3.14159265358979323846
+        re_head, im_head = torch.chunk(head, 2, dim=2)
+        phase_relation = relation / (self.embedding_range.item() / pi)
+        re_relation = torch.cos(phase_relation)
+        im_relation = torch.sin(phase_relation)
+        re_query = re_head * re_relation - im_head * im_relation
+        im_query = re_head * im_relation + im_head * re_relation
+        query = torch.cat([re_query.squeeze(1), im_query.squeeze(1)], dim=-1)
+
+        return query, tail.squeeze(1), head.squeeze(1)
+
     def compute_logits(self, output_dict: dict, batch_dict: dict) -> dict:
         """Compatibility adapter used by generic trainer paths."""
 
