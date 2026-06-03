@@ -107,11 +107,30 @@ class KGAUStrategy(Evaluator):
 		self.valid_time = 0.0
 		self.total_time = 0.0
 
+	def _resolve_relation_index(self, relation: str) -> int:
+		"""Resolve relation variants used by preprocessing and inverse triplet generation."""
+
+		if relation in self.relation_to_idx:
+			return self.relation_to_idx[relation]
+		if relation.startswith('inverse '):
+			base_relation = relation[len('inverse '):]
+			if base_relation in self.relation_to_idx:
+				return self.relation_to_idx[base_relation]
+		if relation.startswith('inverse_'):
+			base_relation = relation[len('inverse_'):]
+			candidate = '_' + base_relation if not base_relation.startswith('_') else base_relation
+			if candidate in self.relation_to_idx:
+				return self.relation_to_idx[candidate]
+		normalized = ' '.join(relation.split())
+		if normalized in self.relation_to_idx:
+			return self.relation_to_idx[normalized]
+		raise KeyError(relation)
+
 	def _examples_to_tensors(self, examples) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 		"""Convert a list of examples into tensors of head, relation, and tail indices."""
 
 		head_indices = torch.tensor([self.entity_dict.entity_to_idx(example.head_id) for example in examples], dtype=torch.long)
-		relation_indices = torch.tensor([self.relation_to_idx[example.relation] for example in examples], dtype=torch.long)
+		relation_indices = torch.tensor([self._resolve_relation_index(example.relation) for example in examples], dtype=torch.long)
 		tail_indices = torch.tensor([self.entity_dict.entity_to_idx(example.tail_id) for example in examples], dtype=torch.long)
 		return head_indices, relation_indices, tail_indices
 
