@@ -42,7 +42,7 @@ class PointwiseStrategy:
             self.encoder.cuda()
         self.device = next(self.encoder.parameters()).device
 
-    def train_epoch(self, dataloader) -> float:
+    def train_epoch(self, dataloader, epoch: int) -> float:
         self.encoder.train()
         total_loss = 0.0
         step = 0
@@ -77,7 +77,7 @@ class PointwiseStrategy:
             step += 1
 
         avg_loss = total_loss / max(step, 1)
-        logger.info(f"Train | Loss: {avg_loss:.4f}")
+        logger.info(f"[EPOCH {epoch + 1}] Train | Loss: {avg_loss:.4f}")
         return avg_loss
 
     @torch.no_grad()
@@ -100,7 +100,7 @@ class PointwiseStrategy:
             if forward_metrics and backward_metrics:
                 mrr = (forward_metrics.get('mrr', 0) + backward_metrics.get('mrr', 0)) / 2
                 metric_dict['mrr'] = mrr
-                logger.info(f"[EPOCH {epoch}] Valid | MRR: {mrr:.4f}")
+                logger.info(f"[EPOCH {epoch + 1}] Valid | MRR: {mrr:.4f}")
 
         return metric_dict
 
@@ -110,7 +110,7 @@ class PointwiseStrategy:
         total_start = time.time()
         for epoch in range(getattr(self.args, 'epochs', 1)):
             epoch_start = time.time()
-            train_loss = self.train_epoch(train_dataloader)
+            train_loss = self.train_epoch(train_dataloader, epoch)
             self.train_time += time.time() - epoch_start
 
             if (epoch + 1) % getattr(self.args, 'eval_every_n_step', 50) == 0:
@@ -134,7 +134,6 @@ class PointwiseStrategy:
             'train_time': self.train_time,
             'valid_time': self.valid_time,
             'total_time': self.total_time,
-            'best_checkpoint_path': self.best_checkpoint_path,
         }
 
 Strategy = PointwiseStrategy

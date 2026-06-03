@@ -236,8 +236,8 @@ class SimKGCStrategy(Trainer, Evaluator):
                 self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=False)
             if forward_metrics and backward_metrics:
                 metric_dict['mrr'] = round((forward_metrics.get('mrr', 0) + backward_metrics.get('mrr', 0)) / 2, 4)
-                logger.info(f"[EPOCH {epoch}] Validation link-pred MRR(avg): {metric_dict['mrr']}")
+                logger.info(f"[EPOCH {epoch + 1}] Validation link-pred MRR(avg): {metric_dict['mrr']}")
 
         if metric_dict:
-            logger.info('Epoch {}, valid metric: {}'.format(epoch, json.dumps(metric_dict)))
+            logger.info('[EPOCH %d] Valid | Metrics: %s', epoch + 1, json.dumps(metric_dict))
         return metric_dict

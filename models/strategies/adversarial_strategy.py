@@ -65,7 +65,7 @@ class AdversarialStrategy:
             return metric_dict["mrr"]
         return -float(train_loss)
 
-    def train_epoch(self, dataloader: Iterable) -> float:
+    def train_epoch(self, dataloader: Iterable, epoch: int) -> float:
         """Train the model for one epoch and return the average training loss."""
 
         self.encoder.train()
@@ -96,7 +96,7 @@ class AdversarialStrategy:
             total_loss += float(loss.item())
 
         avg_loss = total_loss / max(step, 1)
-        logger.info("Train | Loss: %.4f", avg_loss)
+        logger.info("[EPOCH %s] Train | Loss: %.4f", epoch + 1, avg_loss)
         return avg_loss
 
     @torch.no_grad()
@@ -151,7 +151,7 @@ class AdversarialStrategy:
         total_start = time.time()
         for epoch in range(max(getattr(self.args, "epochs", 1), 1)):
             train_start = time.time()
-            train_loss = self.train_epoch(self._iter_train_batches())
+            train_loss = self.train_epoch(self._iter_train_batches(), epoch)
             self.train_time += time.time() - train_start
 
             eval_start = time.time()
@@ -187,7 +187,6 @@ class AdversarialStrategy:
             "train_time": self.train_time,
             "valid_time": self.valid_time,
             "total_time": self.total_time,
-            "best_checkpoint_path": self.best_checkpoint_path,
         }
 
 
