@@ -17,7 +17,9 @@
 
   "dim": 100,
   "lr": 0.1,
-  "batch_size": 512,
+  "batch_size": 256,
+  "max_uniformity_samples": 256,
+  "use_amp": true,
   "epochs": 400,
   "weight_decay": 0.0001,
   "optim": "adagrad",
