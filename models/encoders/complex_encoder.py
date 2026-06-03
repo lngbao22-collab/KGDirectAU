@@ -8,6 +8,7 @@ from typing import Sequence
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from data.dataset import Example, load_data
 from data.dict_hub import get_entity_dict
@@ -36,13 +37,44 @@ class ComplExEncoder(nn.Module):
 		self.ent_im_embed = nn.Embedding(n_ent, args.dim)
 		self.entity_dict = get_entity_dict()
 		self.rel_to_idx = _load_relation_to_idx(args)
+		self.normalize_lp_scores = getattr(
+			args,
+			'normalize_lp_scores',
+			str(getattr(args, 'model', '')).endswith('-AU'),
+		)
 		scale = (args.dim / sigma ** 2) ** (1 / 6)
 		for param in self.parameters():
 			param.data.div_(scale)
 
-	def forward(self, src, rel, dst) -> torch.Tensor:
-		"""Return raw ComplEx scores for the provided triples."""
+	def _query_vectors(self, head_indices: torch.Tensor, relation_indices: torch.Tensor) -> torch.Tensor:
+		"""ComplEx query embeddings used for AU training and normalized link prediction."""
 
+		h_re = self.ent_re_embed(head_indices)
+		h_im = self.ent_im_embed(head_indices)
+		r_re = self.rel_re_embed(relation_indices)
+		r_im = self.rel_im_embed(relation_indices)
+		return torch.cat([h_re * r_re - h_im * r_im, h_re * r_im + h_im * r_re], dim=-1)
+
+	def _target_vectors(self, tail_indices: torch.Tensor) -> torch.Tensor:
+		"""ComplEx target embeddings (concatenated real/imag entity parts)."""
+
+		return torch.cat([self.ent_re_embed(tail_indices), self.ent_im_embed(tail_indices)], dim=-1)
+
+	def _link_prediction_scores(self, query_vectors: torch.Tensor, candidate_vectors: torch.Tensor) -> torch.Tensor:
+		"""Dot-product scores; L2-normalize when training uses AU loss on unit vectors."""
+
+		if self.normalize_lp_scores:
+			query_vectors = F.normalize(query_vectors, p=2, dim=-1)
+			candidate_vectors = F.normalize(candidate_vectors, p=2, dim=-1)
+		return torch.mm(query_vectors, candidate_vectors.t())
+
+	def forward(self, src, rel, dst) -> torch.Tensor:
+		"""Return ComplEx scores for the provided triples."""
+
+		if self.normalize_lp_scores:
+			query_vectors = self._query_vectors(src, rel)
+			candidate_vectors = self._target_vectors(dst)
+			return self._link_prediction_scores(query_vectors, candidate_vectors).diag()
 		return (
 			torch.sum(self.rel_re_embed(rel) * self.ent_re_embed(src) * self.ent_re_embed(dst), dim=-1)
 			+ torch.sum(self.rel_re_embed(rel) * self.ent_im_embed(src) * self.ent_im_embed(dst), dim=-1)
@@ -68,15 +100,10 @@ class ComplExEncoder(nn.Module):
 	def get_queries_targets(self, src, rel, dst) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 		"""Return query, target, and head embeddings for AU training."""
 
-		
 		h_re = self.ent_re_embed(src)
 		h_im = self.ent_im_embed(src)
-		r_re = self.rel_re_embed(rel)
-		r_im = self.rel_im_embed(rel)
-		t_re = self.ent_re_embed(dst)
-		t_im = self.ent_im_embed(dst)
-		q = torch.cat([h_re * r_re - h_im * r_im, h_re * r_im + h_im * r_re], dim=-1)
-		t = torch.cat([t_re, t_im], dim=-1)
+		q = self._query_vectors(src, rel)
+		t = self._target_vectors(dst)
 		h = torch.cat([h_re, h_im], dim=-1)
 		return q, t, h
 
@@ -132,13 +159,9 @@ class ComplExEncoder(nn.Module):
 		head_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
 		relation_indices = _as_index_tensor(relations, self._relation_to_idx, device)
 		candidate_indices = _as_index_tensor(tail_entity_ids, self.entity_dict.entity_to_idx, device)
-		h_re = self.ent_re_embed(head_indices)
-		h_im = self.ent_im_embed(head_indices)
-		r_re = self.rel_re_embed(relation_indices)
-		r_im = self.rel_im_embed(relation_indices)
-		query_vectors = torch.cat([h_re * r_re - h_im * r_im, h_re * r_im + h_im * r_re], dim=-1)
+		query_vectors = self._query_vectors(head_indices, relation_indices)
 		candidate_vectors = self.entity_embeddings(device=device)[candidate_indices]
-		return torch.mm(query_vectors, candidate_vectors.t())
+		return self._link_prediction_scores(query_vectors, candidate_vectors)
 
 	def _relation_to_idx(self, relation: str) -> int:
 		"""Resolve relation variants used by preprocessing and inverse triplet generation."""
@@ -180,7 +203,7 @@ class ComplExEncoder(nn.Module):
 				target_vectors = output_dict.get('tail_vector')
 			if query_vectors is None or target_vectors is None:
 				raise KeyError('Output dict must contain query and target vectors')
-			return {'logits': torch.mm(query_vectors, target_vectors.t())}
+			return {'logits': self._link_prediction_scores(query_vectors, target_vectors)}
 
 		raise TypeError('Unsupported model output type for logits computation')
 

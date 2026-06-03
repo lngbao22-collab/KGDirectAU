@@ -29,5 +29,6 @@
   "gamma_t": 1.0,
   "gamma_h": 1.0,
   "gamma_ent": 1.0,
+  "normalize_lp_scores": true,
   "tuni": 6.0
 }
