@@ -6,7 +6,8 @@ from torch import optim
 from base.evaluator import Evaluator
 from data.dict_hub import get_entity_dict
 from data.dataset import load_data, Example, reverse_triplet
-from utils.checkpoint import save_checkpoint, best_model_path
+from utils.checkpoint import best_model_path, last_model_path, save_checkpoint
+from utils.device import get_model_obj
 from utils.logger import logger
 
 from models.samplers.uniform_pointwise_sampler import get_pointwise_negatives
@@ -104,36 +105,69 @@ class PointwiseStrategy:
 
         return metric_dict
 
+    def _validation_interval(self) -> int:
+        """Epochs between validation runs (``epoch_per_eval``; 0 or unset → every epoch)."""
+
+        raw = getattr(self.args, 'epoch_per_eval', None)
+        interval = int(raw) if raw is not None else 1
+        if interval <= 0:
+            return 1
+        return interval
+
+    def _should_evaluate(self, epoch: int, total_epochs: int) -> bool:
+        """Return True when validation should run after this epoch."""
+
+        interval = self._validation_interval()
+        epoch_number = epoch + 1
+        return epoch_number % interval == 0 or epoch_number >= total_epochs
+
     def train_loop(self, train_dataloader):
         import time
 
+        total_epochs = max(getattr(self.args, 'epochs', 1), 1)
         total_start = time.time()
-        for epoch in range(getattr(self.args, 'epochs', 1)):
+        for epoch in range(total_epochs):
             epoch_start = time.time()
             train_loss = self.train_epoch(train_dataloader, epoch)
             self.train_time += time.time() - epoch_start
 
-            if (epoch + 1) % getattr(self.args, 'eval_every_n_step', 50) == 0:
+            metric_dict = {}
+            if self._should_evaluate(epoch, total_epochs):
                 eval_start = time.time()
                 metric_dict = self.eval_epoch(epoch)
                 self.valid_time += time.time() - eval_start
 
-                monitor_value = metric_dict.get('mrr', -train_loss)
-                is_best = self.best_metric is None or monitor_value > self.best_metric.get('score', float('-inf'))
-                if is_best:
-                    self.best_metric = {'score': monitor_value, 'epoch': epoch}
-                    saved_checkpoint_path = save_checkpoint({'state_dict': self.encoder.state_dict(), 'args': self.args.__dict__}, is_best=True, filename=best_model_path(self.args.output_dir))
-                    self.best_checkpoint_path = best_model_path(self.args.output_dir)
-                elif self.best_checkpoint_path is None:
-                    self.best_checkpoint_path = best_model_path(self.args.output_dir)
+            monitor_value = metric_dict.get('mrr', -train_loss)
+            is_best = self.best_metric is None or monitor_value > self.best_metric.get('score', float('-inf'))
+            if is_best:
+                self.best_metric = {'score': monitor_value, 'metrics': metric_dict, 'epoch': epoch}
+
+            saved_checkpoint_path = save_checkpoint(
+                {
+                    'epoch': epoch,
+                    'best_epoch': epoch if is_best else None,
+                    'best_metric': self.best_metric,
+                    'args': self.args.__dict__,
+                    'state_dict': get_model_obj(self.encoder).state_dict(),
+                },
+                is_best=is_best,
+                filename=last_model_path(self.args.output_dir),
+            )
+            if is_best:
+                self.best_checkpoint_path = best_model_path(self.args.output_dir)
+            elif self.best_checkpoint_path is None:
+                self.best_checkpoint_path = saved_checkpoint_path
 
         self.total_time = time.time() - total_start
+        if self.best_checkpoint_path is None or not os.path.exists(self.best_checkpoint_path):
+            self.best_checkpoint_path = last_model_path(self.args.output_dir)
         return {
             'best_epoch': None if self.best_metric is None else self.best_metric.get('epoch', 0) + 1,
             'best_mrr': None if self.best_metric is None else self.best_metric.get('score'),
             'train_time': self.train_time,
             'valid_time': self.valid_time,
             'total_time': self.total_time,
+            'best_checkpoint_path': self.best_checkpoint_path,
         }
 
 Strategy = PointwiseStrategy

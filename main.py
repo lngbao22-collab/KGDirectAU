@@ -13,7 +13,7 @@ from data.dict_hub import get_entity_dict, get_relation_id_map
 from models.builder import import_module_from_path, load_attr_from_path
 from models.samplers.bernoulli_sampler import BernoulliListwiseSampler
 from utils.device import init_hardware
-from utils.checkpoint import best_model_path
+from utils.checkpoint import best_model_path, last_model_path
 from utils.logger import setup_logger, write_results_report
 
 
@@ -258,6 +258,8 @@ def main():
         train_summary = trainer.train_loop(train_dataloader)
         evaluator = Evaluator(args)
         eval_model_path = train_summary.get('best_checkpoint_path') or best_model_path(args.output_dir)
+        if not os.path.exists(eval_model_path):
+            eval_model_path = last_model_path(args.output_dir)
         evaluator.load(eval_model_path)
         test_start = time.time()
         link_metrics = None
