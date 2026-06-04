@@ -328,7 +328,7 @@ class Evaluator:
 
             if hasattr(model, 'prepare_link_prediction_queries') and hasattr(model, 'score_link_prediction_full'):
                 query_cache = model.prepare_link_prediction_queries(head_ids, relations)
-                score = model.score_link_prediction_full(query_cache)
+                score = model.score_link_prediction_full(query_cache).clone()
                 if score.size(0) != len(examples) or score.size(1) != len(all_entity_ids):
                     raise RuntimeError('DaBR fast link-prediction score matrix has unexpected shape')
             else:
