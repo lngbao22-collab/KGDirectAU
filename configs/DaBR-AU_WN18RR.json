@@ -21,7 +21,7 @@
   "lr": 0.1,
   "weight_decay": 0.1,
   
-  "eval_every_n_step": 400,
+ "epoch_per_eval": 1,
 
   "gamma_q": 1.0,
   "gamma_t": 1.0,

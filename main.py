@@ -7,8 +7,8 @@ import torch
 
 from configs.config import args
 from base.evaluator import Evaluator
-from data.dataset import Dataset, load_data
-from data.dataloader import collate
+from data.dataset import Dataset, PointwiseDataset, load_data
+from data.dataloader import collate, collate_pointwise
 from data.dict_hub import get_entity_dict, get_relation_id_map
 from models.builder import import_module_from_path, load_attr_from_path
 from models.samplers.bernoulli_sampler import BernoulliListwiseSampler
@@ -193,14 +193,14 @@ def _build_pointwise_trainer(current_args):
         model.cuda()
 
     train_examples = load_data(current_args.train_path, add_forward_triplet=True, add_backward_triplet=False)
-    train_dataset = Dataset(path=current_args.train_path, task=current_args.dataset, examples=train_examples)
+    train_dataset = PointwiseDataset(train_examples)
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=max(getattr(current_args, 'batch_size', 1), 1),
         shuffle=True,
-        collate_fn=collate,
-        num_workers=getattr(current_args, 'workers', 2),
-        pin_memory=True,
+        collate_fn=collate_pointwise,
+        num_workers=getattr(current_args, 'workers', 0),
+        pin_memory=torch.cuda.is_available(),
         drop_last=True,
     )
     return strategy_cls(model, current_args), train_dataloader

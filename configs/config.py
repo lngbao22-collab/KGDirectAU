@@ -452,7 +452,11 @@ assert args.lr_scheduler in ['linear', 'cosine']
 args.config_path = config_path
 
 _model_name = (args.model or '').lower()
-_is_text_model = _model_name not in {'distmult', 'distmult-au', 'complex', 'complex-au', 'dabr', 'dabr-au'}
+_NON_TEXT_MODELS = frozenset({
+    'distmult', 'distmult-au', 'complex', 'complex-au', 'dabr', 'dabr-au',
+    'rotate', 'rotate-au', 'protate', 'protate-au',
+})
+_is_text_model = _model_name not in _NON_TEXT_MODELS
 
 if _is_text_model:
     args.encoder = args.bert_encoder

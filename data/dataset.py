@@ -387,6 +387,19 @@ class Dataset(torch.utils.data.dataset.Dataset):
 		return self.examples[index].vectorize()
 
 
+class PointwiseDataset(torch.utils.data.dataset.Dataset):
+	"""Dataset for embedding models (e.g. DaBR) that only need Example objects, not token ids."""
+
+	def __init__(self, examples):
+		self.examples = examples
+
+	def __len__(self) -> int:
+		return len(self.examples)
+
+	def __getitem__(self, index) -> dict:
+		return {'obj': self.examples[index]}
+
+
 def load_data(path: str, add_forward_triplet: bool = True, add_backward_triplet: bool = True) -> List[Example]:
 	"""Load examples from a given path, which can be in JSON or TXT format, and return a list of Example objects. The function also supports adding forward and backward triplets based on the specified flags."""
 
