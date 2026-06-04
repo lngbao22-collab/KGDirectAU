@@ -1,5 +1,6 @@
 """DaBR encoder adapted from classic DaBR implementation."""
 
+from contextlib import nullcontext
 import json
 import os
 
@@ -9,6 +10,24 @@ import torch.nn as nn
 from base.model import BaseModel
 from data.dataset import load_data
 from data.dict_hub import get_entity_dict
+
+
+def _eval_use_amp(config) -> bool:
+    """Whether link-prediction scoring should run under CUDA autocast."""
+
+    if not torch.cuda.is_available():
+        return False
+    if bool(getattr(config, 'eval_use_amp', False)):
+        return True
+    return bool(getattr(config, 'use_amp', False))
+
+
+def _autocast_context(config):
+    """Return a CUDA autocast context when eval AMP is enabled."""
+
+    if _eval_use_amp(config):
+        return torch.amp.autocast(device_type='cuda')
+    return nullcontext()
 
 
 def build_model(args) -> nn.Module:
@@ -169,6 +188,33 @@ class DaBREncoder(BaseModel):
         r_inv = DaBREncoder.get_inv(r)
         return {'h': h, 'dr': dr, 'hr': hr, 'r_inv': r_inv, 'para': self.para}
 
+    def _score_query_candidate_block(
+        self,
+        h_chunk: torch.Tensor,
+        dr_chunk: torch.Tensor,
+        hr_chunk: torch.Tensor,
+        r_inv_chunk: torch.Tensor,
+        t_candidates: torch.Tensor,
+        para: torch.Tensor,
+    ) -> torch.Tensor:
+        """Score a query block against a candidate block without OOM from full Q×C expansion."""
+
+        q_size, num_candidates = h_chunk.size(0), t_candidates.size(0)
+        if q_size == 0 or num_candidates == 0:
+            return torch.empty(q_size, num_candidates, device=h_chunk.device)
+
+        t_rep = t_candidates.unsqueeze(0).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
+        h_rep = h_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
+        dr_rep = dr_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
+        hr_rep = hr_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
+        r_inv_rep = r_inv_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
+
+        with _autocast_context(self.config):
+            block_scores = DaBREncoder._calc_from_hr(
+                h_rep, t_rep, dr_rep, hr_rep, r_inv_rep, para,
+            )
+        return block_scores.reshape(q_size, num_candidates).float()
+
     @torch.inference_mode()
     def score_link_prediction_candidates(
         self,
@@ -196,30 +242,45 @@ class DaBREncoder(BaseModel):
             return torch.empty(num_queries, num_candidates, device=device)
 
         if query_chunk_size is None:
-            query_chunk_size = getattr(self.config, 'score_query_chunk_size', 256)
+            query_chunk_size = getattr(self.config, 'score_query_chunk_size', 128)
         query_chunk_size = max(int(query_chunk_size), 1)
+        candidate_chunk_size = int(getattr(self.config, 'eval_candidate_chunk_size', 512))
+        candidate_chunk_size = max(candidate_chunk_size, 1)
 
-        score_rows = []
-        for start in range(0, num_queries, query_chunk_size):
-            end = min(start + query_chunk_size, num_queries)
-            h_chunk = h[start:end]
-            dr_chunk = dr[start:end]
-            hr_chunk = hr[start:end]
-            r_inv_chunk = r_inv[start:end]
-            q_size = h_chunk.size(0)
+        scores = torch.empty(num_queries, num_candidates, device=device, dtype=torch.float32)
+        for cand_start in range(0, num_candidates, candidate_chunk_size):
+            cand_end = min(cand_start + candidate_chunk_size, num_candidates)
+            t_block = t[cand_start:cand_end]
+            for q_start in range(0, num_queries, query_chunk_size):
+                q_end = min(q_start + query_chunk_size, num_queries)
+                try:
+                    block = self._score_query_candidate_block(
+                        h[q_start:q_end],
+                        dr[q_start:q_end],
+                        hr[q_start:q_end],
+                        r_inv[q_start:q_end],
+                        t_block,
+                        para,
+                    )
+                except torch.OutOfMemoryError:
+                    if device.type == 'cuda':
+                        torch.cuda.empty_cache()
+                    half_q = max(query_chunk_size // 2, 1)
+                    for sub_start in range(q_start, q_end, half_q):
+                        sub_end = min(sub_start + half_q, q_end)
+                        block_part = self._score_query_candidate_block(
+                            h[sub_start:sub_end],
+                            dr[sub_start:sub_end],
+                            hr[sub_start:sub_end],
+                            r_inv[sub_start:sub_end],
+                            t_block,
+                            para,
+                        )
+                        scores[sub_start:sub_end, cand_start:cand_end] = block_part
+                    continue
+                scores[q_start:q_end, cand_start:cand_end] = block
 
-            t_rep = t.unsqueeze(0).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
-            h_rep = h_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
-            dr_rep = dr_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
-            hr_rep = hr_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
-            r_inv_rep = r_inv_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
-
-            chunk_scores = DaBREncoder._calc_from_hr(
-                h_rep, t_rep, dr_rep, hr_rep, r_inv_rep, para,
-            ).reshape(q_size, num_candidates)
-            score_rows.append(chunk_scores)
-
-        return torch.cat(score_rows, dim=0)
+        return scores
 
     def score_batch(self, head_ids, relations, tail_entity_ids, query_chunk_size: int | None = None) -> torch.Tensor:
         """Score queries against candidate tails (builds a fresh query cache)."""

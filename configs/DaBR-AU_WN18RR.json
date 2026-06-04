@@ -23,7 +23,9 @@
   
   "epoch_per_eval": 1,
   "eval_entity_chunk_size": 4096,
-  "score_query_chunk_size": 256,
+  "eval_candidate_chunk_size": 512,
+  "score_query_chunk_size": 128,
+  "use_amp": true,
 
   "gamma_q": 1.0,
   "gamma_t": 1.0,

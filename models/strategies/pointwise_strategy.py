@@ -108,6 +108,8 @@ class PointwiseStrategy:
         import time
 
         self.encoder.eval()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         metric_dict = {}
         valid_exs, valid_backward_exs = self._get_valid_examples()
         if not valid_exs:
