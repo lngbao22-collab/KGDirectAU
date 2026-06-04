@@ -222,7 +222,113 @@ class DaBREncoder(BaseModel):
         hr = DaBREncoder.vec_vec_wise_multiplication(h, r)
         r_inv = DaBREncoder.get_inv(r)
         r_inv_norm = DaBREncoder.normalization(r_inv)
-        return {'h': h, 'dr': dr, 'hr': hr, 'r_inv': r_inv, 'r_inv_norm': r_inv_norm, 'para': self.para}
+        return {
+            'h': h,
+            'dr': dr,
+            'hr': hr,
+            'r_inv': r_inv,
+            'r_inv_norm': r_inv_norm,
+            'relation_indices': relation_indices,
+            'para': self.para,
+        }
+
+    def _precompute_tail_relation_matrix(self, relation_index: int, entity_weight: torch.Tensor) -> torch.Tensor:
+        """Precompute ``tr`` for every entity under one relation (``t ⊗ r^{-1}``)."""
+
+        device = entity_weight.device
+        rel_tensor = torch.tensor([relation_index], device=device, dtype=torch.long)
+        r = self.rel_embeddings(rel_tensor)
+        r_inv_norm = DaBREncoder.normalization(DaBREncoder.get_inv(r))
+        entity_chunk = int(getattr(self.config, 'eval_entity_chunk_size', 4096))
+        entity_chunk = max(entity_chunk, 1)
+
+        tail_rows = []
+        with _autocast_context(self.config):
+            for start in range(0, entity_weight.size(0), entity_chunk):
+                end = min(start + entity_chunk, entity_weight.size(0))
+                t_chunk = entity_weight[start:end]
+                tr_chunk = DaBREncoder.vec_vec_wise_multiplication_q(
+                    t_chunk,
+                    r_inv_norm.expand(t_chunk.size(0), -1),
+                )
+                tail_rows.append(tr_chunk.float())
+        return torch.cat(tail_rows, dim=0)
+
+    def _append_distance_scores(
+        self,
+        scores: torch.Tensor,
+        query_rows: torch.Tensor,
+        h_rows: torch.Tensor,
+        dr_rows: torch.Tensor,
+        entity_weight: torch.Tensor,
+        para: torch.Tensor,
+    ) -> None:
+        """Add the L1 distance term from DaBR scoring for a batch of queries."""
+
+        dist_chunk = int(getattr(self.config, 'eval_distance_chunk_size', 8192))
+        dist_chunk = max(dist_chunk, 1)
+        h_dr = h_rows + dr_rows
+        for start in range(0, entity_weight.size(0), dist_chunk):
+            end = min(start + dist_chunk, entity_weight.size(0))
+            ent_chunk = entity_weight[start:end]
+            hrt = h_dr.unsqueeze(1) - ent_chunk.unsqueeze(0)
+            s_d, x_d, y_d, z_d = torch.chunk(hrt, 4, dim=2)
+            score_d = (s_d + x_d + y_d + z_d).abs().sum(dim=2)
+            scores[query_rows, start:end] -= para * score_d
+
+    @torch.inference_mode()
+    def score_link_prediction_full(self, query_cache: dict) -> torch.Tensor:
+        """Score all queries against all entities (fast path grouped by relation)."""
+
+        if not bool(getattr(self.config, 'use_fast_link_prediction', True)):
+            return self._score_link_prediction_full_slow(query_cache)
+
+        device = self.ent_embeddings.weight.device
+        entity_weight = self.ent_embeddings.weight
+        n_ent = entity_weight.size(0)
+        n_queries = query_cache['h'].size(0)
+        scores = torch.zeros(n_queries, n_ent, device=device, dtype=torch.float32)
+        if n_queries == 0 or n_ent == 0:
+            return scores
+
+        relation_indices = query_cache['relation_indices']
+        hr = query_cache['hr']
+        h = query_cache['h']
+        dr = query_cache['dr']
+        para = query_cache['para']
+
+        tail_cache: dict[int, torch.Tensor] = {}
+        for rel_idx in torch.unique(relation_indices).tolist():
+            rel_idx = int(rel_idx)
+            query_rows = (relation_indices == rel_idx).nonzero(as_tuple=True)[0]
+            if query_rows.numel() == 0:
+                continue
+
+            if rel_idx not in tail_cache:
+                tail_cache[rel_idx] = self._precompute_tail_relation_matrix(rel_idx, entity_weight)
+            tail_matrix = tail_cache[rel_idx]
+
+            hr_group = hr[query_rows]
+            with _autocast_context(self.config):
+                score_s = -torch.sum(hr_group.unsqueeze(2) * tail_matrix.unsqueeze(0), dim=-1).float()
+            scores[query_rows] = score_s
+            self._append_distance_scores(
+                scores,
+                query_rows,
+                h[query_rows],
+                dr[query_rows],
+                entity_weight,
+                para,
+            )
+
+        return scores
+
+    def _score_link_prediction_full_slow(self, query_cache: dict) -> torch.Tensor:
+        """Fallback full-matrix scorer that reuses candidate chunking."""
+
+        n_queries = query_cache['h'].size(0)
+        n_ent = self.ent_embeddings.weight.size(0)
+        return self.score_link_prediction_candidates(query_cache, (0, n_ent))[:n_queries, :n_ent]
 
     def _score_query_candidate_block(
         self,
