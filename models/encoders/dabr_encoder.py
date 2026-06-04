@@ -30,6 +30,25 @@ def _autocast_context(config):
     return nullcontext()
 
 
+def _config_int(config, name: str, default: int) -> int:
+    """Read an integer config value, treating JSON/null as unset."""
+
+    value = getattr(config, name, default)
+    if value is None:
+        return default
+    return int(value)
+
+
+def _is_entity_index_slice(tail_entity_ids) -> bool:
+    """Return True when ``tail_entity_ids`` is an entity row slice ``(start, end)``."""
+
+    return (
+        isinstance(tail_entity_ids, tuple)
+        and len(tail_entity_ids) == 2
+        and not isinstance(tail_entity_ids[0], (list, str))
+    )
+
+
 def build_model(args) -> nn.Module:
     entity_dict = get_entity_dict()
     relation_to_idx = _load_relation_to_idx(args)
@@ -239,7 +258,7 @@ class DaBREncoder(BaseModel):
         rel_tensor = torch.tensor([relation_index], device=device, dtype=torch.long)
         r = self.rel_embeddings(rel_tensor)
         r_inv_norm = DaBREncoder.normalization(DaBREncoder.get_inv(r))
-        entity_chunk = int(getattr(self.config, 'eval_entity_chunk_size', 4096))
+        entity_chunk = _config_int(self.config, 'eval_entity_chunk_size', 4096)
         entity_chunk = max(entity_chunk, 1)
 
         tail_rows = []
@@ -295,7 +314,7 @@ class DaBREncoder(BaseModel):
         para = query_cache['para']
 
         tail_cache: dict[int, torch.Tensor] = {}
-        dist_chunk = int(getattr(self.config, 'eval_distance_chunk_size', 8192))
+        dist_chunk = _config_int(self.config, 'eval_distance_chunk_size', 8192)
         dist_chunk = max(dist_chunk, 1)
         para_scalar = para.squeeze() if para.dim() else para
 
@@ -391,9 +410,11 @@ class DaBREncoder(BaseModel):
             return torch.empty(num_queries, num_candidates, device=device)
 
         if query_chunk_size is None:
-            query_chunk_size = getattr(self.config, 'score_query_chunk_size', 256)
-        query_chunk_size = max(int(query_chunk_size), 1)
-        candidate_chunk_size = int(getattr(self.config, 'eval_candidate_chunk_size', 1024))
+            query_chunk_size = _config_int(self.config, 'score_query_chunk_size', 256)
+        else:
+            query_chunk_size = int(query_chunk_size)
+        query_chunk_size = max(query_chunk_size, 1)
+        candidate_chunk_size = _config_int(self.config, 'eval_candidate_chunk_size', 1024)
         candidate_chunk_size = max(candidate_chunk_size, 1)
 
         scores = torch.empty(num_queries, num_candidates, device=device, dtype=torch.float32)
@@ -431,8 +452,31 @@ class DaBREncoder(BaseModel):
 
         return scores
 
+    @torch.inference_mode()
+    def _score_paired_triples(self, head_ids, relations, tail_ids) -> torch.Tensor:
+        """Score one (head, relation, tail) triple per row — used for triple classification."""
+
+        device = self.ent_embeddings.weight.device
+        head_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
+        relation_indices = _as_index_tensor(relations, self._relation_to_idx, device)
+        tail_indices = _as_index_tensor(tail_ids, self.entity_dict.entity_to_idx, device)
+
+        h = self.ent_embeddings(head_indices)
+        r = self.rel_embeddings(relation_indices)
+        t = self.ent_embeddings(tail_indices)
+        dr = self.Dr(relation_indices)
+        with _autocast_context(self.config):
+            scores = DaBREncoder._calc(h, r, t, dr, self.para)
+        return scores.float()
+
     def score_batch(self, head_ids, relations, tail_entity_ids, query_chunk_size: int | None = None) -> torch.Tensor:
-        """Score queries against candidate tails (builds a fresh query cache)."""
+        """Score queries against candidate tails, or paired triples when lengths match."""
+
+        if (
+            not _is_entity_index_slice(tail_entity_ids)
+            and len(head_ids) == len(relations) == len(tail_entity_ids)
+        ):
+            return self._score_paired_triples(head_ids, relations, tail_entity_ids)
 
         query_cache = self.prepare_link_prediction_queries(head_ids, relations)
         return self.score_link_prediction_candidates(query_cache, tail_entity_ids, query_chunk_size)
