@@ -33,7 +33,7 @@
   "is_test": false,
 
   "pre_batch_weight": 0.5,
-  "eval_every_n_step": 10000,
+  "epoch_per_eval": 1,
   "print_freq": 20,
   "grad_clip": 10.0,
   "use_amp": true,
