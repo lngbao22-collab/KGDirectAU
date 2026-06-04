@@ -52,12 +52,16 @@ def _config_int(args, name: str, default: int) -> int:
 
 
 def _embedding_dim_for_memory(args) -> int:
-	"""Estimate per-vector width for training memory heuristics (DaBR uses 4 * dim)."""
+	"""Estimate per-vector width of the AU (q, t) vectors for training memory heuristics.
+
+	DaBR ``get_queries_targets`` returns concat([h⊗r, h+Dr], dim=-1), i.e. two 4*dim
+	quaternion vectors → effective AU vector width = 2 * 4 * dim = 8 * dim.
+	"""
 
 	dim = _config_int(args, 'dim', 0) or _config_int(args, 'hidden_size', 0)
 	encoder_path = str(getattr(args, 'model_encoder_path', '') or '').lower()
 	if 'dabr' in encoder_path:
-		return 4 * max(dim, 1)
+		return 8 * max(dim, 1)  # two 4*dim quaternion vectors concatenated
 	return max(dim, 1)
 
 
@@ -313,15 +317,22 @@ class KGAUStrategy(Evaluator):
 		return None
 
 	def _train_micro_batch_size(self, batch_size: int) -> int:
-		"""Split large batches so quaternion / high-dim AU steps fit in GPU memory."""
+		"""Split large batches so high-dim AU backward steps fit in GPU memory.
+
+		The AU vector width (from ``get_queries_targets``) drives memory:
+		- DaBR: 8*dim per vector (two 4*dim quaternion vectors concatenated)
+		- Others: embedding dim
+		"""
 
 		explicit = getattr(self.args, 'train_micro_batch_size', None)
 		if explicit is not None:
 			return max(int(explicit), 1)
-		emb_dim = _embedding_dim_for_memory(self.args)
-		if emb_dim >= 2000 and batch_size > 128:
+		au_dim = _embedding_dim_for_memory(self.args)
+		if au_dim >= 4000 and batch_size > 64:
+			return 64
+		if au_dim >= 2000 and batch_size > 128:
 			return 128
-		if emb_dim >= 800 and batch_size > 256:
+		if au_dim >= 800 and batch_size > 256:
 			return 256
 		return batch_size
 

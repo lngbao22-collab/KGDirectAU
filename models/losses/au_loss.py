@@ -88,9 +88,10 @@ class KGAULoss(nn.Module):
 		if full_pairs <= 0:
 			return 0
 		max_samples = int(getattr(self, 'max_uniformity_samples', 0) or 0)
-		# `pdist` backward can require O(n^2 * dim) workspace; avoid when that exceeds ~256 MiB.
-		pdist_budget = 256 * 1024 * 1024
-		if num_rows * num_rows * max(dim, 1) * 4 <= pdist_budget:
+		# `pdist` backward requires O(n^2 * dim) intermediate storage; budget 32 MiB to stay safe
+		# across high-dim AU vectors (e.g. DaBR concatenates two 2000-D vectors → 4000-D).
+		pdist_budget = 32 * 1024 * 1024
+		if num_rows * num_rows * max(dim, 1) * 2 <= pdist_budget:  # assume fp16 (×2 bytes)
 			return full_pairs
 		pair_cap = int(getattr(self, 'max_uniformity_pairs', 0) or 0)
 		if pair_cap <= 0:
