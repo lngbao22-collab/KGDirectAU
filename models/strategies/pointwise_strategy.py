@@ -42,6 +42,28 @@ class PointwiseStrategy:
         if torch.cuda.is_available():
             self.encoder.cuda()
         self.device = next(self.encoder.parameters()).device
+        self._valid_forward_exs = None
+        self._valid_backward_exs = None
+
+    def _get_valid_examples(self):
+        """Load and cache validation examples (forward + optional backward)."""
+
+        valid_path = getattr(self.args, 'valid_path', '')
+        if not valid_path or not os.path.exists(valid_path):
+            return None, None
+        if self._valid_forward_exs is None:
+            self._valid_forward_exs = load_data(valid_path, add_forward_triplet=True, add_backward_triplet=False)
+            self._valid_backward_exs = [
+                Example(**reverse_triplet({
+                    'head_id': ex.head_id,
+                    'head': ex.head,
+                    'relation': ex.relation,
+                    'tail_id': ex.tail_id,
+                    'tail': ex.tail,
+                }))
+                for ex in self._valid_forward_exs
+            ]
+        return self._valid_forward_exs, self._valid_backward_exs
 
     def train_epoch(self, dataloader, epoch: int) -> float:
         self.encoder.train()
@@ -83,25 +105,35 @@ class PointwiseStrategy:
 
     @torch.no_grad()
     def eval_epoch(self, epoch):
+        import time
+
         self.encoder.eval()
         metric_dict = {}
+        valid_exs, valid_backward_exs = self._get_valid_examples()
+        if not valid_exs:
+            return metric_dict
+
         valid_path = getattr(self.args, 'valid_path', '')
+        valid_output_path = os.path.join(self.args.output_dir, 'valid_link_prediction.log')
 
-        if valid_path and os.path.exists(valid_path):
-            valid_exs = load_data(valid_path, add_forward_triplet=True, add_backward_triplet=False)
-            valid_backward_exs = [
-                Example(**reverse_triplet({'head_id': ex.head_id, 'head': ex.head, 'relation': ex.relation, 'tail_id': ex.tail_id, 'tail': ex.tail}))
-                for ex in valid_exs
-            ]
+        eval_start = time.time()
+        forward_metrics = self.evaluator.evaluate_link_prediction_inplace(
+            self.encoder, valid_path, self.entity_dict, valid_output_path,
+            eval_forward=True, examples=valid_exs,
+        )
+        backward_metrics = self.evaluator.evaluate_link_prediction_inplace(
+            self.encoder, valid_path, self.entity_dict, valid_output_path,
+            eval_forward=False, examples=valid_backward_exs,
+        )
+        eval_seconds = time.time() - eval_start
 
-            valid_output_path = os.path.join(self.args.output_dir, 'valid_link_prediction.log')
-            forward_metrics = self.evaluator.evaluate_link_prediction_inplace(self.encoder, valid_path, self.entity_dict, valid_output_path, eval_forward=True, examples=valid_exs)
-            backward_metrics = self.evaluator.evaluate_link_prediction_inplace(self.encoder, valid_path, self.entity_dict, valid_output_path, eval_forward=False, examples=valid_backward_exs)
-
-            if forward_metrics and backward_metrics:
-                mrr = (forward_metrics.get('mrr', 0) + backward_metrics.get('mrr', 0)) / 2
-                metric_dict['mrr'] = mrr
-                logger.info(f"[EPOCH {epoch + 1}] Valid | MRR: {mrr:.4f}")
+        if forward_metrics and backward_metrics:
+            mrr = (forward_metrics.get('mrr', 0) + backward_metrics.get('mrr', 0)) / 2
+            metric_dict['mrr'] = mrr
+            logger.info(
+                '[EPOCH %s] Valid | MRR: %.4f (fwd=%.4f, bwd=%.4f, eval_s=%.1f)',
+                epoch + 1, mrr, forward_metrics.get('mrr', 0.0), backward_metrics.get('mrr', 0.0), eval_seconds,
+            )
 
         return metric_dict
 

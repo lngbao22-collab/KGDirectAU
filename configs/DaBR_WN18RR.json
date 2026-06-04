@@ -24,8 +24,8 @@
   "relation_reg_weight": 0.01,
   
   "epoch_per_eval": 1,
-  "eval_entity_chunk_size": 2048,
-  "score_query_chunk_size": 128,
+  "eval_entity_chunk_size": 4096,
+  "score_query_chunk_size": 256,
   "optim": "adagrad",
   
   "n_sample": 5

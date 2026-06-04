@@ -321,14 +321,38 @@ class Evaluator:
             if entity_chunk_size is None:
                 entity_chunk_size = getattr(model.config, 'eval_entity_chunk_size', None) if hasattr(model, 'config') else None
             if entity_chunk_size is None:
-                entity_chunk_size = max(batch_size, 2048)
+                entity_chunk_size = max(batch_size, 4096)
             entity_chunk_size = max(int(entity_chunk_size), 1)
             head_ids = [ex.head_id for ex in examples]
             relations = [ex.relation for ex in examples]
-            for start in range(0, len(all_entity_ids), entity_chunk_size):
-                end = min(start + entity_chunk_size, len(all_entity_ids))
-                entity_chunk = all_entity_ids[start:end]
-                chunk_score = model.score_batch(head_ids, relations, entity_chunk)
+
+            entity_indices = getattr(model, '_cached_entity_indices', None)
+            if (
+                entity_indices is None
+                or entity_indices.device != score_device
+                or entity_indices.numel() != len(all_entity_ids)
+            ):
+                entity_indices = torch.tensor(
+                    [entity_dict.entity_to_idx(entity_id) for entity_id in all_entity_ids],
+                    dtype=torch.long,
+                    device=score_device,
+                )
+                model._cached_entity_indices = entity_indices
+
+            if hasattr(model, 'prepare_link_prediction_queries'):
+                query_cache = model.prepare_link_prediction_queries(head_ids, relations)
+                score_candidates = model.score_link_prediction_candidates
+            else:
+                query_cache = None
+                score_candidates = None
+
+            for start in range(0, entity_indices.size(0), entity_chunk_size):
+                end = min(start + entity_chunk_size, entity_indices.size(0))
+                if score_candidates is not None:
+                    chunk_score = score_candidates(query_cache, entity_indices[start:end])
+                else:
+                    entity_chunk = all_entity_ids[start:end]
+                    chunk_score = model.score_batch(head_ids, relations, entity_chunk)
                 if not isinstance(chunk_score, torch.Tensor):
                     chunk_score = torch.tensor(chunk_score, device=score_device)
                 score[:, start:end] = chunk_score

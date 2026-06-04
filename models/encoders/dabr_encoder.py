@@ -154,39 +154,58 @@ class DaBREncoder(BaseModel):
                 return {'logits': output_dict['scores']}
         raise TypeError('Unsupported model output type for logits computation')
 
-    def score_batch(self, head_ids, relations, tail_entity_ids, query_chunk_size: int | None = None) -> torch.Tensor:
-        """Score queries against candidate tails.
-
-        Precomputes ``hr`` and ``r_inv`` once per query (not per candidate) to avoid
-        redundant quaternion products during full link-prediction ranking.
-        """
+    @torch.inference_mode()
+    def prepare_link_prediction_queries(self, head_ids, relations) -> dict:
+        """Precompute query-side embeddings once per link-prediction eval direction."""
 
         device = self.ent_embeddings.weight.device
         head_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
         relation_indices = _as_index_tensor(relations, self._relation_to_idx, device)
-        candidate_indices = _as_index_tensor(tail_entity_ids, self.entity_dict.entity_to_idx, device)
 
         h = self.ent_embeddings(head_indices)
         r = self.rel_embeddings(relation_indices)
         dr = self.Dr(relation_indices)
-        t = self.ent_embeddings(candidate_indices)
+        hr = DaBREncoder.vec_vec_wise_multiplication(h, r)
+        r_inv = DaBREncoder.get_inv(r)
+        return {'h': h, 'dr': dr, 'hr': hr, 'r_inv': r_inv, 'para': self.para}
 
+    @torch.inference_mode()
+    def score_link_prediction_candidates(
+        self,
+        query_cache: dict,
+        tail_entity_ids,
+        query_chunk_size: int | None = None,
+    ) -> torch.Tensor:
+        """Score cached queries against a candidate tail set (entity indices or ids)."""
+
+        device = self.ent_embeddings.weight.device
+        h = query_cache['h']
+        dr = query_cache['dr']
+        hr = query_cache['hr']
+        r_inv = query_cache['r_inv']
+        para = query_cache['para']
+
+        if torch.is_tensor(tail_entity_ids):
+            candidate_indices = tail_entity_ids.to(device=device, dtype=torch.long)
+        else:
+            candidate_indices = _as_index_tensor(tail_entity_ids, self.entity_dict.entity_to_idx, device)
+
+        t = self.ent_embeddings.weight.index_select(0, candidate_indices)
         num_queries, num_candidates = h.size(0), t.size(0)
         if num_queries == 0 or num_candidates == 0:
             return torch.empty(num_queries, num_candidates, device=device)
 
         if query_chunk_size is None:
-            query_chunk_size = getattr(self.config, 'score_query_chunk_size', 128)
+            query_chunk_size = getattr(self.config, 'score_query_chunk_size', 256)
         query_chunk_size = max(int(query_chunk_size), 1)
 
         score_rows = []
         for start in range(0, num_queries, query_chunk_size):
             end = min(start + query_chunk_size, num_queries)
             h_chunk = h[start:end]
-            r_chunk = r[start:end]
             dr_chunk = dr[start:end]
-            hr_chunk = DaBREncoder.vec_vec_wise_multiplication(h_chunk, r_chunk)
-            r_inv_chunk = DaBREncoder.get_inv(r_chunk)
+            hr_chunk = hr[start:end]
+            r_inv_chunk = r_inv[start:end]
             q_size = h_chunk.size(0)
 
             t_rep = t.unsqueeze(0).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
@@ -196,11 +215,17 @@ class DaBREncoder(BaseModel):
             r_inv_rep = r_inv_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
 
             chunk_scores = DaBREncoder._calc_from_hr(
-                h_rep, t_rep, dr_rep, hr_rep, r_inv_rep, self.para,
+                h_rep, t_rep, dr_rep, hr_rep, r_inv_rep, para,
             ).reshape(q_size, num_candidates)
             score_rows.append(chunk_scores)
 
         return torch.cat(score_rows, dim=0)
+
+    def score_batch(self, head_ids, relations, tail_entity_ids, query_chunk_size: int | None = None) -> torch.Tensor:
+        """Score queries against candidate tails (builds a fresh query cache)."""
+
+        query_cache = self.prepare_link_prediction_queries(head_ids, relations)
+        return self.score_link_prediction_candidates(query_cache, tail_entity_ids, query_chunk_size)
 
     def _relation_to_idx(self, relation: str) -> int:
         if relation in self.rel_to_idx:

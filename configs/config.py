@@ -120,6 +120,10 @@ def build_parser() -> argparse.ArgumentParser:
     # Softmax / Bernoulli negative-sampling (DistMult, ComplEx, etc.).
     parser.add_argument('--epoch-per-eval', '--epoch_per_eval', default=None, type=int,
                         help='evaluate on validation every N epochs (0 = every epoch)')
+    parser.add_argument('--eval-entity-chunk-size', '--eval_entity_chunk_size', default=None, type=int,
+                        help='entity chunk size for DaBR-style full link-prediction eval')
+    parser.add_argument('--score-query-chunk-size', '--score_query_chunk_size', default=None, type=int,
+                        help='query chunk size inside DaBR score_batch during eval')
     parser.add_argument('--sample-freq', '--sample_freq', default=None, type=int,
                         help='negative sampling frequency')
     parser.add_argument('-ns', '--n-sample', '--n_sample', default=None, type=int,
