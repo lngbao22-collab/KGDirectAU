@@ -16,7 +16,9 @@
   "output_dir_prefix": "logs/DaBR-AU_WN18RR",
 
   "dim": 500,
-  "batch_size": 512,
+  "batch_size": 128,
+  "train_micro_batch_size": 128,
+  "max_uniformity_samples": 256,
   "epochs": 400,
   "lr": 0.1,
   "weight_decay": 0.1,

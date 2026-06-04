@@ -199,10 +199,17 @@ class DaBREncoder(BaseModel):
         t_target = DaBREncoder.vec_vec_wise_multiplication(t, DaBREncoder.get_inv(r))
         return q, t_target, h
 
-    def entity_embeddings(self, device: torch.device | None = None) -> torch.Tensor:
-        """Return all entity embeddings (for optional entity-level uniformity)."""
+    def entity_embeddings(
+        self,
+        device: torch.device | None = None,
+        max_samples: int | None = None,
+    ) -> torch.Tensor:
+        """Return entity embeddings for optional entity-level uniformity (subsampled when requested)."""
 
         entity_vectors = self.ent_embeddings.weight
+        if max_samples is not None and int(max_samples) > 0 and entity_vectors.size(0) > int(max_samples):
+            indices = torch.randperm(entity_vectors.size(0), device=entity_vectors.device)[: int(max_samples)]
+            entity_vectors = entity_vectors.index_select(0, indices)
         if device is not None:
             entity_vectors = entity_vectors.to(device)
         return entity_vectors

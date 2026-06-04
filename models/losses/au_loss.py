@@ -70,24 +70,62 @@ class KGAULoss(nn.Module):
 		t = F.normalize(t, p=2, dim=-1)
 		return (q - t).pow(2).sum(dim=-1).mean()
 
-	def _prepare_uniformity_pairs(self, x: torch.Tensor) -> torch.Tensor | None:
-		"""Normalize and subsample embeddings; return squared pairwise L2 distances."""
+	def _subsample_uniformity_rows(self, x: torch.Tensor) -> torch.Tensor | None:
+		"""Cap row count before uniformity (entity table or large batches)."""
 
-		if x is None:
-			return None
-		if x.size(0) < 2:
+		if x is None or x.size(0) < 2:
 			return None
 		max_samples = int(getattr(self, 'max_uniformity_samples', 0) or 0)
 		if max_samples > 0 and x.size(0) > max_samples:
 			indices = torch.randperm(x.size(0), device=x.device)[:max_samples]
 			x = x.index_select(0, indices)
-			if x.size(0) < 2:
-				return None
-		x = F.normalize(x, p=2, dim=-1)
-		pairwise = torch.pdist(x, p=2)
-		if pairwise.numel() == 0:
+		return x if x.size(0) >= 2 else None
+
+	def _max_uniformity_pair_count(self, num_rows: int, dim: int) -> int:
+		"""Choose how many pairwise distances to estimate without O(n^2) autograd memory."""
+
+		full_pairs = num_rows * (num_rows - 1) // 2
+		if full_pairs <= 0:
+			return 0
+		max_samples = int(getattr(self, 'max_uniformity_samples', 0) or 0)
+		# `pdist` backward can require O(n^2 * dim) workspace; avoid when that exceeds ~256 MiB.
+		pdist_budget = 256 * 1024 * 1024
+		if num_rows * num_rows * max(dim, 1) * 4 <= pdist_budget:
+			return full_pairs
+		pair_cap = int(getattr(self, 'max_uniformity_pairs', 0) or 0)
+		if pair_cap <= 0:
+			pair_cap = max(4096, max_samples * 8)
+		return min(full_pairs, pair_cap)
+
+	@staticmethod
+	def _random_pairwise_dist_sq(x: torch.Tensor, num_pairs: int) -> torch.Tensor:
+		"""Monte Carlo squared L2 distances between random row pairs (memory-safe)."""
+
+		n = x.size(0)
+		i = torch.randint(0, n, (num_pairs,), device=x.device)
+		j = torch.randint(0, n, (num_pairs,), device=x.device)
+		same = i == j
+		if same.any():
+			j = torch.where(same, (j + 1) % n, j)
+		return (x[i] - x[j]).pow(2).sum(dim=-1)
+
+	def _prepare_uniformity_pairs(self, x: torch.Tensor) -> torch.Tensor | None:
+		"""Normalize and subsample embeddings; return squared pairwise L2 distances."""
+
+		x = self._subsample_uniformity_rows(x)
+		if x is None:
 			return None
-		return pairwise.pow(2)
+		x = F.normalize(x, p=2, dim=-1)
+		num_pairs = self._max_uniformity_pair_count(x.size(0), x.size(-1))
+		if num_pairs <= 0:
+			return None
+		full_pairs = x.size(0) * (x.size(0) - 1) // 2
+		if num_pairs >= full_pairs:
+			pairwise = torch.pdist(x, p=2)
+			if pairwise.numel() == 0:
+				return None
+			return pairwise.pow(2)
+		return self._random_pairwise_dist_sq(x, num_pairs)
 
 	def uniformity_loss(self, x: torch.Tensor) -> torch.Tensor:
 		"""Uniformity on the unit hypersphere.
@@ -173,9 +211,11 @@ class KGAULoss(nn.Module):
 			term, _ = self.uniformity_loss_with_stats(h_uniformity)
 			l_unif = l_unif + self.gamma_h * term
 		if ent is not None and self.gamma_ent > 0:
-			ent_norm = F.normalize(ent, p=2, dim=-1)
-			term, _ = self.uniformity_loss_with_stats(ent_norm)
-			l_unif = l_unif + self.gamma_ent * term
+			ent_rows = self._subsample_uniformity_rows(ent)
+			if ent_rows is not None:
+				ent_norm = F.normalize(ent_rows, p=2, dim=-1)
+				term, _ = self.uniformity_loss_with_stats(ent_norm)
+				l_unif = l_unif + self.gamma_ent * term
 
 		total_loss = l_align + l_unif
 		if return_stats:

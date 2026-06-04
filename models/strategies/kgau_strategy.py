@@ -44,6 +44,23 @@ def _config_float(args, name: str, default: float) -> float:
 	return default if value is None else float(value)
 
 
+def _config_int(args, name: str, default: int) -> int:
+	"""Read an int hyperparameter from args, treating JSON null as unset."""
+
+	value = getattr(args, name, None)
+	return default if value is None else int(value)
+
+
+def _embedding_dim_for_memory(args) -> int:
+	"""Estimate per-vector width for training memory heuristics (DaBR uses 4 * dim)."""
+
+	dim = _config_int(args, 'dim', 0) or _config_int(args, 'hidden_size', 0)
+	encoder_path = str(getattr(args, 'model_encoder_path', '') or '').lower()
+	if 'dabr' in encoder_path:
+		return 4 * max(dim, 1)
+	return max(dim, 1)
+
+
 def _add_inverse_relations(relation_to_idx: dict[str, int]) -> dict[str, int]:
 	"""Ensure every forward relation has its own distinct inverse-relation ID.
 
@@ -285,6 +302,101 @@ class KGAUStrategy(Evaluator):
 			q_raw, t_raw, h_raw, ent_raw, q_uni=q_uni, t_uni=t_uni, h_uni=h_uni, return_stats=True)
 		return loss, l_align, l_unif, n_unique_q, n_unique_t, margin_active_frac
 
+	def _entity_uniformity_vectors(self, model) -> torch.Tensor | None:
+		"""Optional entity embeddings for uniformity; never materialize the full table on GPU."""
+
+		if self.criterion.gamma_ent <= 0:
+			return None
+		max_samples = int(getattr(self.criterion, 'max_uniformity_samples', 0) or 0)
+		if hasattr(model, 'entity_embeddings'):
+			return model.entity_embeddings(device=self.device, max_samples=max_samples or None)
+		return None
+
+	def _train_micro_batch_size(self, batch_size: int) -> int:
+		"""Split large batches so quaternion / high-dim AU steps fit in GPU memory."""
+
+		explicit = getattr(self.args, 'train_micro_batch_size', None)
+		if explicit is not None:
+			return max(int(explicit), 1)
+		emb_dim = _embedding_dim_for_memory(self.args)
+		if emb_dim >= 2000 and batch_size > 128:
+			return 128
+		if emb_dim >= 800 and batch_size > 256:
+			return 256
+		return batch_size
+
+	def _backward_au_loss(
+		self,
+		loss: torch.Tensor,
+		batch_fraction: float,
+		use_amp: bool,
+	) -> None:
+		"""Backprop a weighted AU loss fragment (for micro-batching)."""
+
+		scaled_loss = loss * batch_fraction
+		if use_amp:
+			self.scaler.scale(scaled_loss).backward()
+		else:
+			scaled_loss.backward()
+
+	def _train_au_tensor_batch(
+		self,
+		model,
+		ss: torch.Tensor,
+		rs: torch.Tensor,
+		ts: torch.Tensor,
+		use_amp: bool,
+	) -> tuple[float, float, float, int, int, float, int]:
+		"""Run one optimizer step on a head/relation/tail batch (with optional micro-batching)."""
+
+		micro_batch = min(self._train_micro_batch_size(ss.size(0)), ss.size(0))
+		total = ss.size(0)
+		loss_sum = 0.0
+		align_sum = 0.0
+		unif_sum = 0.0
+		n_uq = n_ut = 0
+		margin_active = 0.0
+		batches = 0
+
+		self.optimizer.zero_grad()
+		for start in range(0, total, micro_batch):
+			end = min(start + micro_batch, total)
+			fraction = (end - start) / total
+			q_keys, t_keys, h_keys = self._uniformity_keys(ss[start:end], rs[start:end], ts[start:end])
+			if use_amp:
+				with torch.amp.autocast(device_type='cuda'):
+					q_raw, t_raw, h_raw = model.get_queries_targets(ss[start:end], rs[start:end], ts[start:end])
+					ent_raw = self._entity_uniformity_vectors(model)
+					loss, l_align, l_unif, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
+						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
+				self._backward_au_loss(loss, fraction, use_amp=True)
+			else:
+				q_raw, t_raw, h_raw = model.get_queries_targets(ss[start:end], rs[start:end], ts[start:end])
+				ent_raw = self._entity_uniformity_vectors(model)
+				loss, l_align, l_unif, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
+					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
+				self._backward_au_loss(loss, fraction, use_amp=False)
+			chunk = end - start
+			loss_sum += loss.item() * chunk
+			align_sum += l_align.item() * chunk
+			unif_sum += l_unif.item() * chunk
+			batches += 1
+
+		if use_amp:
+			self.scaler.unscale_(self.optimizer)
+			torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
+			self.scaler.step(self.optimizer)
+			self.scaler.update()
+		else:
+			torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
+			self.optimizer.step()
+
+		if batches > 0:
+			n_uq = int(n_uq / batches)
+			n_ut = int(n_ut / batches)
+			margin_active = margin_active / batches
+		return loss_sum / total, align_sum / total, unif_sum / total, n_uq, n_ut, margin_active, total
+
 	def _extract_monitor_value(self, metric_dict, valid_metric='mrr') -> float | None:
 		"""Extract the value to monitor for checkpointing decisions from the metric dictionary."""
 
@@ -407,7 +519,7 @@ class KGAUStrategy(Evaluator):
 						q_raw = outputs['hr_vector']
 						t_raw = outputs['tail_vector']
 						h_raw = outputs['head_vector']
-						ent_raw = model.entity_embeddings(device=self.device) if self.criterion.gamma_ent > 0 else None
+						ent_raw = self._entity_uniformity_vectors(model)
 						loss, l_align, l_unif, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
 							q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					self.scaler.scale(loss).backward()
@@ -420,7 +532,7 @@ class KGAUStrategy(Evaluator):
 					q_raw = outputs['hr_vector']
 					t_raw = outputs['tail_vector']
 					h_raw = outputs['head_vector']
-					ent_raw = model.entity_embeddings(device=self.device) if self.criterion.gamma_ent > 0 else None
+					ent_raw = self._entity_uniformity_vectors(model)
 					loss, l_align, l_unif, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
 						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					loss.backward()
@@ -441,30 +553,12 @@ class KGAUStrategy(Evaluator):
 			for batch_idx, (ss, rs, ts) in enumerate(
 				self._iter_batches(self.train_src, self.train_rel, self.train_dst, batch_size, shuffle=True),
 			):
-				self.optimizer.zero_grad()
-				q_keys, t_keys, h_keys = self._uniformity_keys(ss, rs, ts)
-				if use_amp:
-					with torch.amp.autocast(device_type='cuda'):
-						q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
-						ent_raw = model.entity_embeddings(device=self.device) if self.criterion.gamma_ent > 0 else None
-						loss, l_align, l_unif, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
-							q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
-					self.scaler.scale(loss).backward()
-					self.scaler.unscale_(self.optimizer)
-					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
-					self.scaler.step(self.optimizer)
-					self.scaler.update()
-				else:
-					q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
-					ent_raw = model.entity_embeddings(device=self.device) if self.criterion.gamma_ent > 0 else None
-					loss, l_align, l_unif, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
-						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
-					loss.backward()
-					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
-					self.optimizer.step()
-				epoch_align_loss += l_align.item() * ss.size(0)
-				epoch_unif_loss += l_unif.item() * ss.size(0)
-				epoch_loss += loss.item() * ss.size(0)
+				loss, l_align, l_unif, n_uq, n_ut, margin_active, n_examples = self._train_au_tensor_batch(
+					model, ss, rs, ts, use_amp,
+				)
+				epoch_align_loss += l_align * n_examples
+				epoch_unif_loss += l_unif * n_examples
+				epoch_loss += loss * n_examples
 				epoch_unique_q += n_uq
 				epoch_unique_t += n_ut
 				epoch_margin_active += margin_active
