@@ -120,7 +120,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help='warmup steps')
 
     # Softmax / Bernoulli negative-sampling (DistMult, ComplEx, etc.).
-    parser.add_argument('--epoch-per-test', '--epoch_per_test', default=None, type=int,
+    parser.add_argument('--epoch-per-eval', '--epoch_per_eval', default=None, type=int,
                         help='evaluate on validation every N epochs (0 = every epoch)')
     parser.add_argument('--sample-freq', '--sample_freq', default=None, type=int,
                         help='negative sampling frequency')

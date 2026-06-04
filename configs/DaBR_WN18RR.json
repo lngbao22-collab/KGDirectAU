@@ -21,7 +21,7 @@
   "epochs": 400,
   "n_sample": 5,
   "eval_every_n_step": 400,
-  "epoch_per_test": 400,
+  "epoch_per_eval": 1,
   "lam": 0.5,
   "lmbda": 0.5,
   "lmbda_two": 0.01,

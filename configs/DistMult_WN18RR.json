@@ -22,7 +22,7 @@
   "eval_every_n_step": 50,
   "epochs": 100,
   "batch_size": 100,
-  "epoch_per_test": 50,
+  "epoch_per_eval": 1,
   "sample_freq": 1,
   "n_sample": 100
 }

@@ -44,6 +44,33 @@ def _config_float(args, name: str, default: float) -> float:
 	return default if value is None else float(value)
 
 
+def _add_inverse_relations(relation_to_idx: dict[str, int]) -> dict[str, int]:
+	"""Ensure every forward relation has its own distinct inverse-relation ID.
+
+	Backward triplets carry the relation string ``"inverse {relation}"`` (see
+	``data.dataset.reverse_triplet``). Assigning each inverse relation a fresh
+	index keeps forward and inverse relations distinct for uniformity dedup keys.
+	"""
+
+	updated = dict(relation_to_idx)
+	next_idx = max(updated.values(), default=-1) + 1
+	for relation in list(updated.keys()):
+		if relation.startswith('inverse '):
+			continue
+		inverse_relation = f'inverse {relation}'
+		if inverse_relation not in updated:
+			updated[inverse_relation] = next_idx
+			next_idx += 1
+	return updated
+
+
+def _build_relation_to_idx() -> dict[str, int]:
+	"""Build the relation->index map with distinct IDs for inverse relations."""
+
+	base = {str(key): int(value) for key, value in get_relation_id_map().items()}
+	return _add_inverse_relations(base)
+
+
 def _build_optimizer(args, parameters, weight_decay: float):
 	"""Build the training optimizer; respects ``optim`` in config (adam/adagrad/sgd)."""
 
@@ -76,11 +103,10 @@ class KGAUStrategy(Evaluator):
 		self.entity_dict = get_entity_dict()
 		self.model = _load_encoder(args)
 		logger.info(self.model)
+		self.relation_to_idx = _build_relation_to_idx()
 		if not self.uses_text_inputs:
-			self.relation_to_idx = {str(k): int(v) for k, v in get_relation_id_map().items()}
 			self.train_src, self.train_rel, self.train_dst = self._examples_to_tensors(self.train_examples)
 		else:
-			self.relation_to_idx = {str(k): int(v) for k, v in get_relation_id_map().items()}
 			self.train_loader = torch.utils.data.DataLoader(
 				Dataset(path='', examples=self.train_examples, task=args.dataset),
 				batch_size=max(getattr(args, 'batch_size', 1), 1),
@@ -129,19 +155,15 @@ class KGAUStrategy(Evaluator):
 		self.total_time = 0.0
 
 	def _resolve_relation_index(self, relation: str) -> int:
-		"""Resolve relation variants used by preprocessing and inverse triplet generation."""
+		"""Resolve a relation string to its index.
+
+		Forward and inverse relations have distinct IDs (see
+		``_add_inverse_relations``); inverse relations are looked up directly
+		rather than collapsed onto their forward counterpart.
+		"""
 
 		if relation in self.relation_to_idx:
 			return self.relation_to_idx[relation]
-		if relation.startswith('inverse '):
-			base_relation = relation[len('inverse '):]
-			if base_relation in self.relation_to_idx:
-				return self.relation_to_idx[base_relation]
-		if relation.startswith('inverse_'):
-			base_relation = relation[len('inverse_'):]
-			candidate = '_' + base_relation if not base_relation.startswith('_') else base_relation
-			if candidate in self.relation_to_idx:
-				return self.relation_to_idx[candidate]
 		normalized = ' '.join(relation.split())
 		if normalized in self.relation_to_idx:
 			return self.relation_to_idx[normalized]
@@ -177,14 +199,15 @@ class KGAUStrategy(Evaluator):
 			yield src[start:end], rel[start:end], dst[start:end]
 
 	def _validation_interval(self) -> int:
-		"""Epochs between full link-prediction validation runs."""
+		"""Epochs between full link-prediction validation runs.
 
-		interval = 0
-		for name in ('epoch_per_test', 'eval_every_n_step'):
-			raw = getattr(self.args, name, None)
-			if raw is not None and int(raw) > 0:
-				interval = int(raw)
-				break
+		KGAU validation is epoch-based, so it is driven by ``epoch_per_eval``
+		(``0`` or unset means validate every epoch). The step-based
+		``eval_every_n_step`` knob is intentionally not consulted here.
+		"""
+
+		raw = getattr(self.args, 'epoch_per_eval', None)
+		interval = int(raw) if raw is not None else 0
 		if interval <= 0 or interval > int(self.args.epochs):
 			return 1
 		return interval
@@ -258,21 +281,8 @@ class KGAUStrategy(Evaluator):
 
 		q_uni, t_uni, h_uni, n_unique_q, n_unique_t = self._distinct_uniformity_inputs(
 			q_raw, t_raw, h_raw, q_keys, t_keys, h_keys)
-		loss, l_align, l_unif = self.criterion(q_raw, t_raw, h_raw, ent_raw, q_uni=q_uni, t_uni=t_uni, h_uni=h_uni)
-		margin_active_frac = 0.0
-		if float(self.criterion.additive_margin) > 0.0:
-			active_weight = 0.0
-			active_sum = 0.0
-			if self.criterion.gamma_q > 0 and q_uni is not None and q_uni.size(0) >= 2:
-				_, frac = self.criterion.uniformity_loss_with_stats(q_uni)
-				active_sum += self.criterion.gamma_q * frac
-				active_weight += self.criterion.gamma_q
-			if self.criterion.gamma_t > 0 and t_uni is not None and t_uni.size(0) >= 2:
-				_, frac = self.criterion.uniformity_loss_with_stats(t_uni)
-				active_sum += self.criterion.gamma_t * frac
-				active_weight += self.criterion.gamma_t
-			if active_weight > 0:
-				margin_active_frac = active_sum / active_weight
+		loss, l_align, l_unif, margin_active_frac = self.criterion(
+			q_raw, t_raw, h_raw, ent_raw, q_uni=q_uni, t_uni=t_uni, h_uni=h_uni, return_stats=True)
 		return loss, l_align, l_unif, n_unique_q, n_unique_t, margin_active_frac
 
 	def _extract_monitor_value(self, metric_dict, valid_metric='mrr') -> float | None:

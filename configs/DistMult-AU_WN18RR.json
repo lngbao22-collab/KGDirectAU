@@ -19,6 +19,7 @@
   "lr": 0.001,
   "weight_decay": 0.0001,
   "epochs": 100,
+  "epoch_per_eval": 1,
   "batch_size": 256,
   "gamma_q": 1.0,
   "gamma_t": 1.0,

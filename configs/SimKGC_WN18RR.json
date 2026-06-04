@@ -21,6 +21,7 @@
   "dim": 768,
   "dropout": 0.1,
   "epochs": 50,
+  "epoch_per_eval": 1,
   "eval_every_n_step": 10000,
   "finetune_t": true,
   "grad_clip": 10.0,

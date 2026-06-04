@@ -139,27 +139,49 @@ class KGAULoss(nn.Module):
 		q_uni: torch.Tensor | None = None,
 		t_uni: torch.Tensor | None = None,
 		h_uni: torch.Tensor | None = None,
-	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-		"""Return the total AU loss together with alignment and uniformity terms."""
+		return_stats: bool = False,
+	):
+		"""Return the total AU loss together with alignment and uniformity terms.
+
+		Each uniformity term is computed exactly once. When ``return_stats`` is
+		True, also return the gamma-weighted fraction of query/target pairs that
+		fall inside the margin buffer (only meaningful when ``additive_margin`` > 0).
+		"""
 
 		q_norm = F.normalize(q, p=2, dim=-1)
 		t_norm = F.normalize(t, p=2, dim=-1)
 		l_align = self.alignment_loss(q_norm, t_norm)
 
 		l_unif = q_norm.new_zeros(())
+		active_sum = 0.0
+		active_weight = 0.0
 
 		if self.gamma_q > 0:
 			q_uniformity = q_uni if q_uni is not None else q_norm
-			l_unif = l_unif + self.gamma_q * self.uniformity_loss(q_uniformity)
+			term, frac = self.uniformity_loss_with_stats(q_uniformity)
+			l_unif = l_unif + self.gamma_q * term
+			active_sum += self.gamma_q * frac
+			active_weight += self.gamma_q
 		if self.gamma_t > 0:
 			t_uniformity = t_uni if t_uni is not None else t_norm
-			l_unif = l_unif + self.gamma_t * self.uniformity_loss(t_uniformity)
+			term, frac = self.uniformity_loss_with_stats(t_uniformity)
+			l_unif = l_unif + self.gamma_t * term
+			active_sum += self.gamma_t * frac
+			active_weight += self.gamma_t
 		if h is not None and self.gamma_h > 0:
 			h_uniformity = h_uni if h_uni is not None else F.normalize(h, p=2, dim=-1)
-			l_unif = l_unif + self.gamma_h * self.uniformity_loss(h_uniformity)
+			term, _ = self.uniformity_loss_with_stats(h_uniformity)
+			l_unif = l_unif + self.gamma_h * term
 		if ent is not None and self.gamma_ent > 0:
 			ent_norm = F.normalize(ent, p=2, dim=-1)
-			l_unif = l_unif + self.gamma_ent * self.uniformity_loss(ent_norm)
+			term, _ = self.uniformity_loss_with_stats(ent_norm)
+			l_unif = l_unif + self.gamma_ent * term
 
 		total_loss = l_align + l_unif
+		if return_stats:
+			if float(self.additive_margin) > 0.0 and active_weight > 0:
+				margin_active_frac = active_sum / active_weight
+			else:
+				margin_active_frac = 0.0
+			return total_loss, l_align, l_unif, margin_active_frac
 		return total_loss, l_align, l_unif
