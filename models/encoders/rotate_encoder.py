@@ -34,11 +34,11 @@ class RotatEEncoder(BaseModel):
         self.nrelation = n_rel
         self.hidden_dim = int(getattr(args, "dim", 500))
         self.epsilon = 2.0
-        gamma = float(getattr(args, "margin", getattr(args, "gamma", 6.0)))
+        margin = float(getattr(args, "margin", 6.0))
 
-        self.gamma = nn.Parameter(torch.tensor([gamma]), requires_grad=False)
+        self.margin = nn.Parameter(torch.tensor([margin]), requires_grad=False)
         self.embedding_range = nn.Parameter(
-            torch.tensor([(self.gamma.item() + self.epsilon) / self.hidden_dim]),
+            torch.tensor([(self.margin.item() + self.epsilon) / self.hidden_dim]),
             requires_grad=False,
         )
 
@@ -80,7 +80,7 @@ class RotatEEncoder(BaseModel):
 
         score = torch.stack([re_score, im_score], dim=0)
         score = score.norm(dim=0)
-        score = self.gamma.item() - score.sum(dim=2)
+        score = self.margin.item() - score.sum(dim=2)
         return score
 
     def _score(self, positive_sample: torch.Tensor, negative_sample: torch.Tensor | None = None, mode: str = "single") -> torch.Tensor:
@@ -121,6 +121,29 @@ class RotatEEncoder(BaseModel):
             "positive_scores": pos_scores,
             "negative_scores": neg_scores,
         }
+
+    def get_queries_targets(self, src: torch.Tensor, rel: torch.Tensor, dst: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return AU-compatible query, target, and head representations.
+
+        KGAU expects encoders to expose query/target tensors for alignment-uniformity
+        training. For RotatE, the query is the rotated head embedding, the target is
+        the tail entity embedding, and the head is the raw head embedding.
+        """
+
+        head = torch.index_select(self.entity_embedding, dim=0, index=src).unsqueeze(1)
+        relation = torch.index_select(self.relation_embedding, dim=0, index=rel).unsqueeze(1)
+        tail = torch.index_select(self.entity_embedding, dim=0, index=dst).unsqueeze(1)
+
+        pi = 3.14159265358979323846
+        re_head, im_head = torch.chunk(head, 2, dim=2)
+        phase_relation = relation / (self.embedding_range.item() / pi)
+        re_relation = torch.cos(phase_relation)
+        im_relation = torch.sin(phase_relation)
+        re_query = re_head * re_relation - im_head * im_relation
+        im_query = re_head * im_relation + im_head * re_relation
+        query = torch.cat([re_query.squeeze(1), im_query.squeeze(1)], dim=-1)
+
+        return query, tail.squeeze(1), head.squeeze(1)
 
     def compute_logits(self, output_dict: dict, batch_dict: dict) -> dict:
         """Compatibility adapter used by generic trainer paths."""

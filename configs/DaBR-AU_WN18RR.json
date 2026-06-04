@@ -15,21 +15,17 @@
 
   "output_dir_prefix": "logs/DaBR-AU_WN18RR",
 
-  "dim": 100,
-  "lr": 0.1,
-  "batch_size": 256,
-  "max_uniformity_samples": 256,
-  "use_amp": true,
-  "epoch_per_eval": 1,
-  "score_query_chunk_size": 128,
+  "dim": 500,
+  "batch_size": 512,
   "epochs": 400,
-  "weight_decay": 0.0001,
-  "optim": "adagrad",
+  "lr": 0.1,
+  "weight_decay": 0.1,
+  
+  "eval_every_n_step": 400,
+
   "gamma_q": 1.0,
   "gamma_t": 1.0,
-  "gamma_h": 0.0,
-  "gamma_ent": 0.0,
-  "tuni": 2.0,
-  "test_link": true,
-  "test_triple": false
+  "gamma_h": 1.0,
+  "gamma_ent": 1.0,
+  "tuni": 2.0
 }

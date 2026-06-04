@@ -259,5 +259,4 @@ class SoftmaxStrategy(object):
 			'train_time': self.train_time,
 			'valid_time': self.valid_time,
 			'total_time': self.total_time,
-			'best_checkpoint_path': self.best_checkpoint_path,
 		}

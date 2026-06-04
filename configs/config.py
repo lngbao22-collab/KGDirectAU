@@ -68,8 +68,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help='mini-batch size')
     parser.add_argument('--dim', default=768, type=int,
                         help='embedding dimension for non-text KG models')
-    parser.add_argument('--dropout', default=0.1, type=float,
-                        help='dropout rate')
     parser.add_argument('--epochs', default=10, type=int,
                         help='number of epochs to run')
     parser.add_argument('--eval-every-n-step', default=10000, type=int,
@@ -128,6 +126,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help='number of negative samples per positive')
     parser.add_argument('--lam', default=None, type=float,
                         help='L2 regularization strength (kgau/softmax; overrides weight_decay when set)')
+    parser.add_argument('--entity-reg-weight', '--entity_reg_weight', default=None, type=float, dest='entity_reg_weight',
+                        help='DaBR regularization weight for entity embeddings')
+    parser.add_argument('--relation-reg-weight', '--relation_reg_weight', default=None, type=float, dest='relation_reg_weight',
+                        help='DaBR regularization weight for relation embeddings')
 
     # KGAU alignment-uniformity hyperparameters (DistMult-AU, ComplEx-AU, etc.).
     parser.add_argument('--gamma-q', '--gamma_q', default=None, type=float,
@@ -252,7 +254,13 @@ def _load_json_defaults(path: str) -> Dict[str, Any]:
     if not path or not os.path.exists(path):
         return {}
     with open(path, 'r', encoding='utf-8') as f:
-        cfg = json.load(f)
+        try:
+            raw = f.read().strip()
+            if not raw:
+                return {}
+            cfg = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
     if not isinstance(cfg, dict):
         raise ValueError(f'Config file must contain a JSON object: {path}')
     return cfg
@@ -411,6 +419,20 @@ args.unparsed_args = unknown_args
 for _name, _default in (('gamma_h', 0.0), ('gamma_ent', 0.0)):
     if getattr(args, _name, None) is None:
         setattr(args, _name, _default)
+
+# Normalize legacy DaBR regularization names to the explicit variants used by the strategy.
+if getattr(args, 'entity_reg_weight', None) is None:
+    for _legacy_name in ('lmbda', 'lam'):
+        _legacy_value = getattr(args, _legacy_name, None)
+        if _legacy_value is not None:
+            args.entity_reg_weight = _legacy_value
+            break
+if getattr(args, 'relation_reg_weight', None) is None:
+    for _legacy_name in ('lmbda_two', 'lmbda2'):
+        _legacy_value = getattr(args, _legacy_name, None)
+        if _legacy_value is not None:
+            args.relation_reg_weight = _legacy_value
+            break
 
 args.train_path = _resolve_data_path(getattr(args, 'train_path', ''))
 args.valid_path = _resolve_data_path(_derive_split_variant(getattr(args, 'valid_path', ''), split_name='valid', labeled=False))

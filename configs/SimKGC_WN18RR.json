@@ -15,33 +15,38 @@
 
   "output_dir_prefix": "logs/SimKGC_WN18RR",
 
-  "additive_margin": 0.02,
-  "batch_size": 512,
-  "bert_encoder": "distilbert-base-uncased",
   "dim": 768,
-  "dropout": 0.1,
+  "batch_size": 512,
   "epochs": 50,
-  "epoch_per_eval": 1,
-  "eval_every_n_step": 10000,
-  "finetune_t": true,
-  "grad_clip": 10.0,
-  "is_test": false,
   "lr": 5e-05,
-  "lr_scheduler": "linear",
-  "max_num_tokens": 50,
-  "max_to_keep": 3,
-  "neighbor_weight": 0.0,
+
+  "bert_encoder": "distilbert-base-uncased",
+  "additive_margin": 0.02,
+  "finetune_t": true,
   "pooling": "mean",
   "pre_batch": 0,
-  "pre_batch_weight": 0.5,
-  "print_freq": 20,
-  "rerank_n_hop": 2,
-  "seed": null,
-  "infonce_t": 0.05,
-  "use_amp": true,
-  "use_link_graph": true,
-  "use_self_negative": false,
-  "weight_decay": 0.0001,
   "workers": 2,
-  "warmup": 400
+
+  "infonce_t": 0.05,
+
+  "is_test": false,
+
+  "pre_batch_weight": 0.5,
+  "eval_every_n_step": 10000,
+  "print_freq": 20,
+  "grad_clip": 10.0,
+  "use_amp": true,
+  "use_self_negative": false,
+
+  "max_num_tokens": 50,
+  "use_link_graph": true,
+  "max_to_keep": 3,
+
+  "lr_scheduler": "linear",
+  "warmup": 400,
+
+  "neighbor_weight": 0.0,
+  "rerank_n_hop": 2,
+
+  "seed": null
 }
