@@ -129,6 +129,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--eval-use-amp', '--eval_use_amp', default=None,
                         type=lambda value: str(value).lower() in {'1', 'true', 'yes', 'y'},
                         help='use CUDA autocast for DaBR link-prediction eval (defaults to use_amp when unset)')
+    parser.add_argument('--compile-eval', '--compile_eval', default=None,
+                        type=lambda value: str(value).lower() in {'1', 'true', 'yes', 'y'},
+                        help='torch.compile DaBR link-prediction scoring kernels (first eval warms up)')
     parser.add_argument('--sample-freq', '--sample_freq', default=None, type=int,
                         help='negative sampling frequency')
     parser.add_argument('-ns', '--n-sample', '--n_sample', default=None, type=int,

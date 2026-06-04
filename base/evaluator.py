@@ -349,7 +349,7 @@ class Evaluator:
             for start in range(0, entity_indices.size(0), entity_chunk_size):
                 end = min(start + entity_chunk_size, entity_indices.size(0))
                 if score_candidates is not None:
-                    chunk_score = score_candidates(query_cache, entity_indices[start:end])
+                    chunk_score = score_candidates(query_cache, (start, end))
                 else:
                     entity_chunk = all_entity_ids[start:end]
                     chunk_score = model.score_batch(head_ids, relations, entity_chunk)

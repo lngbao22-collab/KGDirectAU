@@ -87,13 +87,17 @@ class DaBREncoder(BaseModel):
     @staticmethod
     def vec_vec_wise_multiplication(q, p):
         normalized_p = DaBREncoder.normalization(p)
+        return DaBREncoder.vec_vec_wise_multiplication_q(q, normalized_p)
+
+    @staticmethod
+    def vec_vec_wise_multiplication_q(q, p_normalized):
+        """Quaternion multiply ``q * p`` when ``p`` is already normalized."""
+
         q_r, q_i, q_j, q_k = DaBREncoder.make_wise_quaternion(q)
-
-        qp_r = DaBREncoder.get_quaternion_wise_mul(q_r * normalized_p)
-        qp_i = DaBREncoder.get_quaternion_wise_mul(q_i * normalized_p)
-        qp_j = DaBREncoder.get_quaternion_wise_mul(q_j * normalized_p)
-        qp_k = DaBREncoder.get_quaternion_wise_mul(q_k * normalized_p)
-
+        qp_r = DaBREncoder.get_quaternion_wise_mul(q_r * p_normalized)
+        qp_i = DaBREncoder.get_quaternion_wise_mul(q_i * p_normalized)
+        qp_j = DaBREncoder.get_quaternion_wise_mul(q_j * p_normalized)
+        qp_k = DaBREncoder.get_quaternion_wise_mul(q_k * p_normalized)
         return torch.cat([qp_r, qp_i, qp_j, qp_k], dim=1)
 
     @staticmethod
@@ -106,12 +110,43 @@ class DaBREncoder(BaseModel):
     def _calc_from_hr(h, t, dr, hr, r_inv, para) -> torch.Tensor:
         """Score rows when ``hr = h⊗r`` and ``r_inv`` are already computed."""
 
-        tr = DaBREncoder.vec_vec_wise_multiplication(t, r_inv)
+        r_inv_norm = DaBREncoder.normalization(r_inv)
+        return DaBREncoder._calc_from_hr_norm(h, t, dr, hr, r_inv_norm, para)
+
+    @staticmethod
+    def _calc_from_hr_norm(h, t, dr, hr, r_inv_norm, para) -> torch.Tensor:
+        """Score rows using pre-normalized ``r_inv`` (link-prediction fast path)."""
+
+        tr = DaBREncoder.vec_vec_wise_multiplication_q(t, r_inv_norm)
         score_s = hr * tr
         hrt = h + dr - t
         s_d, x_d, y_d, z_d = torch.chunk(hrt, 4, dim=1)
         score_d = s_d + x_d + y_d + z_d
         return -torch.sum(score_s, -1) - para * torch.norm(score_d, p=1, dim=-1)
+
+    @staticmethod
+    def _score_lp_block(h_rep, t_rep, dr_rep, hr_rep, r_inv_norm_rep, para) -> torch.Tensor:
+        """Batched link-prediction scores for expanded query/candidate rows."""
+
+        return DaBREncoder._calc_from_hr_norm(h_rep, t_rep, dr_rep, hr_rep, r_inv_norm_rep, para)
+
+    _compiled_score_lp_block = None
+
+    @classmethod
+    def _score_lp_block_fn(cls, config):
+        """Return (optionally compiled) link-prediction block scorer."""
+
+        if getattr(config, 'compile_eval', True) and torch.cuda.is_available():
+            if cls._compiled_score_lp_block is None:
+                try:
+                    cls._compiled_score_lp_block = torch.compile(
+                        cls._score_lp_block,
+                        mode='reduce-overhead',
+                    )
+                except Exception:
+                    cls._compiled_score_lp_block = cls._score_lp_block
+            return cls._compiled_score_lp_block
+        return cls._score_lp_block
 
     @staticmethod
     def _calc(h, r, t, dr, para):
@@ -186,14 +221,15 @@ class DaBREncoder(BaseModel):
         dr = self.Dr(relation_indices)
         hr = DaBREncoder.vec_vec_wise_multiplication(h, r)
         r_inv = DaBREncoder.get_inv(r)
-        return {'h': h, 'dr': dr, 'hr': hr, 'r_inv': r_inv, 'para': self.para}
+        r_inv_norm = DaBREncoder.normalization(r_inv)
+        return {'h': h, 'dr': dr, 'hr': hr, 'r_inv': r_inv, 'r_inv_norm': r_inv_norm, 'para': self.para}
 
     def _score_query_candidate_block(
         self,
         h_chunk: torch.Tensor,
         dr_chunk: torch.Tensor,
         hr_chunk: torch.Tensor,
-        r_inv_chunk: torch.Tensor,
+        r_inv_norm_chunk: torch.Tensor,
         t_candidates: torch.Tensor,
         para: torch.Tensor,
     ) -> torch.Tensor:
@@ -207,12 +243,11 @@ class DaBREncoder(BaseModel):
         h_rep = h_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
         dr_rep = dr_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
         hr_rep = hr_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
-        r_inv_rep = r_inv_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
+        r_inv_norm_rep = r_inv_norm_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
 
+        score_fn = DaBREncoder._score_lp_block_fn(self.config)
         with _autocast_context(self.config):
-            block_scores = DaBREncoder._calc_from_hr(
-                h_rep, t_rep, dr_rep, hr_rep, r_inv_rep, para,
-            )
+            block_scores = score_fn(h_rep, t_rep, dr_rep, hr_rep, r_inv_norm_rep, para)
         return block_scores.reshape(q_size, num_candidates).float()
 
     @torch.inference_mode()
@@ -228,23 +263,28 @@ class DaBREncoder(BaseModel):
         h = query_cache['h']
         dr = query_cache['dr']
         hr = query_cache['hr']
-        r_inv = query_cache['r_inv']
+        r_inv_norm = query_cache.get('r_inv_norm')
+        if r_inv_norm is None:
+            r_inv_norm = DaBREncoder.normalization(query_cache['r_inv'])
         para = query_cache['para']
 
-        if torch.is_tensor(tail_entity_ids):
+        if isinstance(tail_entity_ids, tuple) and len(tail_entity_ids) == 2:
+            start_idx, end_idx = int(tail_entity_ids[0]), int(tail_entity_ids[1])
+            t = self.ent_embeddings.weight[start_idx:end_idx]
+        elif torch.is_tensor(tail_entity_ids):
             candidate_indices = tail_entity_ids.to(device=device, dtype=torch.long)
+            t = self.ent_embeddings.weight.index_select(0, candidate_indices)
         else:
             candidate_indices = _as_index_tensor(tail_entity_ids, self.entity_dict.entity_to_idx, device)
-
-        t = self.ent_embeddings.weight.index_select(0, candidate_indices)
+            t = self.ent_embeddings.weight.index_select(0, candidate_indices)
         num_queries, num_candidates = h.size(0), t.size(0)
         if num_queries == 0 or num_candidates == 0:
             return torch.empty(num_queries, num_candidates, device=device)
 
         if query_chunk_size is None:
-            query_chunk_size = getattr(self.config, 'score_query_chunk_size', 128)
+            query_chunk_size = getattr(self.config, 'score_query_chunk_size', 256)
         query_chunk_size = max(int(query_chunk_size), 1)
-        candidate_chunk_size = int(getattr(self.config, 'eval_candidate_chunk_size', 512))
+        candidate_chunk_size = int(getattr(self.config, 'eval_candidate_chunk_size', 1024))
         candidate_chunk_size = max(candidate_chunk_size, 1)
 
         scores = torch.empty(num_queries, num_candidates, device=device, dtype=torch.float32)
@@ -258,7 +298,7 @@ class DaBREncoder(BaseModel):
                         h[q_start:q_end],
                         dr[q_start:q_end],
                         hr[q_start:q_end],
-                        r_inv[q_start:q_end],
+                        r_inv_norm[q_start:q_end],
                         t_block,
                         para,
                     )
@@ -272,7 +312,7 @@ class DaBREncoder(BaseModel):
                             h[sub_start:sub_end],
                             dr[sub_start:sub_end],
                             hr[sub_start:sub_end],
-                            r_inv[sub_start:sub_end],
+                            r_inv_norm[sub_start:sub_end],
                             t_block,
                             para,
                         )
