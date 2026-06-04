@@ -16,12 +16,12 @@
   "output_dir_prefix": "logs/DaBR-AU_WN18RR",
 
   "dim": 500,
-  "batch_size": 128,
-  "train_micro_batch_size": 128,
-  "max_uniformity_samples": 256,
+  "batch_size": 512,
+  "max_uniformity_samples": 512,
   "epochs": 400,
+  "optim": "adagrad",
   "lr": 0.1,
-  "weight_decay": 0.1,
+  "weight_decay": 0.0,
   
   "epoch_per_eval": 1,
   "eval_entity_chunk_size": 4096,
@@ -32,7 +32,7 @@
 
   "gamma_q": 1.0,
   "gamma_t": 1.0,
-  "gamma_h": 1.0,
-  "gamma_ent": 1.0,
+  "gamma_h": 0.0,
+  "gamma_ent": 0.0,
   "tuni": 2.0
 }

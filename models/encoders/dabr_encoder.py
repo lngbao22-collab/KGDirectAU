@@ -188,15 +188,30 @@ class DaBREncoder(BaseModel):
         return h, r, t
 
     def get_queries_targets(self, src, rel, dst) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Return AU query, target, and head vectors aligned with DaBR scoring.
+        """Return AU query, target, and head vectors covering both DaBR scoring terms.
 
-        Query uses h composed with r (hr). Target uses t composed with r^{-1} (tr),
-        matching the multiplicative term in ``_calc``. Head returns raw entity embeddings.
+        DaBR score = (h⊗r)·(t⊗r⁻¹) − para·‖h + Dᵣ − t‖₁.
+        AU alignment must cover both terms so that both relation embeddings (r) and
+        translation embeddings (Dr) receive gradients.
+
+        Query  = concat[h⊗r,   h + Dr]   — multiplicative (quaternion) + additive (translation)
+        Target = concat[t⊗r⁻¹, t      ]  — matching counterparts
+
+        The third return value (raw h) is used only when gamma_h > 0 (head uniformity);
+        keeping it separate avoids gradient conflicts since h already feeds both branches.
         """
 
         h, r, t = self._head_relation_tail(src, rel, dst)
-        q = DaBREncoder.vec_vec_wise_multiplication(h, r)
-        t_target = DaBREncoder.vec_vec_wise_multiplication(t, DaBREncoder.get_inv(r))
+        dr = self.Dr(rel)
+        # Multiplicative branch: h⊗r and t⊗r^{-1}
+        q_mult = DaBREncoder.vec_vec_wise_multiplication(h, r)
+        t_mult = DaBREncoder.vec_vec_wise_multiplication(t, DaBREncoder.get_inv(r))
+        # Additive branch: h + Dr and t  (TransE-style translation)
+        q_add = h + dr
+        t_add = t
+        # Concatenate so that AU alignment/uniformity cover the full DaBR score
+        q = torch.cat([q_mult, q_add], dim=-1)
+        t_target = torch.cat([t_mult, t_add], dim=-1)
         return q, t_target, h
 
     def entity_embeddings(
