@@ -254,27 +254,24 @@ class DaBREncoder(BaseModel):
                 tail_rows.append(tr_chunk.float())
         return torch.cat(tail_rows, dim=0)
 
-    def _append_distance_scores(
+    def _distance_scores_one(
         self,
-        scores: torch.Tensor,
-        query_rows: torch.Tensor,
-        h_rows: torch.Tensor,
-        dr_rows: torch.Tensor,
+        h: torch.Tensor,
+        dr: torch.Tensor,
         entity_weight: torch.Tensor,
         para: torch.Tensor,
-    ) -> None:
-        """Add the L1 distance term from DaBR scoring for a batch of queries."""
+        dist_chunk: int,
+    ) -> torch.Tensor:
+        """Distance term of DaBR for one query against all entities."""
 
-        dist_chunk = int(getattr(self.config, 'eval_distance_chunk_size', 8192))
-        dist_chunk = max(dist_chunk, 1)
-        h_dr = h_rows + dr_rows
+        h_dr = h + dr
+        parts = []
         for start in range(0, entity_weight.size(0), dist_chunk):
             end = min(start + dist_chunk, entity_weight.size(0))
-            ent_chunk = entity_weight[start:end]
-            hrt = h_dr.unsqueeze(1) - ent_chunk.unsqueeze(0)
-            s_d, x_d, y_d, z_d = torch.chunk(hrt, 4, dim=2)
-            score_d = (s_d + x_d + y_d + z_d).abs().sum(dim=2)
-            scores[query_rows, start:end] -= para * score_d
+            hrt = h_dr.unsqueeze(0) - entity_weight[start:end]
+            s_d, x_d, y_d, z_d = torch.chunk(hrt, 4, dim=1)
+            parts.append((s_d + x_d + y_d + z_d).abs().sum(dim=1))
+        return -para * torch.cat(parts)
 
     @torch.inference_mode()
     def score_link_prediction_full(self, query_cache: dict) -> torch.Tensor:
@@ -298,6 +295,10 @@ class DaBREncoder(BaseModel):
         para = query_cache['para']
 
         tail_cache: dict[int, torch.Tensor] = {}
+        dist_chunk = int(getattr(self.config, 'eval_distance_chunk_size', 8192))
+        dist_chunk = max(dist_chunk, 1)
+        para_scalar = para.squeeze() if para.dim() else para
+
         for rel_idx in torch.unique(relation_indices).tolist():
             rel_idx = int(rel_idx)
             query_rows = (relation_indices == rel_idx).nonzero(as_tuple=True)[0]
@@ -310,16 +311,18 @@ class DaBREncoder(BaseModel):
 
             hr_group = hr[query_rows]
             with _autocast_context(self.config):
-                score_s = -torch.sum(hr_group.unsqueeze(2) * tail_matrix.unsqueeze(0), dim=-1).float()
-            scores[query_rows] = score_s
-            self._append_distance_scores(
-                scores,
-                query_rows,
-                h[query_rows],
-                dr[query_rows],
-                entity_weight,
-                para,
-            )
+                score_s = -torch.matmul(hr_group, tail_matrix.t()).float()
+
+            for local_i in range(query_rows.numel()):
+                global_i = int(query_rows[local_i])
+                scores[global_i] = score_s[local_i]
+                scores[global_i] += self._distance_scores_one(
+                    h[global_i],
+                    dr[global_i],
+                    entity_weight,
+                    para_scalar,
+                    dist_chunk,
+                )
 
         return scores
 

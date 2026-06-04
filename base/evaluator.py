@@ -57,6 +57,13 @@ def _infer_target_indices(examples: Sequence[Example], entity_dict) -> torch.Ten
     return torch.LongTensor(target_indices)
 
 
+def _ranks_from_score_matrix(score: torch.Tensor, target_indices: torch.Tensor) -> list[int]:
+    """Compute 1-based filtered ranks without sorting the full score matrix."""
+
+    target_scores = score.gather(1, target_indices.unsqueeze(1))
+    return (score > target_scores).sum(dim=1).add(1).tolist()
+
+
 def _score_by_embedding_adapter(model, examples: List[Example], entity_tensor: torch.Tensor) -> torch.Tensor:
     """Score examples using the model's embedding adapters."""
 
@@ -361,17 +368,8 @@ class Evaluator:
             score = torch.mm(hr_tensor, entities_tensor.t())
         all_triplet_dict = get_all_triplet_dict()
         _filter_known(score, examples, all_triplet_dict, entity_dict)
-        target = torch.LongTensor([entity_dict.entity_to_idx(ex.tail_id) for ex in examples]).to(score.device)
-        sorted_indices = torch.sort(score, dim=-1, descending=True).indices
-        target_rank = torch.nonzero(sorted_indices.eq(target.unsqueeze(-1)).long(), as_tuple=False)
-        if target_rank.size(0) != score.size(0):
-            raise RuntimeError('Unable to compute one rank per example')
-        ranks = []
-        for idx in range(target_rank.size(0)):
-            row = target_rank[idx].tolist()
-            if row[0] != idx:
-                raise RuntimeError('Target rank rows are misaligned')
-            ranks.append(row[1] + 1)
+        target_indices = _infer_target_indices(examples, entity_dict).to(score.device)
+        ranks = _ranks_from_score_matrix(score, target_indices)
         metrics = ranking_metrics_from_ranks(ranks)
         return metrics
 
