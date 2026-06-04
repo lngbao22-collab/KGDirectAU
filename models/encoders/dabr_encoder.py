@@ -84,16 +84,21 @@ class DaBREncoder(BaseModel):
         return torch.cat([q_r / quaternion_norm, -q_i / quaternion_norm, -q_j / quaternion_norm, -q_k / quaternion_norm], dim=1)
 
     @staticmethod
-    def _calc(h, r, t, dr, para):
-        hr = DaBREncoder.vec_vec_wise_multiplication(h, r)
-        r_inv = DaBREncoder.get_inv(r)
+    def _calc_from_hr(h, t, dr, hr, r_inv, para) -> torch.Tensor:
+        """Score rows when ``hr = h⊗r`` and ``r_inv`` are already computed."""
+
         tr = DaBREncoder.vec_vec_wise_multiplication(t, r_inv)
         score_s = hr * tr
-
         hrt = h + dr - t
         s_d, x_d, y_d, z_d = torch.chunk(hrt, 4, dim=1)
         score_d = s_d + x_d + y_d + z_d
         return -torch.sum(score_s, -1) - para * torch.norm(score_d, p=1, dim=-1)
+
+    @staticmethod
+    def _calc(h, r, t, dr, para):
+        hr = DaBREncoder.vec_vec_wise_multiplication(h, r)
+        r_inv = DaBREncoder.get_inv(r)
+        return DaBREncoder._calc_from_hr(h, t, dr, hr, r_inv, para)
 
     @staticmethod
     def regularization(quaternion):
@@ -150,7 +155,11 @@ class DaBREncoder(BaseModel):
         raise TypeError('Unsupported model output type for logits computation')
 
     def score_batch(self, head_ids, relations, tail_entity_ids, query_chunk_size: int | None = None) -> torch.Tensor:
-        """Score queries against candidate tails; vectorized over candidates per query chunk."""
+        """Score queries against candidate tails.
+
+        Precomputes ``hr`` and ``r_inv`` once per query (not per candidate) to avoid
+        redundant quaternion products during full link-prediction ranking.
+        """
 
         device = self.ent_embeddings.weight.device
         head_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
@@ -167,7 +176,7 @@ class DaBREncoder(BaseModel):
             return torch.empty(num_queries, num_candidates, device=device)
 
         if query_chunk_size is None:
-            query_chunk_size = getattr(self.config, 'score_query_chunk_size', 64)
+            query_chunk_size = getattr(self.config, 'score_query_chunk_size', 128)
         query_chunk_size = max(int(query_chunk_size), 1)
 
         score_rows = []
@@ -176,14 +185,19 @@ class DaBREncoder(BaseModel):
             h_chunk = h[start:end]
             r_chunk = r[start:end]
             dr_chunk = dr[start:end]
+            hr_chunk = DaBREncoder.vec_vec_wise_multiplication(h_chunk, r_chunk)
+            r_inv_chunk = DaBREncoder.get_inv(r_chunk)
             q_size = h_chunk.size(0)
 
-            h_rep = h_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
-            r_rep = r_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
-            dr_rep = dr_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
             t_rep = t.unsqueeze(0).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
+            h_rep = h_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
+            dr_rep = dr_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
+            hr_rep = hr_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
+            r_inv_rep = r_inv_chunk.unsqueeze(1).expand(q_size, num_candidates, -1).reshape(q_size * num_candidates, -1)
 
-            chunk_scores = self._calc(h_rep, r_rep, t_rep, dr_rep, self.para).reshape(q_size, num_candidates)
+            chunk_scores = DaBREncoder._calc_from_hr(
+                h_rep, t_rep, dr_rep, hr_rep, r_inv_rep, self.para,
+            ).reshape(q_size, num_candidates)
             score_rows.append(chunk_scores)
 
         return torch.cat(score_rows, dim=0)

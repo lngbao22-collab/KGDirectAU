@@ -315,18 +315,23 @@ class Evaluator:
 
         if hasattr(model, 'score_batch'):
             all_entity_ids = [entity_ex.entity_id for entity_ex in entity_dict.entity_exs]
-            score = torch.zeros(len(examples), len(all_entity_ids))
-            for start in range(0, len(all_entity_ids), max(batch_size, 512)):
-                end = min(start + max(batch_size, 512), len(all_entity_ids))
+            score_device = next(model.parameters()).device
+            score = torch.zeros(len(examples), len(all_entity_ids), device=score_device)
+            entity_chunk_size = getattr(model, 'eval_entity_chunk_size', None)
+            if entity_chunk_size is None:
+                entity_chunk_size = getattr(model.config, 'eval_entity_chunk_size', None) if hasattr(model, 'config') else None
+            if entity_chunk_size is None:
+                entity_chunk_size = max(batch_size, 2048)
+            entity_chunk_size = max(int(entity_chunk_size), 1)
+            head_ids = [ex.head_id for ex in examples]
+            relations = [ex.relation for ex in examples]
+            for start in range(0, len(all_entity_ids), entity_chunk_size):
+                end = min(start + entity_chunk_size, len(all_entity_ids))
                 entity_chunk = all_entity_ids[start:end]
-                chunk_score = model.score_batch(
-                    [ex.head_id for ex in examples],
-                    [ex.relation for ex in examples],
-                    entity_chunk,
-                )
+                chunk_score = model.score_batch(head_ids, relations, entity_chunk)
                 if not isinstance(chunk_score, torch.Tensor):
-                    chunk_score = torch.tensor(chunk_score)
-                score[:, start:end] = chunk_score.detach().cpu()
+                    chunk_score = torch.tensor(chunk_score, device=score_device)
+                score[:, start:end] = chunk_score
         else:
             hr_tensor, _ = model.predict_by_examples(examples, batch_size=batch_size)
             entity_examples = [Example(head_id='', relation='', tail_id=entity_ex.entity_id) for entity_ex in entity_dict.entity_exs]
