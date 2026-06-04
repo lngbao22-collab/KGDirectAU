@@ -19,7 +19,7 @@ from models.builder import load_attr_from_path
 from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, save_checkpoint
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
 from utils.logger import AverageMeter, ProgressMeter, logger
-from models.losses.au_loss import KGAULoss, select_distinct_rows
+from models.losses.au_loss import KGAULoss, distinct_first_indices, select_distinct_rows
 
 
 def _load_encoder(args) -> torch.nn.Module:
@@ -44,25 +44,12 @@ def _config_float(args, name: str, default: float) -> float:
 	return default if value is None else float(value)
 
 
-def _config_int(args, name: str, default: int) -> int:
-	"""Read an int hyperparameter from args, treating JSON null as unset."""
+def _is_dabr_encoder(args) -> bool:
+	"""Return True when the configured encoder is DaBR (or DaBR-AU)."""
 
-	value = getattr(args, name, None)
-	return default if value is None else int(value)
-
-
-def _embedding_dim_for_memory(args) -> int:
-	"""Estimate per-vector width of the AU (q, t) vectors for training memory heuristics.
-
-	DaBR ``get_queries_targets`` returns concat([h⊗r, h+Dr], dim=-1), i.e. two 4*dim
-	quaternion vectors → effective AU vector width = 2 * 4 * dim = 8 * dim.
-	"""
-
-	dim = _config_int(args, 'dim', 0) or _config_int(args, 'hidden_size', 0)
 	encoder_path = str(getattr(args, 'model_encoder_path', '') or '').lower()
-	if 'dabr' in encoder_path:
-		return 8 * max(dim, 1)  # two 4*dim quaternion vectors concatenated
-	return max(dim, 1)
+	model_name = str(getattr(args, 'model', '') or '').lower()
+	return 'dabr' in encoder_path or 'dabr' in model_name
 
 
 def _add_inverse_relations(relation_to_idx: dict[str, int]) -> dict[str, int]:
@@ -288,6 +275,19 @@ class KGAUStrategy(Evaluator):
 		n_unique_t = t_uni.size(0) if t_uni is not None else 0
 		return q_uni, t_uni, h_uni, n_unique_q, n_unique_t
 
+	def _count_unique_uniformity_keys(
+		self,
+		head_indices: torch.Tensor,
+		relation_indices: torch.Tensor,
+		tail_indices: torch.Tensor,
+	) -> tuple[int, int]:
+		"""Count unique query/tail keys in a full training batch (logging only; cheap)."""
+
+		q_keys, t_keys, _ = self._uniformity_keys(head_indices, relation_indices, tail_indices)
+		n_unique_q = int(distinct_first_indices(q_keys).numel()) if self.criterion.gamma_q > 0 else 0
+		n_unique_t = int(distinct_first_indices(t_keys).numel()) if self.criterion.gamma_t > 0 else 0
+		return n_unique_q, n_unique_t
+
 	def _au_loss_with_distinct_keys(
 		self,
 		q_raw: torch.Tensor,
@@ -317,23 +317,16 @@ class KGAUStrategy(Evaluator):
 		return None
 
 	def _train_micro_batch_size(self, batch_size: int) -> int:
-		"""Split large batches so high-dim AU backward steps fit in GPU memory.
+		"""Split training batches only for DaBR (high memory AU vectors). Other encoders use full ``batch_size``."""
 
-		The AU vector width (from ``get_queries_targets``) drives memory:
-		- DaBR: 8*dim per vector (two 4*dim quaternion vectors concatenated)
-		- Others: embedding dim
-		"""
-
+		if not _is_dabr_encoder(self.args):
+			return batch_size
 		explicit = getattr(self.args, 'train_micro_batch_size', None)
 		if explicit is not None:
 			return max(int(explicit), 1)
-		au_dim = _embedding_dim_for_memory(self.args)
-		if au_dim >= 4000 and batch_size > 64:
+		# Default DaBR cap: 64 rows per forward/backward chunk on ~15 GiB GPUs.
+		if batch_size > 64:
 			return 64
-		if au_dim >= 2000 and batch_size > 128:
-			return 128
-		if au_dim >= 800 and batch_size > 256:
-			return 256
 		return batch_size
 
 	def _backward_au_loss(
@@ -358,16 +351,79 @@ class KGAUStrategy(Evaluator):
 		ts: torch.Tensor,
 		use_amp: bool,
 	) -> tuple[float, float, float, int, int, float, int]:
-		"""Run one optimizer step on a head/relation/tail batch (with optional micro-batching)."""
+		"""Run one optimizer step on a head/relation/tail batch.
 
-		micro_batch = min(self._train_micro_batch_size(ss.size(0)), ss.size(0))
+		Non-DaBR encoders use a single forward/backward over the full batch (unchanged).
+		DaBR may split into smaller chunks when ``train_micro_batch_size`` or the default cap applies.
+		"""
+
 		total = ss.size(0)
+		n_uq_log, n_ut_log = self._count_unique_uniformity_keys(ss, rs, ts)
+		micro_batch = min(self._train_micro_batch_size(total), total)
+
+		if micro_batch >= total:
+			return self._train_au_tensor_batch_single(
+				model, ss, rs, ts, use_amp, n_uq_log, n_ut_log, total,
+			)
+		return self._train_au_tensor_batch_micro(
+			model, ss, rs, ts, use_amp, n_uq_log, n_ut_log, total, micro_batch,
+		)
+
+	def _train_au_tensor_batch_single(
+		self,
+		model,
+		ss: torch.Tensor,
+		rs: torch.Tensor,
+		ts: torch.Tensor,
+		use_amp: bool,
+		n_uq_log: int,
+		n_ut_log: int,
+		total: int,
+	) -> tuple[float, float, float, int, int, float, int]:
+		"""Full-batch training step (DistMult-AU, ComplEx-AU, RotatE-AU, etc.)."""
+
+		self.optimizer.zero_grad()
+		q_keys, t_keys, h_keys = self._uniformity_keys(ss, rs, ts)
+		if use_amp:
+			with torch.amp.autocast(device_type='cuda'):
+				q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
+				ent_raw = self._entity_uniformity_vectors(model)
+				loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
+					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
+			self.scaler.scale(loss).backward()
+			self.scaler.unscale_(self.optimizer)
+			torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
+			self.scaler.step(self.optimizer)
+			self.scaler.update()
+		else:
+			q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
+			ent_raw = self._entity_uniformity_vectors(model)
+			loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
+				q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
+			loss.backward()
+			torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
+			self.optimizer.step()
+		return loss.item(), l_align.item(), l_unif.item(), n_uq_log, n_ut_log, margin_active, total
+
+	def _train_au_tensor_batch_micro(
+		self,
+		model,
+		ss: torch.Tensor,
+		rs: torch.Tensor,
+		ts: torch.Tensor,
+		use_amp: bool,
+		n_uq_log: int,
+		n_ut_log: int,
+		total: int,
+		micro_batch: int,
+	) -> tuple[float, float, float, int, int, float, int]:
+		"""DaBR-only: gradient accumulation over micro-batches to avoid OOM."""
+
 		loss_sum = 0.0
 		align_sum = 0.0
 		unif_sum = 0.0
-		n_uq = n_ut = 0
-		margin_active = 0.0
-		batches = 0
+		margin_acc = 0.0
+		margin_batches = 0
 
 		self.optimizer.zero_grad()
 		for start in range(0, total, micro_batch):
@@ -378,20 +434,21 @@ class KGAUStrategy(Evaluator):
 				with torch.amp.autocast(device_type='cuda'):
 					q_raw, t_raw, h_raw = model.get_queries_targets(ss[start:end], rs[start:end], ts[start:end])
 					ent_raw = self._entity_uniformity_vectors(model)
-					loss, l_align, l_unif, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
+					loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
 						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 				self._backward_au_loss(loss, fraction, use_amp=True)
 			else:
 				q_raw, t_raw, h_raw = model.get_queries_targets(ss[start:end], rs[start:end], ts[start:end])
 				ent_raw = self._entity_uniformity_vectors(model)
-				loss, l_align, l_unif, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
+				loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
 					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 				self._backward_au_loss(loss, fraction, use_amp=False)
 			chunk = end - start
 			loss_sum += loss.item() * chunk
 			align_sum += l_align.item() * chunk
 			unif_sum += l_unif.item() * chunk
-			batches += 1
+			margin_acc += margin_active
+			margin_batches += 1
 
 		if use_amp:
 			self.scaler.unscale_(self.optimizer)
@@ -402,11 +459,8 @@ class KGAUStrategy(Evaluator):
 			torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
 			self.optimizer.step()
 
-		if batches > 0:
-			n_uq = int(n_uq / batches)
-			n_ut = int(n_ut / batches)
-			margin_active = margin_active / batches
-		return loss_sum / total, align_sum / total, unif_sum / total, n_uq, n_ut, margin_active, total
+		avg_margin = (margin_acc / margin_batches) if margin_batches > 0 else 0.0
+		return loss_sum / total, align_sum / total, unif_sum / total, n_uq_log, n_ut_log, avg_margin, total
 
 	def _extract_monitor_value(self, metric_dict, valid_metric='mrr') -> float | None:
 		"""Extract the value to monitor for checkpointing decisions from the metric dictionary."""
