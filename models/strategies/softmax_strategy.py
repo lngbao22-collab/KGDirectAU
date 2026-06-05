@@ -3,6 +3,8 @@
 import os
 import time
 import torch
+import torch.nn.functional as F
+from torch import optim
 from torch.optim import Adam
 
 from base.evaluator import Evaluator
@@ -12,6 +14,18 @@ from models.losses.infonce_loss import compute_listwise_loss
 from utils.checkpoint import best_model_path, delete_old_ckt, last_model_path, save_checkpoint
 from utils.device import get_model_obj
 from utils.logger import logger
+
+
+def _build_optimizer(args, parameters, weight_decay: float):
+	"""Build the training optimizer; respects ``optim`` in config (adam / adagrad / sgd)."""
+
+	lr = float(getattr(args, 'lr', 1e-3))
+	optim_name = str(getattr(args, 'optim', 'adam')).lower()
+	if optim_name == 'adagrad':
+		return optim.Adagrad(parameters, lr=lr, weight_decay=weight_decay)
+	if optim_name == 'sgd':
+		return optim.SGD(parameters, lr=lr, weight_decay=weight_decay)
+	return Adam(parameters, lr=lr, weight_decay=weight_decay)
 
 
 class SoftmaxStrategy(object):
@@ -39,11 +53,15 @@ class SoftmaxStrategy(object):
 
 		batch_size = max(getattr(args, 'batch_size', 1), 1)
 		num_batches = max(num_train_triples // batch_size, 1)
-		weight_decay = getattr(args, 'weight_decay', None)
-		if weight_decay is None:
-			weight_decay = 0.0
-		self.weight_decay = float(weight_decay) / num_batches
-		self.optimizer = Adam(self.model.parameters(), lr=getattr(args, 'lr', 2e-5), weight_decay=self.weight_decay)
+		weight_decay = float(getattr(args, 'weight_decay', None) or 0.0)
+		# Divide by num_batches only in the legacy sampled mode (keeps the per-epoch
+		# L2 budget constant regardless of batch size). In 1-vs-all mode the user
+		# should supply weight_decay directly as the per-step Adam/AdaGrad value.
+		if getattr(args, 'train_1_to_n', False):
+			self.weight_decay = weight_decay
+		else:
+			self.weight_decay = weight_decay / num_batches
+		self.optimizer = _build_optimizer(args, self.model.parameters(), self.weight_decay)
 
 	def _iter_batches(self, src, rel, dst, batch_size):
 		"""Yield batches of triples from the provided tensors."""
@@ -146,6 +164,13 @@ class SoftmaxStrategy(object):
 		return None
 
 	def train_epoch(self, epoch):
+		if getattr(self.args, 'train_1_to_n', False):
+			return self._train_1_to_n_epoch(epoch)
+		return self._train_sampled_epoch(epoch)
+
+	def _train_sampled_epoch(self, epoch):
+		"""Original sampled-softmax training: Bernoulli listwise with n_sample negatives."""
+
 		self.model.train()
 		batch_size = max(getattr(self.args, 'batch_size', 1), 1)
 		if self.train_data is None:
@@ -168,6 +193,45 @@ class SoftmaxStrategy(object):
 		display_epoch = epoch + 1
 		logger.info(f"[EPOCH {display_epoch}] Train | Loss: {epoch_loss / max(len(src), 1):.4f}")
 		return epoch_loss / max(len(src), 1)
+
+	def _train_1_to_n_epoch(self, epoch):
+		"""1-vs-all softmax: score against the full entity vocabulary each step.
+
+		This matches the training regime used to obtain the reference MRR=0.44
+		results for ComplEx/DistMult on WN18RR. Shuffles triples each epoch and
+		uses ``model.query_all_entities_scores`` when available (avoids an extra
+		torch.cat on the full entity table).
+		"""
+
+		self.model.train()
+		batch_size = max(getattr(self.args, 'batch_size', 1), 1)
+		if self.train_data is None:
+			raise ValueError('SoftmaxStrategy requires train_data to train an epoch')
+		src, rel, dst = self.train_data
+		n = src.size(0)
+
+		perm = torch.randperm(n)
+		src = src[perm].to(self.device)
+		rel = rel[perm].to(self.device)
+		dst = dst[perm].to(self.device)
+
+		epoch_loss = 0.0
+		for ss, rs, ts in self._iter_batches(src, rel, dst, batch_size):
+			if hasattr(self.model, 'query_all_entities_scores'):
+				scores = self.model.query_all_entities_scores(ss, rs)
+			else:
+				q, _, _ = self.model.get_queries_targets(ss, rs, ss)
+				all_ent = self.model.entity_embeddings(device=self.device)
+				scores = torch.mm(q, all_ent.t())
+			loss = F.cross_entropy(scores, ts)
+			self.optimizer.zero_grad()
+			loss.backward()
+			self.optimizer.step()
+			epoch_loss += loss.item() * ss.size(0)
+
+		display_epoch = epoch + 1
+		logger.info(f"[EPOCH {display_epoch}] Train | Loss: {epoch_loss / max(n, 1):.4f}")
+		return epoch_loss / max(n, 1)
 
 	@torch.no_grad()
 	def eval_epoch(self, epoch):

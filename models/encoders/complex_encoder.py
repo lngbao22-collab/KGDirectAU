@@ -29,7 +29,6 @@ class ComplExEncoder(nn.Module):
 
 	def __init__(self, n_ent: int, n_rel: int, args):
 		super().__init__()
-		sigma = 0.2
 		self.dim = args.dim
 		self.rel_re_embed = nn.Embedding(n_rel, args.dim)
 		self.rel_im_embed = nn.Embedding(n_rel, args.dim)
@@ -42,9 +41,11 @@ class ComplExEncoder(nn.Module):
 			'normalize_lp_scores',
 			str(getattr(args, 'model', '')).endswith('-AU'),
 		)
-		scale = (args.dim / sigma ** 2) ** (1 / 6)
-		for param in self.parameters():
-			param.data.div_(scale)
+		if getattr(args, 'init_scaled', True):
+			sigma = 0.2
+			scale = (args.dim / sigma ** 2) ** (1 / 6)
+			for param in self.parameters():
+				param.data.div_(scale)
 
 	def _query_vectors(self, head_indices: torch.Tensor, relation_indices: torch.Tensor) -> torch.Tensor:
 		"""ComplEx query embeddings used for AU training and normalized link prediction."""
@@ -114,6 +115,24 @@ class ComplExEncoder(nn.Module):
 		if device is not None:
 			entity_vectors = entity_vectors.to(device)
 		return entity_vectors
+
+	def query_all_entities_scores(self, src: torch.Tensor, rel: torch.Tensor) -> torch.Tensor:
+		"""Score every entity as candidate tail for 1-vs-all softmax training.
+
+		Avoids torch.cat on the full entity table: computes the ComplEx
+		Re(<w_r, e_s, conj(e_o)>) score against all entities as two separate
+		batched matmuls, which keeps peak memory proportional to dim, not 2*dim.
+		Returns shape (batch, n_ent).
+		"""
+
+		h_re = self.ent_re_embed(src)
+		h_im = self.ent_im_embed(src)
+		r_re = self.rel_re_embed(rel)
+		r_im = self.rel_im_embed(rel)
+		q_re = h_re * r_re - h_im * r_im
+		q_im = h_re * r_im + h_im * r_re
+		return (torch.mm(q_re, self.ent_re_embed.weight.t()) +
+				torch.mm(q_im, self.ent_im_embed.weight.t()))
 
 	def hr_embeddings(self, examples: Sequence[Example], device: torch.device | None = None) -> torch.Tensor:
 		"""Return query embeddings for a list of examples."""
@@ -224,23 +243,42 @@ def _relation_path_candidates(args) -> list[str]:
 
 
 def _load_relation_to_idx(args) -> dict[str, int]:
-	"""Load the relation-to-index mapping from candidate paths or construct it from training data."""
+	"""Load the relation-to-index mapping from candidate paths or construct it from training data.
 
+	When ``add_reciprocal_relations=True`` in args, every forward relation gets a
+	corresponding distinct ``"inverse <relation>"`` entry so head-reciprocal
+	triples receive their own embeddings.
+	"""
+
+	base: dict[str, int] = {}
 	for path in _relation_path_candidates(args):
 		if not path or not os.path.exists(path):
 			continue
 		with open(path, 'r', encoding='utf-8') as handle:
 			mapping = json.load(handle)
 		if isinstance(mapping, dict):
-			return {str(key): int(value) for key, value in mapping.items()}
+			base = {str(key): int(value) for key, value in mapping.items()}
+			break
 
-	relations = []
-	seen = set()
-	for example in load_data(getattr(args, 'train_path', ''), add_forward_triplet=False, add_backward_triplet=False):
-		if example.relation not in seen:
-			seen.add(example.relation)
-			relations.append(example.relation)
-	return {relation: idx for idx, relation in enumerate(relations)}
+	if not base:
+		relations = []
+		seen: set[str] = set()
+		for example in load_data(getattr(args, 'train_path', ''), add_forward_triplet=False, add_backward_triplet=False):
+			if example.relation not in seen:
+				seen.add(example.relation)
+				relations.append(example.relation)
+		base = {relation: idx for idx, relation in enumerate(relations)}
+
+	if getattr(args, 'add_reciprocal_relations', False):
+		next_idx = max(base.values(), default=-1) + 1
+		for rel in list(base.keys()):
+			if not rel.startswith('inverse '):
+				inv_rel = f'inverse {rel}'
+				if inv_rel not in base:
+					base[inv_rel] = next_idx
+					next_idx += 1
+
+	return base
 
 
 def _as_index_tensor(values, lookup, device: torch.device) -> torch.Tensor:

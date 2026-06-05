@@ -15,7 +15,7 @@ from torch.optim import Adam
 from base.evaluator import Evaluator
 from data.dataloader import collate
 from data.dataset import Dataset, load_data
-from data.dict_hub import build_tokenizer, get_entity_dict, get_relation_id_map
+from data.dict_hub import get_entity_dict, get_relation_id_map
 from models.builder import load_attr_from_path
 from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, save_checkpoint
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
@@ -92,6 +92,43 @@ def _build_optimizer(args, parameters, weight_decay: float):
 	return Adam(parameters, lr=lr, weight_decay=weight_decay)
 
 
+def _build_text_train_loader(args, train_examples) -> torch.utils.data.DataLoader:
+	"""Build the tokenized training loader (SimKGC/BERT only)."""
+
+	from data.dict_hub import build_tokenizer, init_dataloader_worker, warmup_data_structures
+
+	build_tokenizer(args)
+	warmup_data_structures()
+
+	train_workers = int(getattr(args, 'workers', 0))
+	train_loader_kwargs = {
+		'dataset': Dataset(path='', examples=train_examples, task=args.dataset),
+		'batch_size': max(getattr(args, 'batch_size', 1), 1),
+		'shuffle': True,
+		'collate_fn': collate,
+		'num_workers': train_workers,
+		'pin_memory': True,
+		'drop_last': True,
+	}
+	if train_workers > 0:
+		train_loader_kwargs['worker_init_fn'] = init_dataloader_worker
+		train_loader_kwargs['persistent_workers'] = True
+	return torch.utils.data.DataLoader(**train_loader_kwargs)
+
+
+def _entity_embeddings_call_kwargs(model, device: torch.device, criterion: KGAULoss) -> dict:
+	"""Build ``entity_embeddings`` kwargs supported by the configured encoder."""
+
+	supported = inspect.signature(model.entity_embeddings).parameters
+	kwargs: dict = {}
+	if 'device' in supported:
+		kwargs['device'] = device
+	if 'max_samples' in supported:
+		max_samples = int(getattr(criterion, 'max_uniformity_samples', 0) or 0)
+		kwargs['max_samples'] = max_samples or None
+	return kwargs
+
+
 class KGAUStrategy(Evaluator):
 	"""Knowledge Graph Alignment and Uniformity training loop for KG encoders."""
 
@@ -99,8 +136,6 @@ class KGAUStrategy(Evaluator):
 		super().__init__(args)
 		self.ngpus_per_node = ngpus_per_node
 		self.uses_text_inputs = _uses_text_inputs(args)
-		if self.uses_text_inputs:
-			build_tokenizer(args)
 		# Inverse triplets (reverse_triplet) are only used by text encoders (e.g. SimKGC/BERT).
 		add_backward_triplet = self.uses_text_inputs
 		self.train_examples = load_data(
@@ -116,15 +151,7 @@ class KGAUStrategy(Evaluator):
 		if not self.uses_text_inputs:
 			self.train_src, self.train_rel, self.train_dst = self._examples_to_tensors(self.train_examples)
 		else:
-			self.train_loader = torch.utils.data.DataLoader(
-				Dataset(path='', examples=self.train_examples, task=args.dataset),
-				batch_size=max(getattr(args, 'batch_size', 1), 1),
-				shuffle=True,
-				collate_fn=collate,
-				num_workers=getattr(args, 'workers', 0),
-				pin_memory=True,
-				drop_last=True,
-			)
+			self.train_loader = _build_text_train_loader(args, self.train_examples)
 
 		if torch.cuda.device_count() > 1:
 			self.model = torch.nn.DataParallel(self.model).cuda()
@@ -314,10 +341,7 @@ class KGAUStrategy(Evaluator):
 			return None
 		if not hasattr(model, 'entity_embeddings'):
 			return None
-		kwargs: dict = {'device': self.device}
-		if 'max_samples' in inspect.signature(model.entity_embeddings).parameters:
-			max_samples = int(getattr(self.criterion, 'max_uniformity_samples', 0) or 0)
-			kwargs['max_samples'] = max_samples or None
+		kwargs = _entity_embeddings_call_kwargs(model, self.device, self.criterion)
 		return model.entity_embeddings(**kwargs)
 
 	def _train_micro_batch_size(self, batch_size: int) -> int:

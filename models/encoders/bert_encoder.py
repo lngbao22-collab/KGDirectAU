@@ -43,6 +43,7 @@ class CustomBertModel(BaseModel, ABC):
 
         self.hr_bert = AutoModel.from_pretrained(args.bert_encoder)
         self.tail_bert = deepcopy(self.hr_bert)
+        self._full_entity_predict_loader = None
 
     def _encode(self, encoder, token_ids, mask, token_type_ids) -> torch.Tensor:
         """Encode input sequences using the specified BERT encoder and pooling strategy."""
@@ -152,11 +153,70 @@ class CustomBertModel(BaseModel, ABC):
         outputs = self(**batch_dict)
         return outputs['hr_vector'], outputs['tail_vector'], outputs['head_vector']
 
-    @torch.no_grad()
-    def entity_embeddings(self, device: torch.device | None = None, batch_size: Optional[int] = None, num_workers: int = 2) -> torch.Tensor:
-        """Encode all entities into embeddings using the tail BERT encoder."""
+    def _resolve_entity_loader_workers(self, num_workers: Optional[int], entity_count: int) -> int:
+        """Pick DataLoader worker count; subsampled entity passes stay in-process."""
 
-        entity_embeddings = self.predict_by_entities(get_entity_dict().entity_exs, batch_size=batch_size, num_workers=num_workers)
+        if num_workers is not None:
+            return int(num_workers)
+        total_entities = len(get_entity_dict().entity_exs)
+        if entity_count < total_entities:
+            return 0
+        return int(getattr(self.args, 'workers', 0))
+
+    def _ensure_full_entity_predict_loader(self, batch_size: int, num_workers: int) -> torch.utils.data.DataLoader:
+        """Reuse one persistent DataLoader for full-catalog entity encoding."""
+
+        if self._full_entity_predict_loader is not None:
+            return self._full_entity_predict_loader
+
+        from data.dict_hub import init_dataloader_worker
+
+        examples = []
+        for entity_ex in get_entity_dict().entity_exs:
+            entity_id = getattr(entity_ex, 'entity_id', None)
+            if entity_id is None:
+                entity_id = getattr(entity_ex, 'tail_id', None)
+            if entity_id is None:
+                raise AttributeError('Expected entity examples with an entity_id or tail_id attribute')
+            examples.append(Example(head_id='', relation='', tail_id=entity_id))
+
+        loader_kwargs = {
+            'dataset': Dataset(path='', examples=examples, task=self.args.dataset),
+            'batch_size': batch_size,
+            'collate_fn': collate,
+            'shuffle': False,
+            'num_workers': num_workers,
+            'pin_memory': torch.cuda.is_available(),
+        }
+        if num_workers > 0:
+            loader_kwargs['worker_init_fn'] = init_dataloader_worker
+            loader_kwargs['persistent_workers'] = True
+
+        self._full_entity_predict_loader = torch.utils.data.DataLoader(**loader_kwargs)
+        return self._full_entity_predict_loader
+
+    @torch.no_grad()
+    def entity_embeddings(
+        self,
+        device: torch.device | None = None,
+        batch_size: Optional[int] = None,
+        num_workers: Optional[int] = None,
+        max_samples: int | None = None,
+    ) -> torch.Tensor:
+        """Encode entity embeddings for optional entity-level uniformity."""
+
+        entity_exs = get_entity_dict().entity_exs
+        if max_samples is not None and int(max_samples) > 0 and len(entity_exs) > int(max_samples):
+            indices = torch.randperm(len(entity_exs))[: int(max_samples)].tolist()
+            entity_exs = [entity_exs[i] for i in indices]
+
+        loader_workers = self._resolve_entity_loader_workers(num_workers, len(entity_exs))
+        entity_embeddings = self.predict_by_entities(
+            entity_exs,
+            batch_size=batch_size,
+            num_workers=loader_workers,
+            show_progress=False,
+        )
         if device is not None:
             entity_embeddings = entity_embeddings.to(device)
         return entity_embeddings
@@ -200,31 +260,49 @@ class CustomBertModel(BaseModel, ABC):
         return torch.cat(hr_tensor_list, dim=0), torch.cat(tail_tensor_list, dim=0)
 
     @torch.no_grad()
-    def predict_by_entities(self, entity_exs, batch_size: Optional[int] = None, num_workers: int = 2) -> torch.Tensor:
-        """Predict entity embeddings for a list of entity examples, used for efficient inference of all entities."""
+    def predict_by_entities(
+        self,
+        entity_exs,
+        batch_size: Optional[int] = None,
+        num_workers: Optional[int] = None,
+        show_progress: bool | None = None,
+    ) -> torch.Tensor:
+        """Predict entity embeddings for a list of entity examples."""
 
-        examples = []
-        for entity_ex in entity_exs:
-            entity_id = getattr(entity_ex, 'entity_id', None)
-            if entity_id is None:
-                entity_id = getattr(entity_ex, 'tail_id', None)
-            if entity_id is None:
-                raise AttributeError('Expected entity examples with an entity_id or tail_id attribute')
-            examples.append(Example(head_id='', relation='', tail_id=entity_id))
         if batch_size is None:
             batch_size = max(self.args.batch_size, 1024)
 
-        data_loader = torch.utils.data.DataLoader(
-            Dataset(path='', examples=examples, task=self.args.dataset),
-            num_workers=num_workers,
-            batch_size=batch_size,
-            collate_fn=collate,
-            shuffle=False,
-        )
+        total_entities = len(get_entity_dict().entity_exs)
+        loader_workers = self._resolve_entity_loader_workers(num_workers, len(entity_exs))
+        use_full_catalog_loader = len(entity_exs) == total_entities
+
+        if use_full_catalog_loader:
+            data_loader = self._ensure_full_entity_predict_loader(batch_size, loader_workers)
+        else:
+            examples = []
+            for entity_ex in entity_exs:
+                entity_id = getattr(entity_ex, 'entity_id', None)
+                if entity_id is None:
+                    entity_id = getattr(entity_ex, 'tail_id', None)
+                if entity_id is None:
+                    raise AttributeError('Expected entity examples with an entity_id or tail_id attribute')
+                examples.append(Example(head_id='', relation='', tail_id=entity_id))
+            data_loader = torch.utils.data.DataLoader(
+                Dataset(path='', examples=examples, task=self.args.dataset),
+                num_workers=0,
+                batch_size=batch_size,
+                collate_fn=collate,
+                shuffle=False,
+                pin_memory=torch.cuda.is_available(),
+            )
+
+        if show_progress is None:
+            show_progress = not self.training
 
         ent_tensor_list = []
         use_cuda = torch.cuda.is_available()
-        for _, batch_dict in enumerate(tqdm.tqdm(data_loader)):
+        iterator = tqdm.tqdm(data_loader) if show_progress else data_loader
+        for _, batch_dict in enumerate(iterator):
             batch_dict['only_ent_embedding'] = True
             if use_cuda:
                 batch_dict = move_to_cuda(batch_dict)
