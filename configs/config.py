@@ -157,6 +157,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help='uniformity weight for head embeddings (default 0 when omitted)')
     parser.add_argument('--gamma-ent', '--gamma_ent', default=None, type=float,
                         help='uniformity weight for all entity embeddings')
+    parser.add_argument('--ent-refresh-steps', '--ent_refresh_steps', default=None, type=int,
+                        help='reuse cached entity embeddings for this many batches (SimKGC; default ~5 refreshes/epoch)')
+    parser.add_argument('--max-uniformity-samples', '--max_uniformity_samples', default=None, type=int,
+                        help='cap entity/uniformity row count before pairwise loss (default 1024)')
     parser.add_argument('--tuni', default=None, type=float,
                         help='AU uniformity temperature (Gaussian potential scale)')
     normalize_group = parser.add_mutually_exclusive_group()

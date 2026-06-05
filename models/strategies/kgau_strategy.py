@@ -184,6 +184,19 @@ class KGAUStrategy(Evaluator):
 			max_uniformity_samples=int(_config_float(args, 'max_uniformity_samples', 1024)),
 			additive_margin=_config_float(args, 'additive_margin', 0.0),
 		).to(self.device)
+		ent_refresh = getattr(args, 'ent_refresh_steps', None)
+		if ent_refresh is None and self.uses_text_inputs and self.criterion.gamma_ent > 0:
+			# BERT entity encoding is expensive; default to ~5 catalog refreshes per epoch.
+			ent_refresh = max(num_batches // 5, 1)
+		self.ent_refresh_steps = max(int(ent_refresh or 1), 1)
+		self._ent_cache: torch.Tensor | None = None
+		self._ent_cache_age = 0
+		if self.criterion.gamma_ent > 0 and self.uses_text_inputs and self.ent_refresh_steps > 1:
+			logger.info(
+				'Entity uniformity cache: refresh catalog every %d batches (max_uniformity_samples=%d)',
+				self.ent_refresh_steps,
+				self.criterion.max_uniformity_samples,
+			)
 		self.best_metric = None
 		self.best_checkpoint_path = None
 		self.train_time = 0.0
@@ -334,15 +347,33 @@ class KGAUStrategy(Evaluator):
 			q_raw, t_raw, h_raw, ent_raw, q_uni=q_uni, t_uni=t_uni, h_uni=h_uni, return_stats=True)
 		return loss, l_align, l_unif, n_unique_q, n_unique_t, margin_active_frac
 
+	def _invalidate_ent_cache(self) -> None:
+		"""Drop cached entity vectors (new epoch or changed model weights)."""
+
+		self._ent_cache = None
+		self._ent_cache_age = 0
+
 	def _entity_uniformity_vectors(self, model) -> torch.Tensor | None:
-		"""Optional entity embeddings for uniformity; never materialize the full table on GPU."""
+		"""Optional entity embeddings for uniformity; never materialize the full table on GPU.
+
+		For text encoders (SimKGC), reuses a cached catalog pass for ``ent_refresh_steps``
+		batches to avoid re-encoding entities on every optimizer step. Embedding-table
+		encoders always fetch fresh vectors (cheap lookup; avoids stale ``torch.cat`` views).
+		"""
 
 		if self.criterion.gamma_ent <= 0:
 			return None
 		if not hasattr(model, 'entity_embeddings'):
 			return None
 		kwargs = _entity_embeddings_call_kwargs(model, self.device, self.criterion)
-		return model.entity_embeddings(**kwargs)
+		if not self.uses_text_inputs:
+			return model.entity_embeddings(**kwargs)
+		if self._ent_cache is not None and self._ent_cache_age < self.ent_refresh_steps:
+			self._ent_cache_age += 1
+			return self._ent_cache
+		self._ent_cache = model.entity_embeddings(**kwargs)
+		self._ent_cache_age = 1
+		return self._ent_cache
 
 	def _train_micro_batch_size(self, batch_size: int) -> int:
 		"""Split training batches only for DaBR (high memory AU vectors). Other encoders use full ``batch_size``."""
@@ -586,6 +617,7 @@ class KGAUStrategy(Evaluator):
 		"""Train the model for one epoch and return the average training loss."""
 
 		self.model.train()
+		self._invalidate_ent_cache()
 		epoch_loss = 0.0
 		epoch_align_loss = 0.0
 		epoch_unif_loss = 0.0
