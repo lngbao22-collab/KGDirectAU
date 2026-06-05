@@ -123,25 +123,25 @@ def _build_softmax_trainer(current_args):
     if torch.cuda.is_available():
         model.cuda()
 
-	entity_dict = get_entity_dict()
-	# When add_reciprocal_relations is set, load inverse triples too.
-	# The encoder's rel_to_idx already includes inverse-relation indices.
-	add_backward = getattr(current_args, 'add_reciprocal_relations', False)
-	train_examples = load_data(current_args.train_path, add_forward_triplet=True, add_backward_triplet=add_backward)
-	if not train_examples:
-		raise ValueError(f'No training examples loaded from {current_args.train_path}')
+    entity_dict = get_entity_dict()
+    # When add_reciprocal_relations is set, load inverse triples too.
+    # The encoder's rel_to_idx already includes inverse-relation indices.
+    add_backward = getattr(current_args, 'add_reciprocal_relations', False)
+    train_examples = load_data(current_args.train_path, add_forward_triplet=True, add_backward_triplet=add_backward)
+    if not train_examples:
+        raise ValueError(f'No training examples loaded from {current_args.train_path}')
 
-	# Use the encoder's relation map so inverse-relation indices line up
-	# with what the embedding table was sized for.
-	rel_map = getattr(model, 'rel_to_idx', None) or get_relation_id_map()
-	train_tensors = _examples_to_tensors(train_examples, entity_dict, rel_map)
-	sampler = BernoulliListwiseSampler(
-		train_tensors,
-		len(entity_dict),
-		max(len(rel_map), 1),
-		getattr(current_args, 'n_sample', getattr(current_args, 'batch_size', 1)),
-	)
-	return strategy_cls(model, sampler, current_args, len(train_examples), train_data=train_tensors)
+    # Use the encoder's relation map so inverse-relation indices line up
+    # with what the embedding table was sized for.
+    rel_map = getattr(model, 'rel_to_idx', None) or get_relation_id_map()
+    train_tensors = _examples_to_tensors(train_examples, entity_dict, rel_map)
+    sampler = BernoulliListwiseSampler(
+        train_tensors,
+        len(entity_dict),
+        max(len(rel_map), 1),
+        getattr(current_args, 'n_sample', getattr(current_args, 'batch_size', 1)),
+    )
+    return strategy_cls(model, sampler, current_args, len(train_examples), train_data=train_tensors)
 
 
 def _build_adversarial_trainer(current_args):
