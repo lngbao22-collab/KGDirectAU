@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 import math
 import time
@@ -311,10 +312,13 @@ class KGAUStrategy(Evaluator):
 
 		if self.criterion.gamma_ent <= 0:
 			return None
-		max_samples = int(getattr(self.criterion, 'max_uniformity_samples', 0) or 0)
-		if hasattr(model, 'entity_embeddings'):
-			return model.entity_embeddings(device=self.device, max_samples=max_samples or None)
-		return None
+		if not hasattr(model, 'entity_embeddings'):
+			return None
+		kwargs: dict = {'device': self.device}
+		if 'max_samples' in inspect.signature(model.entity_embeddings).parameters:
+			max_samples = int(getattr(self.criterion, 'max_uniformity_samples', 0) or 0)
+			kwargs['max_samples'] = max_samples or None
+		return model.entity_embeddings(**kwargs)
 
 	def _train_micro_batch_size(self, batch_size: int) -> int:
 		"""Split training batches only for DaBR (high memory AU vectors). Other encoders use full ``batch_size``."""
