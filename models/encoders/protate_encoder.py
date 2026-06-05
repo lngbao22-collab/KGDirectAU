@@ -184,8 +184,9 @@ class pRotatEEncoder(BaseModel):
         entity_indices = _as_index_tensor(entity_ids, self.entity_dict.entity_to_idx, device)
         return self.entity_embeddings(device=device)[entity_indices]
 
-    def score_batch(self, head_ids, relations, tail_entity_ids) -> torch.Tensor:
-        """Score a batch using pRotatE tail-batch distance scores."""
+    @torch.inference_mode()
+    def score_batch(self, head_ids, relations, tail_entity_ids, query_chunk_size: int | None = None) -> torch.Tensor:
+        """Score queries against candidate tails, or paired triples when lengths match."""
 
         device = self.entity_embedding.device
 
@@ -193,9 +194,44 @@ class pRotatEEncoder(BaseModel):
         relation_indices = _as_index_tensor(relations, self._relation_to_idx, device)
         candidate_indices = _as_index_tensor(tail_entity_ids, self.entity_dict.entity_to_idx, device)
 
-        positive_sample = torch.stack([head_indices, relation_indices, torch.zeros_like(head_indices)], dim=-1)
-        negative_sample = candidate_indices.unsqueeze(0).expand(len(head_ids), len(candidate_indices))
-        return self._score(positive_sample, negative_sample, mode="tail-batch")
+        num_queries = head_indices.size(0)
+        num_candidates = candidate_indices.size(0)
+        if num_queries == 0 or num_candidates == 0:
+            return torch.empty(num_queries, num_candidates, device=device)
+
+        if num_queries == num_candidates == len(relations):
+            positive_sample = torch.stack([head_indices, relation_indices, candidate_indices], dim=-1)
+            return self._score(positive_sample, mode="single").squeeze(-1)
+
+        if query_chunk_size is None:
+            query_chunk_size = _config_int(self.args, "score_query_chunk_size", 256)
+        else:
+            query_chunk_size = int(query_chunk_size)
+        query_chunk_size = max(query_chunk_size, 1)
+
+        candidate_chunk_size = _config_int(self.args, "eval_candidate_chunk_size", 1024)
+        candidate_chunk_size = max(candidate_chunk_size, 1)
+
+        scores = torch.empty(num_queries, num_candidates, device=device, dtype=torch.float32)
+        for cand_start in range(0, num_candidates, candidate_chunk_size):
+            cand_end = min(cand_start + candidate_chunk_size, num_candidates)
+            cand_chunk = candidate_indices[cand_start:cand_end]
+
+            for q_start in range(0, num_queries, query_chunk_size):
+                q_end = min(q_start + query_chunk_size, num_queries)
+                positive_sample = torch.stack(
+                    [
+                        head_indices[q_start:q_end],
+                        relation_indices[q_start:q_end],
+                        torch.zeros(q_end - q_start, dtype=torch.long, device=device),
+                    ],
+                    dim=-1,
+                )
+                negative_sample = cand_chunk.unsqueeze(0).expand(q_end - q_start, cand_chunk.size(0))
+                block_score = self._score(positive_sample, negative_sample, mode="tail-batch")
+                scores[q_start:q_end, cand_start:cand_end] = block_score.float()
+
+        return scores
 
     def _relation_to_idx(self, relation: str) -> int:
         """Resolve relation variants used by preprocessing and inverse triplet generation."""
@@ -250,6 +286,15 @@ def _load_relation_to_idx(args) -> dict[str, int]:
             seen.add(example.relation)
             relations.append(example.relation)
     return {relation: idx for idx, relation in enumerate(relations)}
+
+
+def _config_int(args, key: str, default: int) -> int:
+    """Read an integer config value from args, falling back to default when unset."""
+
+    value = getattr(args, key, None)
+    if value is None:
+        return default
+    return int(value)
 
 
 def _as_index_tensor(values, lookup, device: torch.device) -> torch.Tensor:
