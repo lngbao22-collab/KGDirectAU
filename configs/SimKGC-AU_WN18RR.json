@@ -54,8 +54,5 @@
   "gamma_t": 1.0,
   "gamma_h": 1.0,
   "gamma_ent": 1.0,
-  "tuni": 4.0,
-
-  "max_uniformity_samples": 512,
-  "ent_refresh_steps": 50
+  "tuni": 4.0
 }

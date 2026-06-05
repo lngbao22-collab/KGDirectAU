@@ -184,17 +184,10 @@ class KGAUStrategy(Evaluator):
 			max_uniformity_samples=int(_config_float(args, 'max_uniformity_samples', 1024)),
 			additive_margin=_config_float(args, 'additive_margin', 0.0),
 		).to(self.device)
-		ent_refresh = getattr(args, 'ent_refresh_steps', None)
-		if ent_refresh is None and self.uses_text_inputs and self.criterion.gamma_ent > 0:
-			# BERT entity encoding is expensive; default to ~5 catalog refreshes per epoch.
-			ent_refresh = max(num_batches // 5, 1)
-		self.ent_refresh_steps = max(int(ent_refresh or 1), 1)
-		self._ent_cache: torch.Tensor | None = None
-		self._ent_cache_age = 0
-		if self.criterion.gamma_ent > 0 and self.uses_text_inputs and self.ent_refresh_steps > 1:
+		if self.criterion.gamma_ent > 0 and self.uses_text_inputs:
 			logger.info(
-				'Entity uniformity cache: refresh catalog every %d batches (max_uniformity_samples=%d)',
-				self.ent_refresh_steps,
+				'Entity uniformity (text encoder): gamma_ent uses deduplicated batch head+tail vectors '
+				'(max_uniformity_samples=%d)',
 				self.criterion.max_uniformity_samples,
 			)
 		self.best_metric = None
@@ -347,33 +340,61 @@ class KGAUStrategy(Evaluator):
 			q_raw, t_raw, h_raw, ent_raw, q_uni=q_uni, t_uni=t_uni, h_uni=h_uni, return_stats=True)
 		return loss, l_align, l_unif, n_unique_q, n_unique_t, margin_active_frac
 
-	def _invalidate_ent_cache(self) -> None:
-		"""Drop cached entity vectors (new epoch or changed model weights)."""
+	def _batch_entity_uniformity_vectors(
+		self,
+		h_raw: torch.Tensor,
+		t_raw: torch.Tensor,
+		h_keys: torch.Tensor,
+		t_keys: torch.Tensor,
+	) -> torch.Tensor | None:
+		"""Build entity-uniformity inputs from unique batch heads and tails (SimKGC-style).
 
-		self._ent_cache = None
-		self._ent_cache_age = 0
-
-	def _entity_uniformity_vectors(self, model) -> torch.Tensor | None:
-		"""Optional entity embeddings for uniformity; never materialize the full table on GPU.
-
-		For text encoders (SimKGC), reuses a cached catalog pass for ``ent_refresh_steps``
-		batches to avoid re-encoding entities on every optimizer step. Embedding-table
-		encoders always fetch fresh vectors (cheap lookup; avoids stale ``torch.cat`` views).
+		Matches ``--uniformity-on-entity`` in the standalone SimKGC repo: one pooled
+		uniformity term over deduplicated head/tail entity vectors from the current
+		batch, with gradients flowing through the main forward pass.
 		"""
+
+		if self.criterion.gamma_ent <= 0 or h_raw.size(0) == 0:
+			return None
+
+		seen: set[int] = set()
+		rows: list[torch.Tensor] = []
+		head_ids = h_keys.reshape(-1).tolist()
+		tail_ids = t_keys.reshape(-1).tolist()
+		for i, (head_id, tail_id) in enumerate(zip(head_ids, tail_ids)):
+			if head_id not in seen:
+				seen.add(head_id)
+				rows.append(h_raw[i])
+			if tail_id not in seen:
+				seen.add(tail_id)
+				rows.append(t_raw[i])
+		if len(rows) < 2:
+			return None
+		return torch.stack(rows, dim=0)
+
+	def _catalog_entity_uniformity_vectors(self, model) -> torch.Tensor | None:
+		"""Full entity-table vectors for embedding encoders (ComplEx, DistMult, DaBR, etc.)."""
 
 		if self.criterion.gamma_ent <= 0:
 			return None
 		if not hasattr(model, 'entity_embeddings'):
 			return None
 		kwargs = _entity_embeddings_call_kwargs(model, self.device, self.criterion)
-		if not self.uses_text_inputs:
-			return model.entity_embeddings(**kwargs)
-		if self._ent_cache is not None and self._ent_cache_age < self.ent_refresh_steps:
-			self._ent_cache_age += 1
-			return self._ent_cache
-		self._ent_cache = model.entity_embeddings(**kwargs)
-		self._ent_cache_age = 1
-		return self._ent_cache
+		return model.entity_embeddings(**kwargs)
+
+	def _entity_uniformity_vectors_for_loss(
+		self,
+		model,
+		h_raw: torch.Tensor,
+		t_raw: torch.Tensor,
+		h_keys: torch.Tensor,
+		t_keys: torch.Tensor,
+	) -> torch.Tensor | None:
+		"""Entity vectors for ``gamma_ent``: batch dedup (text) or full table (embedding encoders)."""
+
+		if self.uses_text_inputs:
+			return self._batch_entity_uniformity_vectors(h_raw, t_raw, h_keys, t_keys)
+		return self._catalog_entity_uniformity_vectors(model)
 
 	def _train_micro_batch_size(self, batch_size: int) -> int:
 		"""Split training batches only for DaBR (high memory AU vectors). Other encoders use full ``batch_size``."""
@@ -446,7 +467,8 @@ class KGAUStrategy(Evaluator):
 		if use_amp:
 			with torch.amp.autocast(device_type='cuda'):
 				q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
-				ent_raw = self._entity_uniformity_vectors(model)
+				ent_raw = self._entity_uniformity_vectors_for_loss(
+					model, h_raw, t_raw, h_keys, t_keys)
 				loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
 					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 			self.scaler.scale(loss).backward()
@@ -456,7 +478,8 @@ class KGAUStrategy(Evaluator):
 			self.scaler.update()
 		else:
 			q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
-			ent_raw = self._entity_uniformity_vectors(model)
+			ent_raw = self._entity_uniformity_vectors_for_loss(
+				model, h_raw, t_raw, h_keys, t_keys)
 			loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
 				q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 			loss.backward()
@@ -492,13 +515,15 @@ class KGAUStrategy(Evaluator):
 			if use_amp:
 				with torch.amp.autocast(device_type='cuda'):
 					q_raw, t_raw, h_raw = model.get_queries_targets(ss[start:end], rs[start:end], ts[start:end])
-					ent_raw = self._entity_uniformity_vectors(model)
+					ent_raw = self._entity_uniformity_vectors_for_loss(
+						model, h_raw, t_raw, h_keys, t_keys)
 					loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
 						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 				self._backward_au_loss(loss, fraction, use_amp=True)
 			else:
 				q_raw, t_raw, h_raw = model.get_queries_targets(ss[start:end], rs[start:end], ts[start:end])
-				ent_raw = self._entity_uniformity_vectors(model)
+				ent_raw = self._entity_uniformity_vectors_for_loss(
+					model, h_raw, t_raw, h_keys, t_keys)
 				loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
 					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 				self._backward_au_loss(loss, fraction, use_amp=False)
@@ -617,7 +642,6 @@ class KGAUStrategy(Evaluator):
 		"""Train the model for one epoch and return the average training loss."""
 
 		self.model.train()
-		self._invalidate_ent_cache()
 		epoch_loss = 0.0
 		epoch_align_loss = 0.0
 		epoch_unif_loss = 0.0
@@ -644,7 +668,8 @@ class KGAUStrategy(Evaluator):
 						q_raw = outputs['hr_vector']
 						t_raw = outputs['tail_vector']
 						h_raw = outputs['head_vector']
-						ent_raw = self._entity_uniformity_vectors(model)
+						ent_raw = self._entity_uniformity_vectors_for_loss(
+							model, h_raw, t_raw, h_keys, t_keys)
 						loss, l_align, l_unif, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
 							q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					self.scaler.scale(loss).backward()
@@ -657,7 +682,8 @@ class KGAUStrategy(Evaluator):
 					q_raw = outputs['hr_vector']
 					t_raw = outputs['tail_vector']
 					h_raw = outputs['head_vector']
-					ent_raw = self._entity_uniformity_vectors(model)
+					ent_raw = self._entity_uniformity_vectors_for_loss(
+						model, h_raw, t_raw, h_keys, t_keys)
 					loss, l_align, l_unif, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
 						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					loss.backward()
