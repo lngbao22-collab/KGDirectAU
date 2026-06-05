@@ -84,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help='learning-rate scheduler')
     parser.add_argument('--max-num-tokens', default=50, type=int,
                         help='maximum number of tokens for text-based models')
-    parser.add_argument('--max-uniformity-samples', default=1024, type=int,
+    parser.add_argument('--max-uniformity-samples', '--max_uniformity_samples', default=1024, type=int,
                         help='maximum number of embeddings used to estimate the AU uniformity term')
     parser.add_argument('--max-to-keep', default=5, type=int,
                         help='maximum number of checkpoints to keep')
@@ -157,8 +157,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help='uniformity weight for head embeddings (default 0 when omitted)')
     parser.add_argument('--gamma-ent', '--gamma_ent', default=None, type=float,
                         help='uniformity weight for all entity embeddings')
-    parser.add_argument('--max-uniformity-samples', '--max_uniformity_samples', default=None, type=int,
-                        help='cap entity/uniformity row count before pairwise loss (default 1024)')
     parser.add_argument('--tuni', default=None, type=float,
                         help='AU uniformity temperature (Gaussian potential scale)')
     normalize_group = parser.add_mutually_exclusive_group()
