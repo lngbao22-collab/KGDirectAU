@@ -47,6 +47,39 @@ class ComplExEncoder(nn.Module):
 			for param in self.parameters():
 				param.data.div_(scale)
 
+	def _needs_relation_conjugate(self, relation: str) -> bool:
+		"""Return True when backward eval should use conj(r) instead of a learned inverse embedding."""
+
+		if not str(relation).startswith('inverse '):
+			return False
+		base_relation = str(relation)[len('inverse '):]
+		return f'inverse {base_relation}' not in self.rel_to_idx
+
+	def _relation_embedding_parts(
+		self,
+		relations: Sequence[str],
+		device: torch.device,
+	) -> tuple[torch.Tensor, torch.Tensor]:
+		"""Resolve relation strings to ComplEx (r_re, r_im), conjugating when inverse is analytic."""
+
+		relation_indices = []
+		conjugate_mask = []
+		for relation in relations:
+			relation_name = str(relation)
+			apply_conjugate = self._needs_relation_conjugate(relation_name)
+			if apply_conjugate:
+				relation_name = relation_name[len('inverse '):]
+			relation_indices.append(self._relation_to_idx(relation_name))
+			conjugate_mask.append(apply_conjugate)
+
+		rel_idx = torch.tensor(relation_indices, dtype=torch.long, device=device)
+		r_re = self.rel_re_embed(rel_idx)
+		r_im = self.rel_im_embed(rel_idx)
+		mask = torch.tensor(conjugate_mask, dtype=torch.bool, device=device)
+		if mask.any():
+			r_im = torch.where(mask.unsqueeze(-1), -r_im, r_im)
+		return r_re, r_im
+
 	def _query_vectors(self, head_indices: torch.Tensor, relation_indices: torch.Tensor) -> torch.Tensor:
 		"""ComplEx query embeddings used for AU training and normalized link prediction."""
 
@@ -54,6 +87,15 @@ class ComplExEncoder(nn.Module):
 		h_im = self.ent_im_embed(head_indices)
 		r_re = self.rel_re_embed(relation_indices)
 		r_im = self.rel_im_embed(relation_indices)
+		return torch.cat([h_re * r_re - h_im * r_im, h_re * r_im + h_im * r_re], dim=-1)
+
+	def _query_vectors_from_relations(self, head_indices: torch.Tensor, relations: Sequence[str]) -> torch.Tensor:
+		"""Build query vectors from relation strings (supports analytic inverse via conjugation)."""
+
+		device = head_indices.device
+		h_re = self.ent_re_embed(head_indices)
+		h_im = self.ent_im_embed(head_indices)
+		r_re, r_im = self._relation_embedding_parts(relations, device)
 		return torch.cat([h_re * r_re - h_im * r_im, h_re * r_im + h_im * r_re], dim=-1)
 
 	def _target_vectors(self, tail_indices: torch.Tensor) -> torch.Tensor:
@@ -140,12 +182,8 @@ class ComplExEncoder(nn.Module):
 		if device is None:
 			device = self.ent_re_embed.weight.device
 		head_indices = _as_index_tensor([example.head_id for example in examples], self.entity_dict.entity_to_idx, device)
-		relation_indices = _as_index_tensor([example.relation for example in examples], self._relation_to_idx, device)
-		h_re = self.ent_re_embed(head_indices)
-		h_im = self.ent_im_embed(head_indices)
-		r_re = self.rel_re_embed(relation_indices)
-		r_im = self.rel_im_embed(relation_indices)
-		query_vectors = torch.cat([h_re * r_re - h_im * r_im, h_re * r_im + h_im * r_re], dim=-1)
+		relations = [example.relation for example in examples]
+		query_vectors = self._query_vectors_from_relations(head_indices, relations)
 		return query_vectors
 
 	def predict_by_examples(self, examples: Sequence[Example], batch_size: int | None = None, num_workers: int = 1) -> tuple[torch.Tensor, torch.Tensor]:
@@ -153,13 +191,9 @@ class ComplExEncoder(nn.Module):
 
 		device = self.ent_re_embed.weight.device
 		head_indices = _as_index_tensor([example.head_id for example in examples], self.entity_dict.entity_to_idx, device)
-		relation_indices = _as_index_tensor([example.relation for example in examples], self._relation_to_idx, device)
 		tail_indices = _as_index_tensor([example.tail_id for example in examples], self.entity_dict.entity_to_idx, device)
-		h_re = self.ent_re_embed(head_indices)
-		h_im = self.ent_im_embed(head_indices)
-		r_re = self.rel_re_embed(relation_indices)
-		r_im = self.rel_im_embed(relation_indices)
-		query_vectors = torch.cat([h_re * r_re - h_im * r_im, h_re * r_im + h_im * r_re], dim=-1)
+		relations = [example.relation for example in examples]
+		query_vectors = self._query_vectors_from_relations(head_indices, relations)
 		tail_vectors = torch.cat([self.ent_re_embed(tail_indices), self.ent_im_embed(tail_indices)], dim=-1)
 		return query_vectors, tail_vectors
 
@@ -176,9 +210,8 @@ class ComplExEncoder(nn.Module):
 
 		device = self.ent_re_embed.weight.device
 		head_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
-		relation_indices = _as_index_tensor(relations, self._relation_to_idx, device)
 		candidate_indices = _as_index_tensor(tail_entity_ids, self.entity_dict.entity_to_idx, device)
-		query_vectors = self._query_vectors(head_indices, relation_indices)
+		query_vectors = self._query_vectors_from_relations(head_indices, relations)
 		candidate_vectors = self.entity_embeddings(device=device)[candidate_indices]
 		return self._link_prediction_scores(query_vectors, candidate_vectors)
 
@@ -189,7 +222,8 @@ class ComplExEncoder(nn.Module):
 			return self.rel_to_idx[relation]
 		if relation.startswith('inverse '):
 			base_relation = relation[len('inverse '):]
-			if base_relation in self.rel_to_idx:
+			inverse_relation = f'inverse {base_relation}'
+			if inverse_relation not in self.rel_to_idx and base_relation in self.rel_to_idx:
 				return self.rel_to_idx[base_relation]
 		if relation.startswith('inverse_'):
 			base_relation = relation[len('inverse_'):]

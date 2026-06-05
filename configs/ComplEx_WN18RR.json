@@ -18,15 +18,10 @@
   "dim": 200,
   "batch_size": 512,
   "epochs": 100,
-  "lr": 0.1,
-  "weight_decay": 0.0,
-  "optim": "adagrad",
+  "lr": 0.001,
+  "weight_decay": 0.0001,
 
   "normalize_lp_scores": false,
-
-  "train_1_to_n": true,
-  "add_reciprocal_relations": true,
-  "init_scaled": false,
 
   "n_sample": 100
 }

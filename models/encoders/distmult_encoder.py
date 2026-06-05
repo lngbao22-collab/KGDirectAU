@@ -140,7 +140,8 @@ class DistMultEncoder(nn.Module):
 			return self.rel_to_idx[relation]
 		if relation.startswith('inverse '):
 			base_relation = relation[len('inverse '):]
-			if base_relation in self.rel_to_idx:
+			inverse_relation = f'inverse {base_relation}'
+			if inverse_relation not in self.rel_to_idx and base_relation in self.rel_to_idx:
 				return self.rel_to_idx[base_relation]
 		if relation.startswith('inverse_'):
 			base_relation = relation[len('inverse_'):]

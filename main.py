@@ -95,11 +95,33 @@ def _average_link_metrics(forward_metrics, backward_metrics) -> dict:
     return averaged_metrics
 
 
+def _resolve_relation_index(relation: str, relation_to_idx: dict) -> int:
+    """Map a relation string to its embedding index.
+
+    Inverse relations must resolve to their own indices when reciprocal
+    relations are enabled; do not silently collapse them onto the forward ID.
+    """
+
+    if relation in relation_to_idx:
+        return relation_to_idx[relation]
+    normalized = ' '.join(relation.split())
+    if normalized in relation_to_idx:
+        return relation_to_idx[normalized]
+    if relation.startswith('inverse '):
+        base_relation = relation[len('inverse '):]
+        if base_relation in relation_to_idx and f'inverse {base_relation}' not in relation_to_idx:
+            return relation_to_idx[base_relation]
+    raise KeyError(relation)
+
+
 def _examples_to_tensors(examples, entity_dict, relation_to_idx):
     """Convert examples into head, relation, and tail index tensors."""
 
     head_indices = torch.tensor([entity_dict.entity_to_idx(example.head_id) for example in examples], dtype=torch.long)
-    relation_indices = torch.tensor([relation_to_idx.get(example.relation, relation_to_idx.get(example.relation.replace('inverse ', ''), 0)) for example in examples], dtype=torch.long)
+    relation_indices = torch.tensor(
+        [_resolve_relation_index(example.relation, relation_to_idx) for example in examples],
+        dtype=torch.long,
+    )
     tail_indices = torch.tensor([entity_dict.entity_to_idx(example.tail_id) for example in examples], dtype=torch.long)
     return head_indices, relation_indices, tail_indices
 
@@ -134,6 +156,11 @@ def _build_softmax_trainer(current_args):
     # Use the encoder's relation map so inverse-relation indices line up
     # with what the embedding table was sized for.
     rel_map = getattr(model, 'rel_to_idx', None) or get_relation_id_map()
+    inverse_relations = sum(1 for relation in rel_map if str(relation).startswith('inverse '))
+    logger.info(
+        'Training examples: %d (reciprocal=%s, relations=%d, inverse=%d)',
+        len(train_examples), add_backward, len(rel_map), inverse_relations,
+    )
     train_tensors = _examples_to_tensors(train_examples, entity_dict, rel_map)
     sampler = BernoulliListwiseSampler(
         train_tensors,
