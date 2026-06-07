@@ -23,8 +23,6 @@
 
   "margin": 6.0,
 
-  "adversarial_temperature": 1.0,
-
   "alignment_mode": "sin_phase",
   "normalize_uniformity": false,
 
