@@ -141,6 +141,22 @@ def build_parser() -> argparse.ArgumentParser:
                         help='negative sampling frequency')
     parser.add_argument('-ns', '--n-sample', '--n_sample', default=None, type=int,
                         help='number of negative samples per positive')
+
+    # RotatE / pRotatE adversarial training (adversarial_strategy.py).
+    parser.add_argument('--margin', default=None, type=float,
+                        help='fixed margin for distance-based adversarial models')
+    parser.add_argument('--adversarial-temperature', '--adversarial_temperature', default=None, type=float,
+                        dest='adversarial_temperature',
+                        help='self-adversarial negative-sampling temperature')
+    parser.add_argument('--max-steps', '--max_steps', default=None, type=int,
+                        help='maximum training steps for adversarial strategy (optional cap)')
+    parser.add_argument('--warm-up-steps', '--warm_up_steps', default=None, type=int,
+                        help='global step at which adversarial strategy decays learning rate')
+    parser.add_argument('--lr-decay-factor', '--lr_decay_factor', default=None, type=float,
+                        help='multiplicative learning-rate decay factor for adversarial strategy')
+    parser.add_argument('--shuffle-train', '--shuffle_train', default=None,
+                        type=lambda value: str(value).lower() in {'1', 'true', 'yes', 'y'},
+                        help='shuffle training triples each epoch in adversarial strategy')
     parser.add_argument('--lam', default=None, type=float,
                         help='L2 regularization strength (kgau/softmax; overrides weight_decay when set)')
     parser.add_argument('--entity-reg-weight', '--entity_reg_weight', default=None, type=float, dest='entity_reg_weight',

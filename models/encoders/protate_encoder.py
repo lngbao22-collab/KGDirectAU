@@ -27,6 +27,8 @@ def build_model(args) -> nn.Module:
 class pRotatEEncoder(BaseModel):
     """pRotatE encoder with 1D phase entity embeddings and phase relations."""
 
+    bidirectional_score_batch = True
+
     def __init__(self, n_ent: int, n_rel: int, args):
         super().__init__()
         self.args = args
@@ -185,23 +187,39 @@ class pRotatEEncoder(BaseModel):
         return self.entity_embeddings(device=device)[entity_indices]
 
     @torch.inference_mode()
-    def score_batch(self, head_ids, relations, tail_entity_ids, query_chunk_size: int | None = None) -> torch.Tensor:
-        """Score queries against candidate tails, or paired triples when lengths match."""
+    def score_batch(
+        self,
+        head_ids,
+        relations,
+        tail_entity_ids,
+        mode: str = "tail-batch",
+        query_tail_ids=None,
+        query_chunk_size: int | None = None,
+    ) -> torch.Tensor:
+        """Score queries against candidate entities.
+
+        tail-batch (default): fix (head, relation), score candidate tails.
+        head-batch: fix (relation, tail), score candidate heads via query_tail_ids.
+        """
 
         device = self.entity_embedding.device
+        batch_mode = str(mode or "tail-batch")
 
-        head_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
         relation_indices = _as_index_tensor(relations, self._relation_to_idx, device)
         candidate_indices = _as_index_tensor(tail_entity_ids, self.entity_dict.entity_to_idx, device)
 
-        num_queries = head_indices.size(0)
+        num_queries = relation_indices.size(0)
         num_candidates = candidate_indices.size(0)
         if num_queries == 0 or num_candidates == 0:
             return torch.empty(num_queries, num_candidates, device=device)
 
-        if num_queries == num_candidates == len(relations):
+        if head_ids is not None and num_queries == num_candidates == len(relations):
+            head_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
             positive_sample = torch.stack([head_indices, relation_indices, candidate_indices], dim=-1)
             return self._score(positive_sample, mode="single").squeeze(-1)
+
+        if batch_mode not in {"head-batch", "tail-batch"}:
+            raise ValueError(f"mode {batch_mode} not supported")
 
         if query_chunk_size is None:
             query_chunk_size = _config_int(self.args, "score_query_chunk_size", 256)
@@ -212,6 +230,14 @@ class pRotatEEncoder(BaseModel):
         candidate_chunk_size = _config_int(self.args, "eval_candidate_chunk_size", 1024)
         candidate_chunk_size = max(candidate_chunk_size, 1)
 
+        if batch_mode == "tail-batch":
+            head_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
+            anchor_indices = torch.zeros(num_queries, dtype=torch.long, device=device)
+        else:
+            if query_tail_ids is None:
+                raise ValueError("query_tail_ids is required for head-batch scoring")
+            anchor_indices = _as_index_tensor(query_tail_ids, self.entity_dict.entity_to_idx, device)
+
         scores = torch.empty(num_queries, num_candidates, device=device, dtype=torch.float32)
         for cand_start in range(0, num_candidates, candidate_chunk_size):
             cand_end = min(cand_start + candidate_chunk_size, num_candidates)
@@ -221,14 +247,14 @@ class pRotatEEncoder(BaseModel):
                 q_end = min(q_start + query_chunk_size, num_queries)
                 positive_sample = torch.stack(
                     [
-                        head_indices[q_start:q_end],
-                        relation_indices[q_start:q_end],
                         torch.zeros(q_end - q_start, dtype=torch.long, device=device),
+                        relation_indices[q_start:q_end],
+                        anchor_indices[q_start:q_end],
                     ],
                     dim=-1,
                 )
                 negative_sample = cand_chunk.unsqueeze(0).expand(q_end - q_start, cand_chunk.size(0))
-                block_score = self._score(positive_sample, negative_sample, mode="tail-batch")
+                block_score = self._score(positive_sample, negative_sample, mode=batch_mode)
                 scores[q_start:q_end, cand_start:cand_end] = block_score.float()
 
         return scores

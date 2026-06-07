@@ -27,6 +27,8 @@ def build_model(args) -> nn.Module:
 class RotatEEncoder(BaseModel):
     """RotatE encoder with complex-valued entity embeddings and phase relations."""
 
+    bidirectional_score_batch = True
+
     def __init__(self, n_ent: int, n_rel: int, args):
         super().__init__()
         self.args = args
@@ -202,18 +204,51 @@ class RotatEEncoder(BaseModel):
         entity_indices = _as_index_tensor(entity_ids, self.entity_dict.entity_to_idx, device)
         return self.entity_embeddings(device=device)[entity_indices]
 
-    def score_batch(self, head_ids, relations, tail_entity_ids) -> torch.Tensor:
-        """Score a batch using RotatE tail-batch distance scores."""
+    def score_batch(
+        self,
+        head_ids,
+        relations,
+        tail_entity_ids,
+        mode: str = "tail-batch",
+        query_tail_ids=None,
+    ) -> torch.Tensor:
+        """Score a batch using RotatE distance scores.
+
+        tail-batch (default): fix (head, relation), score candidate tails.
+        head-batch: fix (relation, tail), score candidate heads via query_tail_ids.
+        """
 
         device = self.entity_embedding.device
+        batch_mode = str(mode or "tail-batch")
+        if batch_mode not in {"head-batch", "tail-batch"}:
+            raise ValueError(f"mode {batch_mode} not supported")
 
-        head_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
         relation_indices = _as_index_tensor(relations, self._relation_to_idx, device)
         candidate_indices = _as_index_tensor(tail_entity_ids, self.entity_dict.entity_to_idx, device)
+        num_queries = relation_indices.size(0)
+        num_candidates = candidate_indices.size(0)
 
-        positive_sample = torch.stack([head_indices, relation_indices, torch.zeros_like(head_indices)], dim=-1)
-        negative_sample = candidate_indices.unsqueeze(0).expand(len(head_ids), len(candidate_indices))
-        return self._score(positive_sample, negative_sample, mode="tail-batch")
+        if (
+            head_ids is not None
+            and batch_mode == "tail-batch"
+            and num_queries == num_candidates == len(relations)
+        ):
+            head_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
+            positive_sample = torch.stack([head_indices, relation_indices, candidate_indices], dim=-1)
+            return self._score(positive_sample, mode="single").squeeze(-1)
+
+        if batch_mode == "tail-batch":
+            head_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
+            anchor_indices = torch.zeros_like(head_indices)
+        else:
+            if query_tail_ids is None:
+                raise ValueError("query_tail_ids is required for head-batch scoring")
+            anchor_indices = _as_index_tensor(query_tail_ids, self.entity_dict.entity_to_idx, device)
+            head_indices = torch.zeros_like(anchor_indices)
+
+        positive_sample = torch.stack([head_indices, relation_indices, anchor_indices], dim=-1)
+        negative_sample = candidate_indices.unsqueeze(0).expand(relation_indices.size(0), candidate_indices.size(0))
+        return self._score(positive_sample, negative_sample, mode=batch_mode)
 
     def _relation_to_idx(self, relation: str) -> int:
         """Resolve relation variants used by preprocessing and inverse triplet generation."""

@@ -1,6 +1,7 @@
 """Abstract evaluation loop shared by KG evaluators."""
 
 from typing import List, Optional, Sequence, Tuple
+import inspect
 import os
 from types import SimpleNamespace
 
@@ -50,10 +51,75 @@ def _filter_known(batch_score: torch.Tensor, examples: List[Example], all_triple
         batch_score[idx].index_fill_(0, mask_tensor, float('-inf'))
 
 
-def _infer_target_indices(examples: Sequence[Example], entity_dict) -> torch.Tensor:
+def _filter_known_heads(batch_score: torch.Tensor, examples: List[Example], all_triplet_dict, entity_dict) -> None:
+    """Mask other known heads for filtered head-prediction evaluation."""
+
+    for idx, ex in enumerate(examples):
+        gold_head_ids = all_triplet_dict.get_heads(ex.relation, ex.tail_id)
+        if not gold_head_ids:
+            continue
+
+        mask_indices = [
+            entity_dict.entity_to_idx(entity_id)
+            for entity_id in gold_head_ids
+            if entity_id != ex.head_id
+        ]
+        if not mask_indices:
+            continue
+
+        mask_tensor = torch.LongTensor(mask_indices).to(batch_score.device)
+        batch_score[idx].index_fill_(0, mask_tensor, float('-inf'))
+
+
+def _coerce_forward_examples(examples: Sequence[Example]) -> List[Example]:
+    """Normalize backward/reversed examples to forward (head, relation, tail) form."""
+
+    normalized: List[Example] = []
+    for ex in examples:
+        relation = ex.relation
+        head_id = ex.head_id
+        tail_id = ex.tail_id
+        head = getattr(ex, 'head', head_id)
+        tail = getattr(ex, 'tail', tail_id)
+
+        if str(relation).startswith('inverse '):
+            relation = relation[len('inverse '):]
+            head_id, tail_id = ex.tail_id, ex.head_id
+            head = getattr(ex, 'tail', tail_id)
+            tail = getattr(ex, 'head', head_id)
+
+        normalized.append(Example(
+            head_id=head_id,
+            head=head,
+            relation=relation,
+            tail_id=tail_id,
+            tail=tail,
+            label=getattr(ex, 'label', None),
+        ))
+    return normalized
+
+
+def _uses_head_batch_scoring(model) -> bool:
+    """Return True when the model exposes native head-batch link-prediction scoring."""
+
+    return bool(getattr(model, 'bidirectional_score_batch', False))
+
+
+def _score_batch_supports_mode(model) -> bool:
+    """Return True when score_batch accepts an explicit batch mode argument."""
+
+    if not hasattr(model, 'score_batch'):
+        return False
+    return 'mode' in inspect.signature(model.score_batch).parameters
+
+
+def _infer_target_indices(examples: Sequence[Example], entity_dict, predict_head: bool = False) -> torch.Tensor:
     """Infer target entity indices for a batch of examples."""
 
-    target_indices = [entity_dict.entity_to_idx(ex.tail_id) for ex in examples]
+    if predict_head:
+        target_indices = [entity_dict.entity_to_idx(ex.head_id) for ex in examples]
+    else:
+        target_indices = [entity_dict.entity_to_idx(ex.tail_id) for ex in examples]
     return torch.LongTensor(target_indices)
 
 
@@ -320,19 +386,27 @@ class Evaluator:
         if examples is None:
             examples = load_data(eval_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
 
+        predict_head = (not eval_forward) and _uses_head_batch_scoring(model)
+        scoring_examples = _coerce_forward_examples(examples) if predict_head else list(examples)
+
         if hasattr(model, 'score_batch'):
             all_entity_ids = [entity_ex.entity_id for entity_ex in entity_dict.entity_exs]
             score_device = next(model.parameters()).device
-            head_ids = [ex.head_id for ex in examples]
-            relations = [ex.relation for ex in examples]
+            head_ids = [ex.head_id for ex in scoring_examples]
+            relations = [ex.relation for ex in scoring_examples]
+            score_batch_mode = 'head-batch' if predict_head and _score_batch_supports_mode(model) else 'tail-batch'
+            score_batch_kwargs = {}
+            if score_batch_mode == 'head-batch':
+                score_batch_kwargs['mode'] = 'head-batch'
+                score_batch_kwargs['query_tail_ids'] = [ex.tail_id for ex in scoring_examples]
 
             if hasattr(model, 'prepare_link_prediction_queries') and hasattr(model, 'score_link_prediction_full'):
                 query_cache = model.prepare_link_prediction_queries(head_ids, relations)
                 score = model.score_link_prediction_full(query_cache).clone()
-                if score.size(0) != len(examples) or score.size(1) != len(all_entity_ids):
+                if score.size(0) != len(scoring_examples) or score.size(1) != len(all_entity_ids):
                     raise RuntimeError('DaBR fast link-prediction score matrix has unexpected shape')
             else:
-                score = torch.zeros(len(examples), len(all_entity_ids), device=score_device)
+                score = torch.zeros(len(scoring_examples), len(all_entity_ids), device=score_device)
                 entity_chunk_size = getattr(model, 'eval_entity_chunk_size', None)
                 if entity_chunk_size is None:
                     entity_chunk_size = getattr(model.config, 'eval_entity_chunk_size', None) if hasattr(model, 'config') else None
@@ -353,12 +427,20 @@ class Evaluator:
                         chunk_score = score_candidates(query_cache, (start, end))
                     else:
                         entity_chunk = all_entity_ids[start:end]
-                        chunk_score = model.score_batch(head_ids, relations, entity_chunk)
+                        if score_batch_mode == 'head-batch':
+                            chunk_score = model.score_batch(
+                                head_ids,
+                                relations,
+                                entity_chunk,
+                                **score_batch_kwargs,
+                            )
+                        else:
+                            chunk_score = model.score_batch(head_ids, relations, entity_chunk)
                     if not isinstance(chunk_score, torch.Tensor):
                         chunk_score = torch.tensor(chunk_score, device=score_device)
                     score[:, start:end] = chunk_score
         else:
-            hr_tensor, _ = model.predict_by_examples(examples, batch_size=batch_size)
+            hr_tensor, _ = model.predict_by_examples(scoring_examples, batch_size=batch_size)
             entity_examples = [Example(head_id='', relation='', tail_id=entity_ex.entity_id) for entity_ex in entity_dict.entity_exs]
             entities_tensor = model.predict_by_entities(entity_examples, batch_size=max(batch_size, 512))
 
@@ -367,8 +449,11 @@ class Evaluator:
                 entities_tensor = entities_tensor.cuda()
             score = torch.mm(hr_tensor, entities_tensor.t())
         all_triplet_dict = get_all_triplet_dict()
-        _filter_known(score, examples, all_triplet_dict, entity_dict)
-        target_indices = _infer_target_indices(examples, entity_dict).to(score.device)
+        if predict_head:
+            _filter_known_heads(score, scoring_examples, all_triplet_dict, entity_dict)
+        else:
+            _filter_known(score, scoring_examples, all_triplet_dict, entity_dict)
+        target_indices = _infer_target_indices(scoring_examples, entity_dict, predict_head=predict_head).to(score.device)
         ranks = _ranks_from_score_matrix(score, target_indices)
         metrics = ranking_metrics_from_ranks(ranks)
         return metrics

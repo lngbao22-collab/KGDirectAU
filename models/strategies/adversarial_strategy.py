@@ -34,9 +34,18 @@ class AdversarialStrategy:
         self.valid_time = 0.0
         self.total_time = 0.0
 
-        lr = getattr(args, "lr", getattr(args, "learning_rate", 5e-5))
+        self.base_lr = float(getattr(args, "lr", getattr(args, "learning_rate", 5e-5)))
         weight_decay = getattr(args, "weight_decay", 0.0)
-        self.optimizer = torch.optim.Adam(self.encoder.parameters(), lr=lr, weight_decay=weight_decay)
+        self.optimizer = torch.optim.Adam(self.encoder.parameters(), lr=self.base_lr, weight_decay=weight_decay)
+        self.global_step = 0
+        self.next_lr_decay_step = getattr(args, "warm_up_steps", None)
+        if self.next_lr_decay_step is not None:
+            self.next_lr_decay_step = int(self.next_lr_decay_step)
+        self.lr_decay_factor = float(getattr(args, "lr_decay_factor", 0.1))
+        self.max_steps = getattr(args, "max_steps", None)
+        if self.max_steps is not None:
+            self.max_steps = int(self.max_steps)
+        self.shuffle_train = bool(getattr(args, "shuffle_train", False))
 
         nentity = getattr(args, "nentity", getattr(args, "ent_total", None))
         if nentity is None and hasattr(encoder, "entity_embedding"):
@@ -50,13 +59,36 @@ class AdversarialStrategy:
             self.encoder.cuda()
         self.device = next(self.encoder.parameters()).device
 
-    def _iter_train_batches(self):
+    def _maybe_decay_learning_rate(self) -> None:
+        """Decay the optimizer learning rate at configured step boundaries."""
+
+        if self.next_lr_decay_step is None or self.global_step < self.next_lr_decay_step:
+            return
+
+        decay_factor = max(self.lr_decay_factor, 0.0)
+        new_lr = self.optimizer.param_groups[0]["lr"] * decay_factor
+        for param_group in self.optimizer.param_groups:
+            param_group["lr"] = new_lr
+        logger.info(
+            "Change learning rate to %.8f at step %d",
+            new_lr,
+            self.global_step,
+        )
+        self.next_lr_decay_step = int(self.next_lr_decay_step * 3)
+
+    def _iter_train_batches(self, epoch: int):
         """Iterate over tensorized train triples using configured batch size."""
 
         batch_size = max(getattr(self.args, "batch_size", 1024), 1)
-        for start in range(0, len(self.all_train_triples), batch_size):
+        triples = self.all_train_triples
+        if self.shuffle_train:
+            generator = torch.Generator()
+            generator.manual_seed(int(getattr(self.args, "seed", 0) or 0) + int(epoch))
+            permutation = torch.randperm(triples.size(0), generator=generator)
+            triples = triples[permutation]
+        for start in range(0, len(triples), batch_size):
             end = start + batch_size
-            yield self.all_train_triples[start:end]
+            yield triples[start:end]
 
     def _extract_monitor_value(self, metric_dict, train_loss):
         """Prefer validation MRR for checkpointing, fallback to negative train loss."""
@@ -74,6 +106,9 @@ class AdversarialStrategy:
         modes = ["head-batch", "tail-batch"]
 
         for batch in dataloader:
+            if self.max_steps is not None and self.global_step >= self.max_steps:
+                break
+
             self.optimizer.zero_grad()
             current_mode = modes[step % 2]
             step += 1
@@ -93,6 +128,8 @@ class AdversarialStrategy:
 
             loss.backward()
             self.optimizer.step()
+            self.global_step += 1
+            self._maybe_decay_learning_rate()
             total_loss += float(loss.item())
 
         avg_loss = total_loss / max(step, 1)
@@ -109,16 +146,19 @@ class AdversarialStrategy:
 
         if valid_path and os.path.exists(valid_path):
             valid_exs = load_data(valid_path, add_forward_triplet=True, add_backward_triplet=False)
-            valid_backward_exs = [
-                Example(**reverse_triplet({
-                    "head_id": ex.head_id,
-                    "head": ex.head,
-                    "relation": ex.relation,
-                    "tail_id": ex.tail_id,
-                    "tail": ex.tail,
-                }))
-                for ex in valid_exs
-            ]
+            if getattr(get_model_obj(self.encoder), "bidirectional_score_batch", False):
+                valid_backward_exs = valid_exs
+            else:
+                valid_backward_exs = [
+                    Example(**reverse_triplet({
+                        "head_id": ex.head_id,
+                        "head": ex.head,
+                        "relation": ex.relation,
+                        "tail_id": ex.tail_id,
+                        "tail": ex.tail,
+                    }))
+                    for ex in valid_exs
+                ]
 
             valid_output_path = os.path.join(self.args.output_dir, "valid_link_prediction.log")
             forward_metrics = self.evaluator.evaluate_link_prediction_inplace(
@@ -149,9 +189,13 @@ class AdversarialStrategy:
         """Run full adversarial training with periodic evaluation and checkpointing."""
 
         total_start = time.time()
-        for epoch in range(max(getattr(self.args, "epochs", 1), 1)):
+        max_epochs = max(getattr(self.args, "epochs", 1), 1)
+        for epoch in range(max_epochs):
+            if self.max_steps is not None and self.global_step >= self.max_steps:
+                break
+
             train_start = time.time()
-            train_loss = self.train_epoch(self._iter_train_batches(), epoch)
+            train_loss = self.train_epoch(self._iter_train_batches(epoch), epoch)
             self.train_time += time.time() - train_start
 
             eval_start = time.time()
@@ -179,6 +223,9 @@ class AdversarialStrategy:
             elif self.best_checkpoint_path is None:
                 self.best_checkpoint_path = saved_checkpoint_path
             delete_old_ckt(path_pattern="{}/checkpoint_*.mdl".format(self.args.output_dir), keep=getattr(self.args, "max_to_keep", 5))
+
+            if self.max_steps is not None and self.global_step >= self.max_steps:
+                break
 
         self.total_time = time.time() - total_start
         return {

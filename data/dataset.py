@@ -64,6 +64,7 @@ class TripletDict:
 		self.path_list = path_list
 		self.relations = set()
 		self.hr2tails = {}
+		self.rt2heads = {}
 		self.triplet_cnt = 0
 
 		for path in self.path_list:
@@ -86,6 +87,12 @@ class TripletDict:
 		else:
 			raise ValueError(f'Unsupported format: {path}')
 
+		for ex in examples:
+			rt_key = (ex['relation'], ex['tail_id'])
+			if rt_key not in self.rt2heads:
+				self.rt2heads[rt_key] = set()
+			self.rt2heads[rt_key].add(ex['head_id'])
+
 		reversed_examples = [
 			{
 				'head_id': ex['tail_id'],
@@ -107,6 +114,11 @@ class TripletDict:
 		"""Given a head entity ID and a relation, return the set of tail entity IDs that are connected to the head via the relation."""
 
 		return self.hr2tails.get((h, r), set())
+
+	def get_heads(self, r: str, t: str) -> set:
+		"""Given a relation and tail entity ID, return known head entities for filtered head prediction."""
+
+		return self.rt2heads.get((r, t), set())
 
 
 class EntityDict:
