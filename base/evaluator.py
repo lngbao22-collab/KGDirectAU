@@ -426,7 +426,21 @@ class Evaluator:
                 )
                 all_entity_idx = _entity_indices(entity_dict, all_entity_ids)
 
-            if hasattr(model, 'prepare_link_prediction_queries') and hasattr(model, 'score_link_prediction_full'):
+            if (
+                score_batch_mode == 'head-batch'
+                and hasattr(model, 'prepare_head_prediction_queries')
+                and hasattr(model, 'score_head_prediction_full')
+            ):
+                tail_ids = [ex.tail_id for ex in scoring_examples]
+                query_cache = model.prepare_head_prediction_queries(tail_ids, relations)
+                score = model.score_head_prediction_full(query_cache).clone()
+                if score.size(0) != len(scoring_examples) or score.size(1) != len(all_entity_ids):
+                    raise RuntimeError('DaBR fast head-prediction score matrix has unexpected shape')
+            elif (
+                score_batch_mode == 'tail-batch'
+                and hasattr(model, 'prepare_link_prediction_queries')
+                and hasattr(model, 'score_link_prediction_full')
+            ):
                 query_cache = model.prepare_link_prediction_queries(head_ids, relations)
                 score = model.score_link_prediction_full(query_cache).clone()
                 if score.size(0) != len(scoring_examples) or score.size(1) != len(all_entity_ids):
@@ -442,7 +456,11 @@ class Evaluator:
                     entity_chunk_size = max(batch_size, 4096)
                 entity_chunk_size = max(int(entity_chunk_size), 1)
 
-                if hasattr(model, 'prepare_link_prediction_queries'):
+                if score_batch_mode == 'head-batch' and hasattr(model, 'prepare_head_prediction_queries'):
+                    tail_ids = [ex.tail_id for ex in scoring_examples]
+                    query_cache = model.prepare_head_prediction_queries(tail_ids, relations)
+                    score_candidates = getattr(model, 'score_head_prediction_candidates', None)
+                elif hasattr(model, 'prepare_link_prediction_queries'):
                     query_cache = model.prepare_link_prediction_queries(head_ids, relations)
                     score_candidates = model.score_link_prediction_candidates
                 else:
