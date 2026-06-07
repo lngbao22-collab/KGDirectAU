@@ -28,6 +28,8 @@ class pRotatEEncoder(BaseModel):
     """pRotatE encoder with 1D phase entity embeddings and phase relations."""
 
     bidirectional_score_batch = True
+    # Opt-in for KGAU: only this encoder uses sin-phase AU (see ``KGAULoss.alignment_mode``).
+    kga_u_alignment_mode = 'sin_phase'
 
     def __init__(self, n_ent: int, n_rel: int, args):
         super().__init__()
@@ -133,10 +135,11 @@ class pRotatEEncoder(BaseModel):
         }
 
     def get_queries_targets(self, src: torch.Tensor, rel: torch.Tensor, dst: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Return AU-compatible query, target, and head representations in phase space.
+        """Return phase-space AU query, target, and head for sin-phase alignment.
 
-        KGAU alignment/uniformity uses the same phase coordinates as pRotatE link
-        prediction: query = phase(head) + phase(relation), target = phase(tail).
+        With ``alignment_mode=sin_phase`` in KGAULoss, alignment minimizes
+        mean_i |sin(phase(h)_i + phase(r)_i - phase(t)_i)| — the same per-dimension
+        quantity summed inside ``_rotate_score`` at link-prediction time.
         """
 
         head = torch.index_select(self.entity_embedding, dim=0, index=src)
@@ -149,19 +152,14 @@ class pRotatEEncoder(BaseModel):
         query = phase_head + phase_relation
         return query, phase_tail, phase_head
 
-    def compute_au_alignment_loss(
+    def sin_phase_score_penalty(
         self,
-        src: torch.Tensor,
-        rel: torch.Tensor,
-        dst: torch.Tensor,
+        phase_query: torch.Tensor,
+        phase_target: torch.Tensor,
     ) -> torch.Tensor:
-        """AU alignment in native pRotatE score space (same objective as link prediction)."""
+        """Per-example pRotatE score penalty: sum_i |sin(phase_query_i - phase_target_i)|."""
 
-        positive_sample = torch.stack([src, rel, dst], dim=-1)
-        scores = self._score(positive_sample, mode='single')
-        if scores.dim() > 1:
-            scores = scores.squeeze(-1)
-        return -scores.mean()
+        return torch.abs(torch.sin(phase_query - phase_target)).sum(dim=-1)
 
     def compute_logits(self, output_dict: dict, batch_dict: dict) -> dict:
         """Compatibility adapter used by generic trainer paths."""
@@ -182,7 +180,7 @@ class pRotatEEncoder(BaseModel):
         return entity_vectors
 
     def au_entity_embeddings(self, device: torch.device | None = None) -> torch.Tensor:
-        """Return entity vectors in pRotatE phase space for KGAU entity-uniformity terms."""
+        """Entity phases for KGAU uniformity (same coordinates as sin-phase alignment)."""
 
         entity_vectors = self._to_phase(self.entity_embedding)
         if device is not None:

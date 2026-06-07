@@ -65,7 +65,8 @@ class KGAULoss(nn.Module):
 		# InfoNCE additive margin gamma; geometric threshold m = 2 * gamma on squared L2.
 		self.additive_margin = _coalesce_float(additive_margin, 0.0)
 		# `cosine`: L2-normalize paired vectors (DistMult/ComplEx/SimKGC).
-		# `phase_residual`: element-wise squared phase residual without global normalization (RotatE family).
+		# `phase_residual`: element-wise squared phase residual without global normalization.
+		# `sin_phase`: pRotatE link-pred term sum_i |sin(theta_q,i - theta_t,i)| (no global normalize).
 		self.alignment_mode = alignment_mode or 'cosine'
 		self.normalize_uniformity = normalize_uniformity
 
@@ -75,6 +76,16 @@ class KGAULoss(nn.Module):
 		q = F.normalize(q, p=2, dim=-1)
 		t = F.normalize(t, p=2, dim=-1)
 		return (q - t).pow(2).sum(dim=-1).mean()
+
+	def sin_phase_alignment_loss(self, phase_query: torch.Tensor, phase_target: torch.Tensor) -> torch.Tensor:
+		"""Alignment in native pRotatE geometry: mean sum of |sin(phase residual)| per dimension.
+
+		Matches the penalty inside ``pRotatEEncoder._rotate_score`` (before margin/modulus):
+		minimizing this term raises positive link-prediction scores without cosine normalization.
+		"""
+
+		residual = phase_query - phase_target
+		return torch.abs(torch.sin(residual)).sum(dim=-1).mean()
 
 	def _subsample_uniformity_rows(self, x: torch.Tensor) -> torch.Tensor | None:
 		"""Cap row count before uniformity (entity table or large batches)."""
@@ -217,6 +228,8 @@ class KGAULoss(nn.Module):
 
 		if external_align is not None:
 			l_align = external_align
+		elif self.alignment_mode == 'sin_phase':
+			l_align = self.sin_phase_alignment_loss(q, t)
 		elif self.alignment_mode == 'phase_residual':
 			l_align = (q - t).pow(2).sum(dim=-1).mean()
 		else:
