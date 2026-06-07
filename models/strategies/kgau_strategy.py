@@ -377,9 +377,11 @@ class KGAUStrategy(Evaluator):
 
 		if self.criterion.gamma_ent <= 0:
 			return None
+		kwargs = _entity_embeddings_call_kwargs(model, self.device, self.criterion)
+		if hasattr(model, 'au_entity_embeddings'):
+			return model.au_entity_embeddings(**kwargs)
 		if not hasattr(model, 'entity_embeddings'):
 			return None
-		kwargs = _entity_embeddings_call_kwargs(model, self.device, self.criterion)
 		return model.entity_embeddings(**kwargs)
 
 	def _entity_uniformity_vectors_for_loss(

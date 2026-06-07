@@ -60,15 +60,27 @@ class pRotatEEncoder(BaseModel):
         self.entity_dict = get_entity_dict()
         self.rel_to_idx = _load_relation_to_idx(args)
 
+    @staticmethod
+    def _pi() -> float:
+        return 3.14159265358979323846
+
+    def _phase_scale(self) -> float:
+        """Scaling factor that maps raw embeddings into pRotatE phase coordinates."""
+
+        return self.embedding_range.item() / self._pi()
+
+    def _to_phase(self, vectors: torch.Tensor) -> torch.Tensor:
+        """Convert raw entity/relation embeddings to the phase space used by pRotatE scoring."""
+
+        return vectors / self._phase_scale()
+
     def _rotate_score(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor, mode: str) -> torch.Tensor:
         """Compute the pRotatE score for the provided head, relation, and tail embeddings."""
 
-        pi = 3.14159265358979323846
-
         # Make phases of entities and relations uniformly distributed in [-pi, pi]
-        phase_head = head / (self.embedding_range.item() / pi)
-        phase_relation = relation / (self.embedding_range.item() / pi)
-        phase_tail = tail / (self.embedding_range.item() / pi)
+        phase_head = self._to_phase(head)
+        phase_relation = self._to_phase(relation)
+        phase_tail = self._to_phase(tail)
 
         if mode == 'head-batch':
             score = phase_head + (phase_relation - phase_tail)
@@ -121,19 +133,21 @@ class pRotatEEncoder(BaseModel):
         }
 
     def get_queries_targets(self, src: torch.Tensor, rel: torch.Tensor, dst: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Return AU-compatible query, target, and head representations.
+        """Return AU-compatible query, target, and head representations in phase space.
 
-        KGAU expects encoders to expose query/target tensors for alignment-uniformity
-        training. For pRotatE, the query is the phase-addition of head and relation,
-        the target is the tail entity embedding, and the head is the raw head embedding.
+        KGAU alignment/uniformity uses the same phase coordinates as pRotatE link
+        prediction: query = phase(head) + phase(relation), target = phase(tail).
         """
 
-        head = torch.index_select(self.entity_embedding, dim=0, index=src).unsqueeze(1)
-        relation = torch.index_select(self.relation_embedding, dim=0, index=rel).unsqueeze(1)
-        tail = torch.index_select(self.entity_embedding, dim=0, index=dst).unsqueeze(1)
+        head = torch.index_select(self.entity_embedding, dim=0, index=src)
+        relation = torch.index_select(self.relation_embedding, dim=0, index=rel)
+        tail = torch.index_select(self.entity_embedding, dim=0, index=dst)
 
-        query = (head + relation).squeeze(1)
-        return query, tail.squeeze(1), head.squeeze(1)
+        phase_head = self._to_phase(head)
+        phase_relation = self._to_phase(relation)
+        phase_tail = self._to_phase(tail)
+        query = phase_head + phase_relation
+        return query, phase_tail, phase_head
 
     def compute_logits(self, output_dict: dict, batch_dict: dict) -> dict:
         """Compatibility adapter used by generic trainer paths."""
@@ -153,8 +167,16 @@ class pRotatEEncoder(BaseModel):
             entity_vectors = entity_vectors.to(device)
         return entity_vectors
 
+    def au_entity_embeddings(self, device: torch.device | None = None) -> torch.Tensor:
+        """Return entity vectors in pRotatE phase space for KGAU entity-uniformity terms."""
+
+        entity_vectors = self._to_phase(self.entity_embedding)
+        if device is not None:
+            entity_vectors = entity_vectors.to(device)
+        return entity_vectors
+
     def hr_embeddings(self, examples: Sequence[Example], device: torch.device | None = None) -> torch.Tensor:
-        """Build query vectors as head phase + relation phase."""
+        """Build query vectors as phase(head) + phase(relation)."""
 
         if device is None:
             device = self.entity_embedding.device
@@ -162,12 +184,9 @@ class pRotatEEncoder(BaseModel):
         head_indices = _as_index_tensor([example.head_id for example in examples], self.entity_dict.entity_to_idx, device)
         relation_indices = _as_index_tensor([example.relation for example in examples], self._relation_to_idx, device)
 
-        head = torch.index_select(self.entity_embedding, dim=0, index=head_indices).unsqueeze(1)
-        relation = torch.index_select(self.relation_embedding, dim=0, index=relation_indices).unsqueeze(1)
-
-        # In pRotatE, the theoretical query is just the addition of phases
-        query = head + relation
-        return query.squeeze(1)
+        head = torch.index_select(self.entity_embedding, dim=0, index=head_indices)
+        relation = torch.index_select(self.relation_embedding, dim=0, index=relation_indices)
+        return self._to_phase(head) + self._to_phase(relation)
 
     def predict_by_examples(self, examples: Sequence[Example], batch_size: int | None = None, num_workers: int = 1) -> tuple[torch.Tensor, torch.Tensor]:
         """Return query and target embeddings for link prediction evaluation."""
@@ -175,7 +194,7 @@ class pRotatEEncoder(BaseModel):
         device = self.entity_embedding.device
         query = self.hr_embeddings(examples, device=device)
         tail_indices = _as_index_tensor([example.tail_id for example in examples], self.entity_dict.entity_to_idx, device)
-        tails = self.entity_embeddings(device=device)[tail_indices]
+        tails = self.au_entity_embeddings(device=device)[tail_indices]
         return query, tails
 
     def predict_by_entities(self, entity_exs, batch_size: int | None = None, num_workers: int = 2) -> torch.Tensor:
