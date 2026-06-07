@@ -22,12 +22,16 @@
   "warm_up_steps": 40000,
   "lr_decay_factor": 0.1,
   "shuffle_train": true,
+  "use_amp": true,
+  "eval_use_amp": true,
   "lr": 5e-05,
   "weight_decay": 0.0,
 
   "margin": 6.0,
-
   "adversarial_temperature": 0.5,
-  
-  "n_sample": 1024
+  "n_sample": 1024,
+
+  "score_query_chunk_size": 512,
+  "eval_candidate_chunk_size": 8192,
+  "eval_entity_chunk_size": 8192
 }

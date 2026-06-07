@@ -113,6 +113,28 @@ def _score_batch_supports_mode(model) -> bool:
     return 'mode' in inspect.signature(model.score_batch).parameters
 
 
+def _examples_to_query_index_tensors(examples: Sequence[Example], entity_dict, model) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Convert examples to head/relation/tail index tensors once per evaluation pass."""
+
+    head_indices = [entity_dict.entity_to_idx(ex.head_id) for ex in examples]
+    tail_indices = [entity_dict.entity_to_idx(ex.tail_id) for ex in examples]
+    relation_lookup = getattr(model, '_relation_to_idx', getattr(model, 'rel_to_idx', None))
+    if relation_lookup is None:
+        raise RuntimeError('Model is missing a relation index lookup for fast evaluation')
+    relation_indices = [relation_lookup(ex.relation) for ex in examples]
+    return (
+        torch.tensor(head_indices, dtype=torch.long),
+        torch.tensor(relation_indices, dtype=torch.long),
+        torch.tensor(tail_indices, dtype=torch.long),
+    )
+
+
+def _entity_indices(entity_dict, entity_ids: Sequence[str]) -> torch.Tensor:
+    """Convert entity id strings to a single index tensor."""
+
+    return torch.tensor([entity_dict.entity_to_idx(entity_id) for entity_id in entity_ids], dtype=torch.long)
+
+
 def _infer_target_indices(examples: Sequence[Example], entity_dict, predict_head: bool = False) -> torch.Tensor:
     """Infer target entity indices for a batch of examples."""
 
@@ -395,10 +417,14 @@ class Evaluator:
             head_ids = [ex.head_id for ex in scoring_examples]
             relations = [ex.relation for ex in scoring_examples]
             score_batch_mode = 'head-batch' if predict_head and _score_batch_supports_mode(model) else 'tail-batch'
-            score_batch_kwargs = {}
-            if score_batch_mode == 'head-batch':
-                score_batch_kwargs['mode'] = 'head-batch'
-                score_batch_kwargs['query_tail_ids'] = [ex.tail_id for ex in scoring_examples]
+            use_fast_indices = hasattr(model, 'score_batch_from_indices')
+            query_head_idx = query_rel_idx = query_tail_idx = None
+            all_entity_idx = None
+            if use_fast_indices:
+                query_head_idx, query_rel_idx, query_tail_idx = _examples_to_query_index_tensors(
+                    scoring_examples, entity_dict, model
+                )
+                all_entity_idx = _entity_indices(entity_dict, all_entity_ids)
 
             if hasattr(model, 'prepare_link_prediction_queries') and hasattr(model, 'score_link_prediction_full'):
                 query_cache = model.prepare_link_prediction_queries(head_ids, relations)
@@ -411,7 +437,9 @@ class Evaluator:
                 if entity_chunk_size is None:
                     entity_chunk_size = getattr(model.config, 'eval_entity_chunk_size', None) if hasattr(model, 'config') else None
                 if entity_chunk_size is None:
-                    entity_chunk_size = max(batch_size, 4096)
+                    entity_chunk_size = getattr(global_args, 'eval_entity_chunk_size', None)
+                if entity_chunk_size is None:
+                    entity_chunk_size = max(batch_size, 8192)
                 entity_chunk_size = max(int(entity_chunk_size), 1)
 
                 if hasattr(model, 'prepare_link_prediction_queries'):
@@ -421,21 +449,47 @@ class Evaluator:
                     query_cache = None
                     score_candidates = None
 
+                use_eval_amp = (
+                    score_device.type == 'cuda'
+                    and bool(getattr(global_args, 'eval_use_amp', getattr(global_args, 'use_amp', False)))
+                )
                 for start in range(0, len(all_entity_ids), entity_chunk_size):
                     end = min(start + entity_chunk_size, len(all_entity_ids))
                     if score_candidates is not None:
                         chunk_score = score_candidates(query_cache, (start, end))
+                    elif use_fast_indices:
+                        candidate_idx = all_entity_idx[start:end].to(score_device)
+                        with torch.autocast(device_type='cuda', enabled=use_eval_amp):
+                            if score_batch_mode == 'head-batch':
+                                chunk_score = model.score_batch_from_indices(
+                                    query_rel_idx,
+                                    candidate_idx,
+                                    mode='head-batch',
+                                    query_tail_indices=query_tail_idx,
+                                )
+                            else:
+                                chunk_score = model.score_batch_from_indices(
+                                    query_rel_idx,
+                                    candidate_idx,
+                                    mode='tail-batch',
+                                    query_head_indices=query_head_idx,
+                                )
                     else:
                         entity_chunk = all_entity_ids[start:end]
+                        score_batch_kwargs = {}
                         if score_batch_mode == 'head-batch':
-                            chunk_score = model.score_batch(
-                                head_ids,
-                                relations,
-                                entity_chunk,
-                                **score_batch_kwargs,
-                            )
-                        else:
-                            chunk_score = model.score_batch(head_ids, relations, entity_chunk)
+                            score_batch_kwargs['mode'] = 'head-batch'
+                            score_batch_kwargs['query_tail_ids'] = [ex.tail_id for ex in scoring_examples]
+                        with torch.autocast(device_type='cuda', enabled=use_eval_amp):
+                            if score_batch_mode == 'head-batch':
+                                chunk_score = model.score_batch(
+                                    head_ids,
+                                    relations,
+                                    entity_chunk,
+                                    **score_batch_kwargs,
+                                )
+                            else:
+                                chunk_score = model.score_batch(head_ids, relations, entity_chunk)
                     if not isinstance(chunk_score, torch.Tensor):
                         chunk_score = torch.tensor(chunk_score, device=score_device)
                     score[:, start:end] = chunk_score

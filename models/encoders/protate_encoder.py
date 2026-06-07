@@ -186,6 +186,114 @@ class pRotatEEncoder(BaseModel):
         entity_indices = _as_index_tensor(entity_ids, self.entity_dict.entity_to_idx, device)
         return self.entity_embeddings(device=device)[entity_indices]
 
+    def _resolve_link_prediction_chunk_sizes(
+        self,
+        query_chunk_size: int | None,
+        candidate_chunk_size: int | None,
+    ) -> tuple[int, int]:
+        """Resolve query/candidate chunk sizes for link-prediction scoring."""
+
+        if query_chunk_size is None:
+            query_chunk_size = _config_int(self.args, "score_query_chunk_size", 512)
+        else:
+            query_chunk_size = int(query_chunk_size)
+        if candidate_chunk_size is None:
+            candidate_chunk_size = _config_int(self.args, "eval_candidate_chunk_size", 8192)
+        else:
+            candidate_chunk_size = int(candidate_chunk_size)
+        return max(query_chunk_size, 1), max(candidate_chunk_size, 1)
+
+    @torch.inference_mode()
+    def _score_link_prediction_matrix(
+        self,
+        relation_indices: torch.Tensor,
+        candidate_indices: torch.Tensor,
+        batch_mode: str,
+        anchor_indices: torch.Tensor,
+        query_chunk_size: int,
+        candidate_chunk_size: int,
+    ) -> torch.Tensor:
+        """Score many queries against candidate entity indices using chunked tail/head batching."""
+
+        device = self.entity_embedding.device
+        num_queries = relation_indices.size(0)
+        num_candidates = candidate_indices.size(0)
+        if num_queries == 0 or num_candidates == 0:
+            return torch.empty(num_queries, num_candidates, device=device)
+
+        scores = torch.empty(num_queries, num_candidates, device=device, dtype=torch.float32)
+        for cand_start in range(0, num_candidates, candidate_chunk_size):
+            cand_end = min(cand_start + candidate_chunk_size, num_candidates)
+            cand_chunk = candidate_indices[cand_start:cand_end]
+
+            for q_start in range(0, num_queries, query_chunk_size):
+                q_end = min(q_start + query_chunk_size, num_queries)
+                query_slice = slice(q_start, q_end)
+                zero_heads = torch.zeros(q_end - q_start, dtype=torch.long, device=device)
+                if batch_mode == "tail-batch":
+                    positive_sample = torch.stack(
+                        [
+                            anchor_indices[query_slice],
+                            relation_indices[query_slice],
+                            zero_heads,
+                        ],
+                        dim=-1,
+                    )
+                else:
+                    positive_sample = torch.stack(
+                        [
+                            zero_heads,
+                            relation_indices[query_slice],
+                            anchor_indices[query_slice],
+                        ],
+                        dim=-1,
+                    )
+                negative_sample = cand_chunk.unsqueeze(0).expand(q_end - q_start, cand_chunk.size(0))
+                block_score = self._score(positive_sample, negative_sample, mode=batch_mode)
+                scores[q_start:q_end, cand_start:cand_end] = block_score.float()
+
+        return scores
+
+    @torch.inference_mode()
+    def score_batch_from_indices(
+        self,
+        relation_indices: torch.Tensor,
+        candidate_indices: torch.Tensor,
+        mode: str = "tail-batch",
+        query_head_indices: torch.Tensor | None = None,
+        query_tail_indices: torch.Tensor | None = None,
+        query_chunk_size: int | None = None,
+        candidate_chunk_size: int | None = None,
+    ) -> torch.Tensor:
+        """Fast link-prediction scoring using precomputed index tensors."""
+
+        device = self.entity_embedding.device
+        batch_mode = str(mode or "tail-batch")
+        if batch_mode not in {"head-batch", "tail-batch"}:
+            raise ValueError(f"mode {batch_mode} not supported")
+
+        relation_indices = relation_indices.to(device=device, dtype=torch.long)
+        candidate_indices = candidate_indices.to(device=device, dtype=torch.long)
+        query_q, query_c = self._resolve_link_prediction_chunk_sizes(query_chunk_size, candidate_chunk_size)
+
+        if batch_mode == "tail-batch":
+            if query_head_indices is None:
+                raise ValueError("query_head_indices is required for tail-batch scoring")
+            anchor_indices = query_head_indices.to(device=device, dtype=torch.long)
+        else:
+            if query_tail_indices is None:
+                raise ValueError("query_tail_indices is required for head-batch scoring")
+            anchor_indices = query_tail_indices.to(device=device, dtype=torch.long)
+
+        return self._score_link_prediction_matrix(
+            relation_indices,
+            candidate_indices,
+            batch_mode,
+            anchor_indices,
+            query_q,
+            query_c,
+        )
+
     @torch.inference_mode()
     def score_batch(
         self,
@@ -195,6 +303,7 @@ class pRotatEEncoder(BaseModel):
         mode: str = "tail-batch",
         query_tail_ids=None,
         query_chunk_size: int | None = None,
+        candidate_chunk_size: int | None = None,
     ) -> torch.Tensor:
         """Score queries against candidate entities.
 
@@ -221,43 +330,23 @@ class pRotatEEncoder(BaseModel):
         if batch_mode not in {"head-batch", "tail-batch"}:
             raise ValueError(f"mode {batch_mode} not supported")
 
-        if query_chunk_size is None:
-            query_chunk_size = _config_int(self.args, "score_query_chunk_size", 256)
-        else:
-            query_chunk_size = int(query_chunk_size)
-        query_chunk_size = max(query_chunk_size, 1)
-
-        candidate_chunk_size = _config_int(self.args, "eval_candidate_chunk_size", 1024)
-        candidate_chunk_size = max(candidate_chunk_size, 1)
+        query_q, query_c = self._resolve_link_prediction_chunk_sizes(query_chunk_size, candidate_chunk_size)
 
         if batch_mode == "tail-batch":
-            head_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
-            anchor_indices = torch.zeros(num_queries, dtype=torch.long, device=device)
+            anchor_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
         else:
             if query_tail_ids is None:
                 raise ValueError("query_tail_ids is required for head-batch scoring")
             anchor_indices = _as_index_tensor(query_tail_ids, self.entity_dict.entity_to_idx, device)
 
-        scores = torch.empty(num_queries, num_candidates, device=device, dtype=torch.float32)
-        for cand_start in range(0, num_candidates, candidate_chunk_size):
-            cand_end = min(cand_start + candidate_chunk_size, num_candidates)
-            cand_chunk = candidate_indices[cand_start:cand_end]
-
-            for q_start in range(0, num_queries, query_chunk_size):
-                q_end = min(q_start + query_chunk_size, num_queries)
-                positive_sample = torch.stack(
-                    [
-                        torch.zeros(q_end - q_start, dtype=torch.long, device=device),
-                        relation_indices[q_start:q_end],
-                        anchor_indices[q_start:q_end],
-                    ],
-                    dim=-1,
-                )
-                negative_sample = cand_chunk.unsqueeze(0).expand(q_end - q_start, cand_chunk.size(0))
-                block_score = self._score(positive_sample, negative_sample, mode=batch_mode)
-                scores[q_start:q_end, cand_start:cand_end] = block_score.float()
-
-        return scores
+        return self._score_link_prediction_matrix(
+            relation_indices,
+            candidate_indices,
+            batch_mode,
+            anchor_indices,
+            query_q,
+            query_c,
+        )
 
     def _relation_to_idx(self, relation: str) -> int:
         """Resolve relation variants used by preprocessing and inverse triplet generation."""

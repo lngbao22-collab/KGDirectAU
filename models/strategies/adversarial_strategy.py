@@ -46,6 +46,10 @@ class AdversarialStrategy:
         if self.max_steps is not None:
             self.max_steps = int(self.max_steps)
         self.shuffle_train = bool(getattr(args, "shuffle_train", False))
+        self.use_amp = bool(getattr(args, "use_amp", False)) and torch.cuda.is_available()
+        self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
+        self._cached_valid_exs = None
+        self._cached_valid_backward_exs = None
 
         nentity = getattr(args, "nentity", getattr(args, "ent_total", None))
         if nentity is None and hasattr(encoder, "entity_embedding"):
@@ -75,6 +79,48 @@ class AdversarialStrategy:
             self.global_step,
         )
         self.next_lr_decay_step = int(self.next_lr_decay_step * 3)
+
+    def _validation_interval(self) -> int:
+        """Epochs between validation runs (0 or unset means every epoch)."""
+
+        raw = getattr(self.args, "epoch_per_eval", None)
+        interval = int(raw) if raw is not None else 0
+        if interval <= 0 or interval > int(getattr(self.args, "epochs", 1)):
+            return 1
+        return interval
+
+    def _should_validate(self, epoch: int) -> bool:
+        """Return True when validation should run after this epoch."""
+
+        interval = self._validation_interval()
+        epoch_number = epoch + 1
+        max_epochs = max(int(getattr(self.args, "epochs", 1)), 1)
+        return epoch_number % interval == 0 or epoch_number >= max_epochs
+
+    def _get_valid_examples(self):
+        """Load and cache validation examples for link prediction."""
+
+        if self._cached_valid_exs is not None:
+            return self._cached_valid_exs, self._cached_valid_backward_exs
+
+        valid_path = getattr(self.args, "valid_path", "")
+        valid_exs = load_data(valid_path, add_forward_triplet=True, add_backward_triplet=False)
+        if getattr(get_model_obj(self.encoder), "bidirectional_score_batch", False):
+            valid_backward_exs = valid_exs
+        else:
+            valid_backward_exs = [
+                Example(**reverse_triplet({
+                    "head_id": ex.head_id,
+                    "head": ex.head,
+                    "relation": ex.relation,
+                    "tail_id": ex.tail_id,
+                    "tail": ex.tail,
+                }))
+                for ex in valid_exs
+            ]
+        self._cached_valid_exs = valid_exs
+        self._cached_valid_backward_exs = valid_backward_exs
+        return valid_exs, valid_backward_exs
 
     def _iter_train_batches(self, epoch: int):
         """Iterate over tensorized train triples using configured batch size."""
@@ -119,15 +165,20 @@ class AdversarialStrategy:
             neg_sample = neg_sample.to(self.device)
             weights = weights.to(self.device)
 
-            outputs = self.encoder(pos_sample, neg_sample, current_mode)
-            pos_scores = outputs["positive_scores"]
-            neg_scores = outputs["negative_scores"]
-
             adv_temp = getattr(self.args, "adversarial_temp", getattr(self.args, "adversarial_temperature", 1.0))
-            loss = compute_adversarial_bce_loss(pos_scores, neg_scores, adv_temp, weights)
+            with torch.autocast(device_type="cuda", enabled=self.use_amp):
+                outputs = self.encoder(pos_sample, neg_sample, current_mode)
+                pos_scores = outputs["positive_scores"]
+                neg_scores = outputs["negative_scores"]
+                loss = compute_adversarial_bce_loss(pos_scores, neg_scores, adv_temp, weights)
 
-            loss.backward()
-            self.optimizer.step()
+            if self.use_amp:
+                self.scaler.scale(loss).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                loss.backward()
+                self.optimizer.step()
             self.global_step += 1
             self._maybe_decay_learning_rate()
             total_loss += float(loss.item())
@@ -145,21 +196,7 @@ class AdversarialStrategy:
         valid_path = getattr(self.args, "valid_path", "")
 
         if valid_path and os.path.exists(valid_path):
-            valid_exs = load_data(valid_path, add_forward_triplet=True, add_backward_triplet=False)
-            if getattr(get_model_obj(self.encoder), "bidirectional_score_batch", False):
-                valid_backward_exs = valid_exs
-            else:
-                valid_backward_exs = [
-                    Example(**reverse_triplet({
-                        "head_id": ex.head_id,
-                        "head": ex.head,
-                        "relation": ex.relation,
-                        "tail_id": ex.tail_id,
-                        "tail": ex.tail,
-                    }))
-                    for ex in valid_exs
-                ]
-
+            valid_exs, valid_backward_exs = self._get_valid_examples()
             valid_output_path = os.path.join(self.args.output_dir, "valid_link_prediction.log")
             forward_metrics = self.evaluator.evaluate_link_prediction_inplace(
                 self.encoder,
@@ -198,9 +235,11 @@ class AdversarialStrategy:
             train_loss = self.train_epoch(self._iter_train_batches(epoch), epoch)
             self.train_time += time.time() - train_start
 
-            eval_start = time.time()
-            metric_dict = self.eval_epoch(epoch)
-            self.valid_time += time.time() - eval_start
+            metric_dict = {}
+            if self._should_validate(epoch):
+                eval_start = time.time()
+                metric_dict = self.eval_epoch(epoch)
+                self.valid_time += time.time() - eval_start
 
             monitor_value = self._extract_monitor_value(metric_dict, train_loss)
             is_best = self.best_metric is None or monitor_value > self.best_metric.get("score", float("-inf"))
