@@ -37,7 +37,8 @@ class RotatEEncoder(BaseModel):
         self.nrelation = n_rel
         self.hidden_dim = int(getattr(args, "dim", 500))
         self.epsilon = 2.0
-        margin = float(getattr(args, "margin", 6.0))
+        margin_value = getattr(args, "margin", None)
+        margin = 6.0 if margin_value is None else float(margin_value)
 
         self.margin = nn.Parameter(torch.tensor([margin]), requires_grad=False)
         self.embedding_range = nn.Parameter(

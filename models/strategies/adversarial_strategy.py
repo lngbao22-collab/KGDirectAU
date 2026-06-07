@@ -18,6 +18,31 @@ from utils.device import get_model_obj
 from utils.logger import logger
 
 
+def _config_float(args, name: str, default: float) -> float:
+    """Read a float hyperparameter, treating JSON/null argparse defaults as unset."""
+
+    value = getattr(args, name, None)
+    return default if value is None else float(value)
+
+
+def _config_int(args, name: str, default: int | None = None) -> int | None:
+    """Read an integer hyperparameter, treating JSON/null argparse defaults as unset."""
+
+    value = getattr(args, name, None)
+    if value is None:
+        return default
+    return int(value)
+
+
+def _config_bool(args, name: str, default: bool = False) -> bool:
+    """Read a boolean hyperparameter, treating JSON/null argparse defaults as unset."""
+
+    value = getattr(args, name, None)
+    if value is None:
+        return default
+    return bool(value)
+
+
 class AdversarialStrategy:
     """Standalone adversarial RotatE training loop with evaluation and checkpointing."""
 
@@ -34,18 +59,14 @@ class AdversarialStrategy:
         self.valid_time = 0.0
         self.total_time = 0.0
 
-        self.base_lr = float(getattr(args, "lr", getattr(args, "learning_rate", 5e-5)))
-        weight_decay = getattr(args, "weight_decay", 0.0)
+        self.base_lr = _config_float(args, "lr", _config_float(args, "learning_rate", 5e-5))
+        weight_decay = _config_float(args, "weight_decay", 0.0)
         self.optimizer = torch.optim.Adam(self.encoder.parameters(), lr=self.base_lr, weight_decay=weight_decay)
         self.global_step = 0
-        self.next_lr_decay_step = getattr(args, "warm_up_steps", None)
-        if self.next_lr_decay_step is not None:
-            self.next_lr_decay_step = int(self.next_lr_decay_step)
-        self.lr_decay_factor = float(getattr(args, "lr_decay_factor", 0.1))
-        self.max_steps = getattr(args, "max_steps", None)
-        if self.max_steps is not None:
-            self.max_steps = int(self.max_steps)
-        self.shuffle_train = bool(getattr(args, "shuffle_train", False))
+        self.next_lr_decay_step = _config_int(args, "warm_up_steps", None)
+        self.lr_decay_factor = _config_float(args, "lr_decay_factor", 0.1)
+        self.max_steps = _config_int(args, "max_steps", None)
+        self.shuffle_train = _config_bool(args, "shuffle_train", False)
         self.use_amp = bool(getattr(args, "use_amp", False)) and torch.cuda.is_available()
         self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
         self._cached_valid_exs = None
@@ -165,7 +186,11 @@ class AdversarialStrategy:
             neg_sample = neg_sample.to(self.device)
             weights = weights.to(self.device)
 
-            adv_temp = getattr(self.args, "adversarial_temp", getattr(self.args, "adversarial_temperature", 1.0))
+            adv_temp = _config_float(
+                self.args,
+                "adversarial_temp",
+                _config_float(self.args, "adversarial_temperature", 1.0),
+            )
             with torch.autocast(device_type="cuda", enabled=self.use_amp):
                 outputs = self.encoder(pos_sample, neg_sample, current_mode)
                 pos_scores = outputs["positive_scores"]
