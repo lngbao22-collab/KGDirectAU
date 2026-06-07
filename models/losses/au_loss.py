@@ -51,6 +51,8 @@ class KGAULoss(nn.Module):
 		tuni=2.0,
 		max_uniformity_samples: int = 1024,
 		additive_margin: float = 0.0,
+		alignment_mode: str = 'cosine',
+		normalize_uniformity: bool = True,
 	):
 		super().__init__()
 		self.gamma_q = _coalesce_float(gamma_q, 1.0)
@@ -62,6 +64,10 @@ class KGAULoss(nn.Module):
 		self.max_uniformity_samples = max_uniformity_samples
 		# InfoNCE additive margin gamma; geometric threshold m = 2 * gamma on squared L2.
 		self.additive_margin = _coalesce_float(additive_margin, 0.0)
+		# `cosine`: L2-normalize paired vectors (DistMult/ComplEx/SimKGC).
+		# `phase_residual`: element-wise squared phase residual without global normalization (RotatE family).
+		self.alignment_mode = alignment_mode or 'cosine'
+		self.normalize_uniformity = normalize_uniformity
 
 	def alignment_loss(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
 		"""Expected squared L2 distance between paired positive query and target embeddings."""
@@ -116,7 +122,8 @@ class KGAULoss(nn.Module):
 		x = self._subsample_uniformity_rows(x)
 		if x is None:
 			return None
-		x = F.normalize(x, p=2, dim=-1)
+		if self.normalize_uniformity:
+			x = F.normalize(x, p=2, dim=-1)
 		num_pairs = self._max_uniformity_pair_count(x.size(0), x.size(-1))
 		if num_pairs <= 0:
 			return None
@@ -178,6 +185,7 @@ class KGAULoss(nn.Module):
 		q_uni: torch.Tensor | None = None,
 		t_uni: torch.Tensor | None = None,
 		h_uni: torch.Tensor | None = None,
+		external_align: torch.Tensor | None = None,
 		return_stats: bool = False,
 	):
 		"""Return the total AU loss together with alignment and uniformity terms.
@@ -187,35 +195,37 @@ class KGAULoss(nn.Module):
 		fall inside the margin buffer (only meaningful when ``additive_margin`` > 0).
 		"""
 
-		q_norm = F.normalize(q, p=2, dim=-1)
-		t_norm = F.normalize(t, p=2, dim=-1)
-		l_align = self.alignment_loss(q_norm, t_norm)
+		if external_align is not None:
+			l_align = external_align
+		elif self.alignment_mode == 'phase_residual':
+			l_align = (q - t).pow(2).sum(dim=-1).mean()
+		else:
+			l_align = self.alignment_loss(q, t)
 
-		l_unif = q_norm.new_zeros(())
+		l_unif = q.new_zeros(())
 		active_sum = 0.0
 		active_weight = 0.0
 
 		if self.gamma_q > 0:
-			q_uniformity = q_uni if q_uni is not None else q_norm
+			q_uniformity = q_uni if q_uni is not None else q
 			term, frac = self.uniformity_loss_with_stats(q_uniformity)
 			l_unif = l_unif + self.gamma_q * term
 			active_sum += self.gamma_q * frac
 			active_weight += self.gamma_q
 		if self.gamma_t > 0:
-			t_uniformity = t_uni if t_uni is not None else t_norm
+			t_uniformity = t_uni if t_uni is not None else t
 			term, frac = self.uniformity_loss_with_stats(t_uniformity)
 			l_unif = l_unif + self.gamma_t * term
 			active_sum += self.gamma_t * frac
 			active_weight += self.gamma_t
 		if h is not None and self.gamma_h > 0:
-			h_uniformity = h_uni if h_uni is not None else F.normalize(h, p=2, dim=-1)
+			h_uniformity = h_uni if h_uni is not None else h
 			term, _ = self.uniformity_loss_with_stats(h_uniformity)
 			l_unif = l_unif + self.gamma_h * term
 		if ent is not None and self.gamma_ent > 0:
 			ent_rows = self._subsample_uniformity_rows(ent)
 			if ent_rows is not None:
-				ent_norm = F.normalize(ent_rows, p=2, dim=-1)
-				term, _ = self.uniformity_loss_with_stats(ent_norm)
+				term, _ = self.uniformity_loss_with_stats(ent_rows)
 				l_unif = l_unif + self.gamma_ent * term
 
 		total_loss = l_align + l_unif

@@ -149,6 +149,20 @@ class pRotatEEncoder(BaseModel):
         query = phase_head + phase_relation
         return query, phase_tail, phase_head
 
+    def compute_au_alignment_loss(
+        self,
+        src: torch.Tensor,
+        rel: torch.Tensor,
+        dst: torch.Tensor,
+    ) -> torch.Tensor:
+        """AU alignment in native pRotatE score space (same objective as link prediction)."""
+
+        positive_sample = torch.stack([src, rel, dst], dim=-1)
+        scores = self._score(positive_sample, mode='single')
+        if scores.dim() > 1:
+            scores = scores.squeeze(-1)
+        return -scores.mean()
+
     def compute_logits(self, output_dict: dict, batch_dict: dict) -> dict:
         """Compatibility adapter used by generic trainer paths."""
 

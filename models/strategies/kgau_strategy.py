@@ -175,6 +175,10 @@ class KGAUStrategy(Evaluator):
 
 		tuni_val = _config_float(args, 'tuni', _config_float(args, 'temperature', _config_float(args, 't', 2.0)))
 
+		alignment_mode = getattr(args, 'alignment_mode', None) or 'cosine'
+		normalize_uniformity = getattr(args, 'normalize_uniformity', None)
+		if normalize_uniformity is None:
+			normalize_uniformity = alignment_mode != 'phase_residual'
 		self.criterion = KGAULoss(
 			gamma_q=_config_float(args, 'gamma_q', 1.0),
 			gamma_t=_config_float(args, 'gamma_t', 1.0),
@@ -183,6 +187,8 @@ class KGAUStrategy(Evaluator):
 			tuni=tuni_val,
 			max_uniformity_samples=int(_config_float(args, 'max_uniformity_samples', 1024)),
 			additive_margin=_config_float(args, 'additive_margin', 0.0),
+			alignment_mode=alignment_mode,
+			normalize_uniformity=bool(normalize_uniformity),
 		).to(self.device)
 		if self.criterion.gamma_ent > 0 and self.uses_text_inputs:
 			logger.info(
@@ -322,6 +328,19 @@ class KGAUStrategy(Evaluator):
 		n_unique_t = int(distinct_first_indices(t_keys).numel()) if self.criterion.gamma_t > 0 else 0
 		return n_unique_q, n_unique_t
 
+	def _external_alignment_loss(
+		self,
+		model,
+		ss: torch.Tensor | None,
+		rs: torch.Tensor | None,
+		ts: torch.Tensor | None,
+	) -> torch.Tensor | None:
+		"""Encoder-specific alignment (e.g. pRotatE score maximization)."""
+
+		if ss is None or not hasattr(model, 'compute_au_alignment_loss'):
+			return None
+		return model.compute_au_alignment_loss(ss, rs, ts)
+
 	def _au_loss_with_distinct_keys(
 		self,
 		q_raw: torch.Tensor,
@@ -331,13 +350,15 @@ class KGAUStrategy(Evaluator):
 		q_keys: torch.Tensor,
 		t_keys: torch.Tensor,
 		h_keys: torch.Tensor,
+		external_align: torch.Tensor | None = None,
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, int, float]:
 		"""KGAU loss with deduplicated uniformity inputs (by entity/relation id keys)."""
 
 		q_uni, t_uni, h_uni, n_unique_q, n_unique_t = self._distinct_uniformity_inputs(
 			q_raw, t_raw, h_raw, q_keys, t_keys, h_keys)
 		loss, l_align, l_unif, margin_active_frac = self.criterion(
-			q_raw, t_raw, h_raw, ent_raw, q_uni=q_uni, t_uni=t_uni, h_uni=h_uni, return_stats=True)
+			q_raw, t_raw, h_raw, ent_raw, q_uni=q_uni, t_uni=t_uni, h_uni=h_uni,
+			external_align=external_align, return_stats=True)
 		return loss, l_align, l_unif, n_unique_q, n_unique_t, margin_active_frac
 
 	def _batch_entity_uniformity_vectors(
@@ -466,13 +487,14 @@ class KGAUStrategy(Evaluator):
 
 		self.optimizer.zero_grad()
 		q_keys, t_keys, h_keys = self._uniformity_keys(ss, rs, ts)
+		external_align = self._external_alignment_loss(model, ss, rs, ts)
 		if use_amp:
 			with torch.amp.autocast(device_type='cuda'):
 				q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
 				ent_raw = self._entity_uniformity_vectors_for_loss(
 					model, h_raw, t_raw, h_keys, t_keys)
 				loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
-					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
+					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, external_align=external_align)
 			self.scaler.scale(loss).backward()
 			self.scaler.unscale_(self.optimizer)
 			torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
@@ -483,7 +505,7 @@ class KGAUStrategy(Evaluator):
 			ent_raw = self._entity_uniformity_vectors_for_loss(
 				model, h_raw, t_raw, h_keys, t_keys)
 			loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
-				q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
+				q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, external_align=external_align)
 			loss.backward()
 			torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
 			self.optimizer.step()
@@ -514,20 +536,22 @@ class KGAUStrategy(Evaluator):
 			end = min(start + micro_batch, total)
 			fraction = (end - start) / total
 			q_keys, t_keys, h_keys = self._uniformity_keys(ss[start:end], rs[start:end], ts[start:end])
+			external_align = self._external_alignment_loss(
+				model, ss[start:end], rs[start:end], ts[start:end])
 			if use_amp:
 				with torch.amp.autocast(device_type='cuda'):
 					q_raw, t_raw, h_raw = model.get_queries_targets(ss[start:end], rs[start:end], ts[start:end])
 					ent_raw = self._entity_uniformity_vectors_for_loss(
 						model, h_raw, t_raw, h_keys, t_keys)
 					loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
-						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
+						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, external_align=external_align)
 				self._backward_au_loss(loss, fraction, use_amp=True)
 			else:
 				q_raw, t_raw, h_raw = model.get_queries_targets(ss[start:end], rs[start:end], ts[start:end])
 				ent_raw = self._entity_uniformity_vectors_for_loss(
 					model, h_raw, t_raw, h_keys, t_keys)
 				loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
-					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
+					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, external_align=external_align)
 				self._backward_au_loss(loss, fraction, use_amp=False)
 			chunk = end - start
 			loss_sum += loss.item() * chunk

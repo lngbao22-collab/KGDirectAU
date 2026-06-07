@@ -175,6 +175,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help='uniformity weight for all entity embeddings')
     parser.add_argument('--tuni', default=None, type=float,
                         help='AU uniformity temperature (Gaussian potential scale)')
+    parser.add_argument('--alignment-mode', '--alignment_mode', default=None, type=str, dest='alignment_mode',
+                        help='KGAU alignment mode: cosine (default) or phase_residual for RotatE-family encoders')
+    parser.add_argument('--normalize-uniformity', '--normalize_uniformity', default=None,
+                        dest='normalize_uniformity', action=argparse.BooleanOptionalAction,
+                        help='L2-normalize vectors before AU uniformity (default true except phase_residual)')
     normalize_group = parser.add_mutually_exclusive_group()
     normalize_group.add_argument(
         '--normalize-lp-scores', '--normalize_lp_scores',

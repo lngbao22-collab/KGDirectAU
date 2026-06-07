@@ -25,9 +25,12 @@
 
   "adversarial_temperature": 1.0,
 
+  "alignment_mode": "phase_residual",
+  "normalize_uniformity": false,
+
   "gamma_q": 1.0,
   "gamma_t": 1.0,
-  "gamma_h": 0.5,
+  "gamma_h": 0.0,
   "gamma_ent": 0.0,
-  "tuni": 2.0
+  "tuni": 44.0
 }
