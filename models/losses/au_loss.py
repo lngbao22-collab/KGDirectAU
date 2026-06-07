@@ -151,6 +151,26 @@ class KGAULoss(nn.Module):
 		# gamma=0.02 -> penalize the closest ~20% of pairs; clamp for stability.
 		return min(0.5, max(0.05, margin * 10.0))
 
+	def _scaled_uniformity_dist_sq(self, dist_sq: torch.Tensor) -> torch.Tensor:
+		"""Map pairwise distances to a stable scale for the Gaussian potential."""
+
+		if self.normalize_uniformity:
+			return dist_sq
+		# Raw phase vectors have O(dim) squared L2 distance; normalize by batch geometry so
+		# `tuni` stays comparable to the unit-sphere case (typically 2-4).
+		scale = dist_sq.median().clamp_min(1e-6)
+		return dist_sq / scale
+
+	@staticmethod
+	def _log_mean_potential(neg_scaled_dist_sq: torch.Tensor) -> torch.Tensor:
+		"""Compute log(mean(exp(-x))) without log(0) underflow or 0/0 NaN gradients."""
+
+		if neg_scaled_dist_sq.numel() == 0:
+			return neg_scaled_dist_sq.new_zeros(())
+		return torch.logsumexp(-neg_scaled_dist_sq, dim=0) - torch.log(
+			neg_scaled_dist_sq.new_tensor(float(neg_scaled_dist_sq.numel()))
+		)
+
 	def uniformity_loss_with_stats(self, x: torch.Tensor) -> tuple[torch.Tensor, float]:
 		"""Return uniformity loss and the fraction of pairs inside the margin buffer (margin mode only)."""
 
@@ -161,19 +181,19 @@ class KGAULoss(nn.Module):
 		dist_sq = self._prepare_uniformity_pairs(x)
 		if dist_sq is None:
 			return x.new_zeros(()), 0.0
+		scaled_dist_sq = self._scaled_uniformity_dist_sq(dist_sq)
 		margin = float(self.additive_margin)
 		if margin <= 0.0:
-			potential = torch.exp(-self.tuni * dist_sq)
-			return potential.mean().log(), 1.0
+			return self._log_mean_potential(self.tuni * scaled_dist_sq), 1.0
 		# Fixed m = 2*gamma is far too small in high dimensions (random pairs have d^2 ~ 2).
 		# Use an adaptive buffer from batch geometry: repel the closest fraction of pairs.
 		target_frac = self._margin_uniformity_fraction(margin)
-		geom_margin = torch.quantile(dist_sq, target_frac)
-		buffer_penalty = torch.exp(self.tuni * F.relu(geom_margin - dist_sq))
+		geom_margin = torch.quantile(scaled_dist_sq, target_frac)
+		buffer_penalty = torch.exp(self.tuni * F.relu(geom_margin - scaled_dist_sq))
 		# Keep classic AU spread so early epochs still have strong uniformity signal.
-		spread = torch.exp(-self.tuni * dist_sq).mean().log()
-		buffer = buffer_penalty.mean().log()
-		active_frac = float((dist_sq < geom_margin).float().mean().item())
+		spread = self._log_mean_potential(self.tuni * scaled_dist_sq)
+		buffer = buffer_penalty.mean().clamp_min(1e-12).log()
+		active_frac = float((scaled_dist_sq < geom_margin).float().mean().item())
 		return spread + buffer, active_frac
 
 	def forward(
