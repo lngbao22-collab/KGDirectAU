@@ -31,7 +31,7 @@
   "adversarial_temperature": 0.5,
   "n_sample": 1024,
 
-  "score_query_chunk_size": 512,
-  "eval_candidate_chunk_size": 8192,
-  "eval_entity_chunk_size": 8192
+  "score_query_chunk_size": 256,
+  "eval_candidate_chunk_size": 2048,
+  "eval_entity_chunk_size": 4096
 }

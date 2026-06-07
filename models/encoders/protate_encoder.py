@@ -194,14 +194,21 @@ class pRotatEEncoder(BaseModel):
         """Resolve query/candidate chunk sizes for link-prediction scoring."""
 
         if query_chunk_size is None:
-            query_chunk_size = _config_int(self.args, "score_query_chunk_size", 512)
+            query_chunk_size = _config_int(self.args, "score_query_chunk_size", 256)
         else:
             query_chunk_size = int(query_chunk_size)
         if candidate_chunk_size is None:
-            candidate_chunk_size = _config_int(self.args, "eval_candidate_chunk_size", 8192)
+            candidate_chunk_size = _config_int(self.args, "eval_candidate_chunk_size", 2048)
         else:
             candidate_chunk_size = int(candidate_chunk_size)
-        return max(query_chunk_size, 1), max(candidate_chunk_size, 1)
+        query_chunk_size = max(query_chunk_size, 1)
+        candidate_chunk_size = max(candidate_chunk_size, 1)
+        return _cap_link_prediction_chunks_for_memory(
+            query_chunk_size,
+            candidate_chunk_size,
+            self.hidden_dim,
+            self.entity_embedding.device,
+        )
 
     @torch.inference_mode()
     def _score_link_prediction_matrix(
@@ -249,8 +256,87 @@ class pRotatEEncoder(BaseModel):
                         dim=-1,
                     )
                 negative_sample = cand_chunk.unsqueeze(0).expand(q_end - q_start, cand_chunk.size(0))
-                block_score = self._score(positive_sample, negative_sample, mode=batch_mode)
+                try:
+                    block_score = self._score(positive_sample, negative_sample, mode=batch_mode)
+                except torch.cuda.OutOfMemoryError:
+                    torch.cuda.empty_cache()
+                    block_score = self._score_link_prediction_block_safe(
+                        relation_indices,
+                        cand_chunk,
+                        batch_mode,
+                        anchor_indices,
+                        q_start,
+                        q_end,
+                        max(query_chunk_size // 2, 64),
+                        max(candidate_chunk_size // 2, 128),
+                    )
                 scores[q_start:q_end, cand_start:cand_end] = block_score.float()
+
+        return scores
+
+    def _score_link_prediction_block_safe(
+        self,
+        relation_indices: torch.Tensor,
+        candidate_indices: torch.Tensor,
+        batch_mode: str,
+        anchor_indices: torch.Tensor,
+        q_start: int,
+        q_end: int,
+        query_chunk_size: int,
+        candidate_chunk_size: int,
+    ) -> torch.Tensor:
+        """Score one query/candidate tile, recursively splitting on CUDA OOM."""
+
+        device = self.entity_embedding.device
+        num_queries = q_end - q_start
+        num_candidates = candidate_indices.size(0)
+        scores = torch.empty(num_queries, num_candidates, device=device, dtype=torch.float32)
+
+        for cand_start in range(0, num_candidates, candidate_chunk_size):
+            cand_end = min(cand_start + candidate_chunk_size, num_candidates)
+            cand_chunk = candidate_indices[cand_start:cand_end]
+            for local_q_start in range(0, num_queries, query_chunk_size):
+                local_q_end = min(local_q_start + query_chunk_size, num_queries)
+                global_q_start = q_start + local_q_start
+                global_q_end = q_start + local_q_end
+                query_slice = slice(global_q_start, global_q_end)
+                zero_heads = torch.zeros(global_q_end - global_q_start, dtype=torch.long, device=device)
+                if batch_mode == "tail-batch":
+                    positive_sample = torch.stack(
+                        [
+                            anchor_indices[query_slice],
+                            relation_indices[query_slice],
+                            zero_heads,
+                        ],
+                        dim=-1,
+                    )
+                else:
+                    positive_sample = torch.stack(
+                        [
+                            zero_heads,
+                            relation_indices[query_slice],
+                            anchor_indices[query_slice],
+                        ],
+                        dim=-1,
+                    )
+                negative_sample = cand_chunk.unsqueeze(0).expand(global_q_end - global_q_start, cand_chunk.size(0))
+                try:
+                    block_score = self._score(positive_sample, negative_sample, mode=batch_mode)
+                except torch.cuda.OutOfMemoryError:
+                    if query_chunk_size <= 64 and candidate_chunk_size <= 128:
+                        raise
+                    torch.cuda.empty_cache()
+                    block_score = self._score_link_prediction_block_safe(
+                        relation_indices,
+                        cand_chunk,
+                        batch_mode,
+                        anchor_indices,
+                        global_q_start,
+                        global_q_end,
+                        max(query_chunk_size // 2, 64),
+                        max(candidate_chunk_size // 2, 128),
+                    )
+                scores[local_q_start:local_q_end, cand_start:cand_end] = block_score.float()
 
         return scores
 
@@ -410,6 +496,40 @@ def _config_int(args, key: str, default: int) -> int:
     if value is None:
         return default
     return int(value)
+
+
+def _cap_link_prediction_chunks_for_memory(
+    query_chunk_size: int,
+    candidate_chunk_size: int,
+    hidden_dim: int,
+    device: torch.device,
+    min_query: int = 64,
+    min_candidate: int = 128,
+) -> tuple[int, int]:
+    """Shrink link-prediction chunks so a Q x C scoring block fits in free GPU memory."""
+
+    query_chunk_size = max(int(query_chunk_size), min_query)
+    candidate_chunk_size = max(int(candidate_chunk_size), min_candidate)
+    if device.type != "cuda":
+        return query_chunk_size, candidate_chunk_size
+
+    free_bytes, _ = torch.cuda.mem_get_info(device)
+    # Rough budget for intermediate [Q, C, D] tensors created during pRotatE scoring.
+    budget_bytes = int(free_bytes * 0.30)
+    bytes_per_pair = max(hidden_dim * 6 * 4, 1)
+    max_pairs = max(budget_bytes // bytes_per_pair, min_query * min_candidate)
+
+    while query_chunk_size * candidate_chunk_size > max_pairs:
+        if candidate_chunk_size > min_candidate and candidate_chunk_size >= query_chunk_size:
+            candidate_chunk_size = max(candidate_chunk_size // 2, min_candidate)
+        elif query_chunk_size > min_query:
+            query_chunk_size = max(query_chunk_size // 2, min_query)
+        elif candidate_chunk_size > min_candidate:
+            candidate_chunk_size = max(candidate_chunk_size // 2, min_candidate)
+        else:
+            break
+
+    return query_chunk_size, candidate_chunk_size
 
 
 def _as_index_tensor(values, lookup, device: torch.device) -> torch.Tensor:

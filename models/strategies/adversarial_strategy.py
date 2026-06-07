@@ -192,6 +192,8 @@ class AdversarialStrategy:
         """Evaluate the model using the common evaluator path."""
 
         self.encoder.eval()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         metric_dict = {}
         valid_path = getattr(self.args, "valid_path", "")
 

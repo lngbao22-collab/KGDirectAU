@@ -439,7 +439,7 @@ class Evaluator:
                 if entity_chunk_size is None:
                     entity_chunk_size = getattr(global_args, 'eval_entity_chunk_size', None)
                 if entity_chunk_size is None:
-                    entity_chunk_size = max(batch_size, 8192)
+                    entity_chunk_size = max(batch_size, 4096)
                 entity_chunk_size = max(int(entity_chunk_size), 1)
 
                 if hasattr(model, 'prepare_link_prediction_queries'):
