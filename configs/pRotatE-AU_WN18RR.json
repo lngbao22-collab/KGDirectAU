@@ -15,7 +15,7 @@
 
   "output_dir_prefix": "logs/pRotatE-AU_WN18RR",
 
-  "dim": 200,
+  "dim": 500,
   "batch_size": 512,
   "epochs": 800,
   "lr": 5e-05,
@@ -30,7 +30,13 @@
 
   "gamma_q": 1.0,
   "gamma_t": 1.0,
-  "gamma_h": 0.0,
-  "gamma_ent": 0.0,
-  "tuni": 4.0
+  "gamma_h": 1.0,
+  "gamma_ent": 1.0,
+  "tuni": 4.0,
+
+  "use_amp": true,
+  "eval_use_amp": true,
+  "score_query_chunk_size": 256,
+  "eval_candidate_chunk_size": 2048,
+  "eval_entity_chunk_size": 4096
 }
