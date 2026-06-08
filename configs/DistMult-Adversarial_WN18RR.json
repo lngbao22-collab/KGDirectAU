@@ -29,5 +29,7 @@
   "regularization": 0.000005,
 
   "n_sample": 1024,
-  "normalize_lp_scores": false
+  "normalize_lp_scores": false,
+
+  "early_stopping_patience": 10
 }

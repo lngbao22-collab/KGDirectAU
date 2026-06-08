@@ -267,6 +267,16 @@ class AdversarialStrategy:
 
         total_start = time.time()
         max_epochs = max(getattr(self.args, "epochs", 1), 1)
+        patience = _config_int(self.args, "early_stopping_patience", None)
+        bad_counts = 0
+        if patience is not None and patience > 0:
+            logger.info(
+                "Adversarial early stopping: stop after %d validation(s) without MRR improvement.",
+                patience,
+            )
+        else:
+            patience = None
+
         for epoch in range(max_epochs):
             if self.max_steps is not None and self.global_step >= self.max_steps:
                 break
@@ -285,6 +295,10 @@ class AdversarialStrategy:
             is_best = self.best_metric is None or monitor_value > self.best_metric.get("score", float("-inf"))
             if is_best:
                 self.best_metric = {"score": monitor_value, "metrics": metric_dict, "epoch": epoch}
+                if metric_dict and "mrr" in metric_dict:
+                    bad_counts = 0
+            elif metric_dict and "mrr" in metric_dict:
+                bad_counts += 1
 
             saved_checkpoint_path = save_checkpoint(
                 {
@@ -304,6 +318,14 @@ class AdversarialStrategy:
             delete_old_ckt(path_pattern="{}/checkpoint_*.mdl".format(self.args.output_dir), keep=getattr(self.args, "max_to_keep", 5))
 
             if self.max_steps is not None and self.global_step >= self.max_steps:
+                break
+
+            if patience is not None and bad_counts >= patience:
+                logger.info(
+                    "[EARLY STOP] No validation MRR improvement for %d evaluations (epoch %s).",
+                    patience,
+                    epoch + 1,
+                )
                 break
 
         self.total_time = time.time() - total_start

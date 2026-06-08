@@ -824,6 +824,17 @@ class KGAUStrategy(Evaluator):
 		validation_interval = self._validation_interval()
 		logger.info('KGAU validation interval: every %d epoch(s)', validation_interval)
 
+		patience = getattr(self.args, 'early_stopping_patience', None)
+		patience = int(patience) if patience else None
+		bad_counts = 0
+		if patience is not None and patience > 0:
+			logger.info(
+				'KGAU early stopping: stop after %d validation(s) without MRR improvement.',
+				patience,
+			)
+		else:
+			patience = None
+
 		total_start_time = time.time()
 		for epoch in range(self.args.epochs):
 			epoch_train_start = time.time()
@@ -844,6 +855,10 @@ class KGAUStrategy(Evaluator):
 			is_best = monitor_value is not None and (self.best_metric is None or monitor_value > self.best_metric.get('score', float('-inf')))
 			if is_best:
 				self.best_metric = {'score': monitor_value, 'metrics': metric_dict, 'epoch': epoch}
+				if metric_dict and 'mrr' in metric_dict:
+					bad_counts = 0
+			elif self._should_validate(epoch) and metric_dict and 'mrr' in metric_dict:
+				bad_counts += 1
 
 			filename = checkpoint_path(self.args.output_dir, epoch)
 			saved_checkpoint_path = save_checkpoint({
@@ -858,6 +873,13 @@ class KGAUStrategy(Evaluator):
 			elif self.best_checkpoint_path is None:
 				self.best_checkpoint_path = saved_checkpoint_path
 			delete_old_ckt(path_pattern='{}/checkpoint_*.mdl'.format(self.args.output_dir), keep=self.args.max_to_keep)
+
+			if patience is not None and bad_counts >= patience:
+				logger.info(
+					'[EARLY STOP] No validation MRR improvement for %d evaluations (epoch %s).',
+					patience, epoch + 1,
+				)
+				break
 
 		self.total_time = time.time() - total_start_time
 		logger.info('[Timing] Training time (s): %.2f', round(self.train_time, 2))
