@@ -1,0 +1,36 @@
+{
+  "model": "DistMult-Adversarial-AU",
+  "model_encoder_path": "models/encoders/distmult_encoder.py",
+  "model_loss_path": "models/losses/au_loss.py",
+  "model_sampler_path": "",
+  "model_strategy_path": "models/strategies/kgau_strategy.py",
+
+  "dataset": "WN18RR",
+  "task": "both",
+  "train_path": "data/WN18RR/preprocessed/train.txt.json",
+  "valid_path": "data/WN18RR/preprocessed/valid.txt.json",
+  "test_path": "data/WN18RR/preprocessed/test.txt.json",
+  "valid_w_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
+  "test_w_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
+
+  "output_dir_prefix": "logs/DistMult-Adversarial-AU_WN18RR",
+
+  "adversarial_training": true,
+
+  "dim": 1000,
+  "batch_size": 512,
+  "epochs": 471,
+  "lr": 0.002,
+  "weight_decay": 0.0,
+  "regularization": 0.000005,
+
+  "margin": 200.0,
+
+  "normalize_lp_scores": true,
+
+  "gamma_q": 1.0,
+  "gamma_t": 1.0,
+  "gamma_h": 1.0,
+  "gamma_ent": 1.0,
+  "tuni": 4.0
+}

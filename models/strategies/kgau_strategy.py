@@ -334,6 +334,16 @@ class KGAUStrategy(Evaluator):
 		n_unique_t = int(distinct_first_indices(t_keys).numel()) if self.criterion.gamma_t > 0 else 0
 		return n_unique_q, n_unique_t
 
+	def _embedding_l3_regularization(self, model) -> torch.Tensor | None:
+		"""Optional L3 embedding penalty (same form as adversarial DistMult/ComplEx training)."""
+
+		model_obj = get_model_obj(model)
+		if hasattr(model_obj, 'adversarial_l3_regularization'):
+			return model_obj.adversarial_l3_regularization()
+		if hasattr(model_obj, 'entity_embedding') and hasattr(model_obj, 'relation_embedding'):
+			return model_obj.entity_embedding.norm(p=3) ** 3 + model_obj.relation_embedding.norm(p=3) ** 3
+		return None
+
 	def _au_loss_with_distinct_keys(
 		self,
 		q_raw: torch.Tensor,
@@ -350,6 +360,11 @@ class KGAUStrategy(Evaluator):
 			q_raw, t_raw, h_raw, q_keys, t_keys, h_keys)
 		loss, l_align, l_unif, margin_active_frac = self.criterion(
 			q_raw, t_raw, h_raw, ent_raw, q_uni=q_uni, t_uni=t_uni, h_uni=h_uni, return_stats=True)
+		reg_coef = _config_float(self.args, 'regularization', 0.0)
+		if reg_coef > 0.0:
+			l3_term = self._embedding_l3_regularization(self.model)
+			if l3_term is not None:
+				loss = loss + reg_coef * l3_term
 		return loss, l_align, l_unif, n_unique_q, n_unique_t, margin_active_frac
 
 	def _batch_entity_uniformity_vectors(
