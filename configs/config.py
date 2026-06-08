@@ -128,6 +128,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help='candidate sub-chunk size for DaBR link-prediction scoring (limits Q×C memory)')
     parser.add_argument('--eval-distance-chunk-size', '--eval_distance_chunk_size', default=None, type=int,
                         help='entity chunk size for DaBR fast eval distance term')
+    parser.add_argument('--eval-distance-query-chunk-size', '--eval_distance_query_chunk_size', default=None, type=int,
+                        help='query micro-batch size for DaBR fast eval distance term (limits Q×C memory)')
     parser.add_argument('--use-fast-link-prediction', '--use_fast_link_prediction', default=None,
                         type=lambda value: str(value).lower() in {'1', 'true', 'yes', 'y'},
                         help='use relation-grouped fast DaBR link-prediction eval')

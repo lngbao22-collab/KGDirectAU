@@ -358,6 +358,51 @@ class DaBREncoder(BaseModel):
                 head_rows.append(hr_chunk.float())
         return torch.cat(head_rows, dim=0)
 
+    @staticmethod
+    def _distance_scores_batch(
+        h: torch.Tensor,
+        dr: torch.Tensor,
+        entity_weight: torch.Tensor,
+        para: torch.Tensor,
+        dist_chunk: int,
+        query_chunk: int = 0,
+    ) -> torch.Tensor:
+        """Vectorized DaBR distance term for a block of queries against all entities.
+
+        The DaBR distance term is ``para * sum_d | sum4(h + Dr - e) |`` where
+        ``sum4`` adds the four quaternion components.  Because the four-way sum is
+        linear, ``sum4(h + Dr - e) = sum4(h + Dr) - sum4(e)``, so the distance is
+        the L1 distance between the per-query vector ``a = sum4(h + Dr)`` and the
+        per-entity vector ``e_sum = sum4(e)``.  Reducing the ``4*dim`` embeddings to
+        ``dim`` up front cuts the scoring tensor 4x and lets every query in the
+        relation group be scored at once instead of in a Python loop.
+        """
+
+        if h.dim() == 1:
+            h = h.unsqueeze(0)
+            dr = dr.unsqueeze(0)
+
+        s_h, x_h, y_h, z_h = torch.chunk(h + dr, 4, dim=1)
+        a = s_h + x_h + y_h + z_h
+        s_e, x_e, y_e, z_e = torch.chunk(entity_weight, 4, dim=1)
+        e_sum = s_e + x_e + y_e + z_e
+
+        n_query = a.size(0)
+        n_ent = e_sum.size(0)
+        scores = torch.empty(n_query, n_ent, device=a.device, dtype=torch.float32)
+        if query_chunk is None or query_chunk <= 0:
+            query_chunk = n_query
+
+        for q_start in range(0, n_query, query_chunk):
+            q_end = min(q_start + query_chunk, n_query)
+            a_block = a[q_start:q_end]
+            for e_start in range(0, n_ent, dist_chunk):
+                e_end = min(e_start + dist_chunk, n_ent)
+                diff = a_block.unsqueeze(1) - e_sum[e_start:e_end].unsqueeze(0)
+                scores[q_start:q_end, e_start:e_end] = diff.abs().sum(dim=2)
+
+        return -para * scores
+
     def _distance_scores_one(
         self,
         h: torch.Tensor,
@@ -368,14 +413,7 @@ class DaBREncoder(BaseModel):
     ) -> torch.Tensor:
         """Distance term of DaBR for one query against all entities."""
 
-        h_dr = h + dr
-        parts = []
-        for start in range(0, entity_weight.size(0), dist_chunk):
-            end = min(start + dist_chunk, entity_weight.size(0))
-            hrt = h_dr.unsqueeze(0) - entity_weight[start:end]
-            s_d, x_d, y_d, z_d = torch.chunk(hrt, 4, dim=1)
-            parts.append((s_d + x_d + y_d + z_d).abs().sum(dim=1))
-        return -para * torch.cat(parts)
+        return self._distance_scores_batch(h, dr, entity_weight, para, dist_chunk).squeeze(0)
 
     def _distance_scores_head_one(
         self,
@@ -385,17 +423,13 @@ class DaBREncoder(BaseModel):
         para: torch.Tensor,
         dist_chunk: int,
     ) -> torch.Tensor:
-        """Distance term of DaBR for head prediction: fix (relation, tail), vary candidate heads."""
+        """Distance term of DaBR for head prediction: fix (relation, tail), vary candidate heads.
 
-        t_exp = t.unsqueeze(0)
-        dr_exp = dr.unsqueeze(0)
-        parts = []
-        for start in range(0, entity_weight.size(0), dist_chunk):
-            end = min(start + dist_chunk, entity_weight.size(0))
-            hrt = entity_weight[start:end] + dr_exp - t_exp
-            s_d, x_d, y_d, z_d = torch.chunk(hrt, 4, dim=1)
-            parts.append((s_d + x_d + y_d + z_d).abs().sum(dim=1))
-        return -para * torch.cat(parts)
+        ``|sum4(e + Dr - t)| == |sum4((t - Dr) - e)|``, so this reuses the
+        tail-side batched distance with ``h := t`` and ``dr := -Dr``.
+        """
+
+        return self._distance_scores_batch(t, -dr, entity_weight, para, dist_chunk).squeeze(0)
 
     @torch.inference_mode()
     def score_link_prediction_full(self, query_cache: dict) -> torch.Tensor:
@@ -421,6 +455,8 @@ class DaBREncoder(BaseModel):
         tail_cache: dict[int, torch.Tensor] = {}
         dist_chunk = _config_int(self.config, 'eval_distance_chunk_size', 8192)
         dist_chunk = max(dist_chunk, 1)
+        query_chunk = _config_int(self.config, 'eval_distance_query_chunk_size', 256)
+        query_chunk = max(query_chunk, 1)
         para_scalar = para.squeeze() if para.dim() else para
 
         for rel_idx in torch.unique(relation_indices).tolist():
@@ -436,17 +472,15 @@ class DaBREncoder(BaseModel):
             hr_group = hr[query_rows]
             with _autocast_context(self.config):
                 score_s = -torch.matmul(hr_group, tail_matrix.t()).float()
-
-            for local_i in range(query_rows.numel()):
-                global_i = int(query_rows[local_i])
-                scores[global_i] = score_s[local_i]
-                scores[global_i] += self._distance_scores_one(
-                    h[global_i],
-                    dr[global_i],
+                score_d = self._distance_scores_batch(
+                    h[query_rows],
+                    dr[query_rows],
                     entity_weight,
                     para_scalar,
                     dist_chunk,
+                    query_chunk,
                 )
+            scores[query_rows] = score_s + score_d
 
         return scores
 
@@ -481,6 +515,8 @@ class DaBREncoder(BaseModel):
         head_cache: dict[int, torch.Tensor] = {}
         dist_chunk = _config_int(self.config, 'eval_distance_chunk_size', 8192)
         dist_chunk = max(dist_chunk, 1)
+        query_chunk = _config_int(self.config, 'eval_distance_query_chunk_size', 256)
+        query_chunk = max(query_chunk, 1)
         para_scalar = para.squeeze() if para.dim() else para
 
         for rel_idx in torch.unique(relation_indices).tolist():
@@ -499,17 +535,15 @@ class DaBREncoder(BaseModel):
             with _autocast_context(self.config):
                 tr_group = DaBREncoder.vec_vec_wise_multiplication_q(t_group, r_inv_norm_group).float()
                 score_s = -torch.matmul(tr_group, head_matrix.t())
-
-            for local_i in range(query_rows.numel()):
-                global_i = int(query_rows[local_i])
-                scores[global_i] = score_s[local_i]
-                scores[global_i] += self._distance_scores_head_one(
-                    t[global_i],
-                    dr[global_i],
+                score_d = self._distance_scores_batch(
+                    t_group,
+                    -dr_group,
                     entity_weight,
                     para_scalar,
                     dist_chunk,
+                    query_chunk,
                 )
+            scores[query_rows] = score_s + score_d
 
         return scores
 
