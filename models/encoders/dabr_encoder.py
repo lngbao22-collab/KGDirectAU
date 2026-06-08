@@ -366,6 +366,7 @@ class DaBREncoder(BaseModel):
         para: torch.Tensor,
         dist_chunk: int,
         query_chunk: int = 0,
+        inner_chunk: int = 0,
     ) -> torch.Tensor:
         """Vectorized DaBR distance term for a block of queries against all entities.
 
@@ -392,14 +393,19 @@ class DaBREncoder(BaseModel):
         scores = torch.empty(n_query, n_ent, device=a.device, dtype=torch.float32)
         if query_chunk is None or query_chunk <= 0:
             query_chunk = n_query
+        if inner_chunk is None or inner_chunk <= 0:
+            inner_chunk = min(dist_chunk, 1024)
+        inner_chunk = max(inner_chunk, 1)
 
         for q_start in range(0, n_query, query_chunk):
             q_end = min(q_start + query_chunk, n_query)
             a_block = a[q_start:q_end]
             for e_start in range(0, n_ent, dist_chunk):
                 e_end = min(e_start + dist_chunk, n_ent)
-                diff = a_block.unsqueeze(1) - e_sum[e_start:e_end].unsqueeze(0)
-                scores[q_start:q_end, e_start:e_end] = diff.abs().sum(dim=2)
+                for inner_start in range(e_start, e_end, inner_chunk):
+                    inner_end = min(inner_start + inner_chunk, e_end)
+                    diff = a_block.unsqueeze(1) - e_sum[inner_start:inner_end].unsqueeze(0)
+                    scores[q_start:q_end, inner_start:inner_end] = diff.abs().sum(dim=2)
 
         return -para * scores
 
@@ -457,6 +463,8 @@ class DaBREncoder(BaseModel):
         dist_chunk = max(dist_chunk, 1)
         query_chunk = _config_int(self.config, 'eval_distance_query_chunk_size', 256)
         query_chunk = max(query_chunk, 1)
+        inner_chunk = _config_int(self.config, 'eval_distance_inner_chunk_size', 1024)
+        inner_chunk = max(inner_chunk, 1)
         para_scalar = para.squeeze() if para.dim() else para
 
         for rel_idx in torch.unique(relation_indices).tolist():
@@ -479,6 +487,7 @@ class DaBREncoder(BaseModel):
                     para_scalar,
                     dist_chunk,
                     query_chunk,
+                    inner_chunk,
                 )
             scores[query_rows] = score_s + score_d
 
@@ -517,6 +526,8 @@ class DaBREncoder(BaseModel):
         dist_chunk = max(dist_chunk, 1)
         query_chunk = _config_int(self.config, 'eval_distance_query_chunk_size', 256)
         query_chunk = max(query_chunk, 1)
+        inner_chunk = _config_int(self.config, 'eval_distance_inner_chunk_size', 1024)
+        inner_chunk = max(inner_chunk, 1)
         para_scalar = para.squeeze() if para.dim() else para
 
         for rel_idx in torch.unique(relation_indices).tolist():
@@ -542,6 +553,7 @@ class DaBREncoder(BaseModel):
                     para_scalar,
                     dist_chunk,
                     query_chunk,
+                    inner_chunk,
                 )
             scores[query_rows] = score_s + score_d
 

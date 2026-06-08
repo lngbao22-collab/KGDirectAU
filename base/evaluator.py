@@ -396,7 +396,7 @@ class Evaluator:
             f.write(log_cls + '\n')
         return metrics_cls
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def evaluate_link_prediction_inplace(self, model, eval_path, entity_dict, output_log_path, batch_size=128, eval_forward=True, examples=None) -> dict:
         """Evaluate link prediction using the model's forward pass."""
         model = get_model_obj(model)
@@ -433,7 +433,7 @@ class Evaluator:
             ):
                 tail_ids = [ex.tail_id for ex in scoring_examples]
                 query_cache = model.prepare_head_prediction_queries(tail_ids, relations)
-                score = model.score_head_prediction_full(query_cache).clone()
+                score = model.score_head_prediction_full(query_cache)
                 if score.size(0) != len(scoring_examples) or score.size(1) != len(all_entity_ids):
                     raise RuntimeError('DaBR fast head-prediction score matrix has unexpected shape')
             elif (
@@ -442,7 +442,7 @@ class Evaluator:
                 and hasattr(model, 'score_link_prediction_full')
             ):
                 query_cache = model.prepare_link_prediction_queries(head_ids, relations)
-                score = model.score_link_prediction_full(query_cache).clone()
+                score = model.score_link_prediction_full(query_cache)
                 if score.size(0) != len(scoring_examples) or score.size(1) != len(all_entity_ids):
                     raise RuntimeError('DaBR fast link-prediction score matrix has unexpected shape')
             else:

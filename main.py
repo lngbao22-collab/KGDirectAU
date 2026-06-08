@@ -80,6 +80,13 @@ def _write_results(current_args, train_summary, evaluator, link_metrics, triple_
     )
 
 
+def _release_gpu_memory() -> None:
+    """Return cached GPU memory to the allocator between heavy eval passes."""
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 def _average_link_metrics(forward_metrics, backward_metrics) -> dict:
     """Average the link prediction metrics from forward and backward evaluations."""
 
@@ -271,6 +278,7 @@ def main():
             test_lp_log_path = os.path.join(args.output_dir, 'test_link_prediction.log')
             forward_metrics = evaluator.evaluate_link_prediction_inplace(
                 evaluator.model, test_lp_path, entity_dict, test_lp_log_path, eval_forward=True)
+            _release_gpu_memory()
             backward_metrics = evaluator.evaluate_link_prediction_inplace(
                 evaluator.model, test_lp_path, entity_dict, test_lp_log_path, eval_forward=False)
             link_metrics = _average_link_metrics(forward_metrics, backward_metrics)
@@ -288,10 +296,12 @@ def main():
     elif strategy_path.replace('\\', '/').endswith('pointwise_strategy.py'):
         trainer, train_dataloader = _build_pointwise_trainer(args)
         train_summary = trainer.train_loop(train_dataloader)
-        evaluator = Evaluator(args)
         eval_model_path = train_summary.get('best_checkpoint_path') or best_model_path(args.output_dir)
         if not os.path.exists(eval_model_path):
             eval_model_path = last_model_path(args.output_dir)
+        del trainer
+        _release_gpu_memory()
+        evaluator = Evaluator(args)
         evaluator.load(eval_model_path)
         test_start = time.time()
         link_metrics = None
@@ -302,6 +312,7 @@ def main():
             test_lp_log_path = os.path.join(args.output_dir, 'test_link_prediction.log')
             forward_metrics = evaluator.evaluate_link_prediction_inplace(
                 evaluator.model, test_lp_path, entity_dict, test_lp_log_path, eval_forward=True)
+            _release_gpu_memory()
             backward_metrics = evaluator.evaluate_link_prediction_inplace(
                 evaluator.model, test_lp_path, entity_dict, test_lp_log_path, eval_forward=False)
             link_metrics = _average_link_metrics(forward_metrics, backward_metrics)
@@ -341,9 +352,10 @@ def main():
 
         trainer = trainer_cls(args, ngpus_per_node=ngpus_per_node)
     train_summary = trainer.train_loop()
-
-    evaluator = Evaluator(args)
     eval_model_path = train_summary.get('best_checkpoint_path') or best_model_path(args.output_dir)
+    del trainer
+    _release_gpu_memory()
+    evaluator = Evaluator(args)
     evaluator.load(eval_model_path)
     test_start = time.time()
     link_metrics = None
@@ -354,6 +366,7 @@ def main():
         test_lp_log_path = os.path.join(args.output_dir, 'test_link_prediction.log')
         forward_metrics = evaluator.evaluate_link_prediction_inplace(
             evaluator.model, test_lp_path, entity_dict, test_lp_log_path, eval_forward=True)
+        _release_gpu_memory()
         backward_metrics = evaluator.evaluate_link_prediction_inplace(
             evaluator.model, test_lp_path, entity_dict, test_lp_log_path, eval_forward=False)
         link_metrics = _average_link_metrics(forward_metrics, backward_metrics)

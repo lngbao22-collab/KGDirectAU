@@ -123,6 +123,8 @@ class PointwiseStrategy:
             self.encoder, valid_path, self.entity_dict, valid_output_path,
             eval_forward=True, examples=valid_exs,
         )
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         backward_metrics = self.evaluator.evaluate_link_prediction_inplace(
             self.encoder, valid_path, self.entity_dict, valid_output_path,
             eval_forward=False, examples=valid_backward_exs,
