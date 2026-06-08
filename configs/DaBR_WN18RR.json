@@ -17,7 +17,7 @@
 
   "dim": 500,
   "n_batches": 100,
-  "epochs": 40000,
+  "epochs": 400,
   "lr": 0.1,
 
   "entity_reg_weight": 0.5,
