@@ -158,6 +158,27 @@ class PointwiseStrategy:
         epoch_number = epoch + 1
         return epoch_number % interval == 0 or epoch_number >= total_epochs
 
+    def _monitor_metric_name(self) -> str:
+        """Validation metric used for checkpointing and early stopping."""
+
+        metric_name = getattr(self.args, 'monitor_metric', None) or 'mrr'
+        return str(metric_name).strip().lower()
+
+    def _extract_monitor_value(self, metric_dict: dict, train_loss: float):
+        """Return the scalar used to pick the best checkpoint."""
+
+        if not metric_dict:
+            return -train_loss
+        metric_name = self._monitor_metric_name()
+        if metric_name in metric_dict:
+            return metric_dict[metric_name]
+        if 'mrr' in metric_dict:
+            return metric_dict['mrr']
+        for value in metric_dict.values():
+            if isinstance(value, (int, float)):
+                return value
+        return -train_loss
+
     def train_loop(self, train_dataloader):
         import time
 
@@ -178,12 +199,16 @@ class PointwiseStrategy:
             metric_dict = self.eval_epoch(epoch)
             self.valid_time += time.time() - eval_start
 
-            # Select the test model by the highest validation MRR (consistent with
-            # the other model configs in this repo).
-            monitor_value = metric_dict.get('mrr', -train_loss)
+            monitor_name = self._monitor_metric_name()
+            monitor_value = self._extract_monitor_value(metric_dict, train_loss)
             is_best = self.best_metric is None or monitor_value > self.best_metric.get('score', float('-inf'))
             if is_best:
-                self.best_metric = {'score': monitor_value, 'metrics': metric_dict, 'epoch': epoch}
+                self.best_metric = {
+                    'score': monitor_value,
+                    'metric': monitor_name,
+                    'metrics': metric_dict,
+                    'epoch': epoch,
+                }
                 bad_counts = 0
             else:
                 bad_counts += 1
@@ -206,8 +231,8 @@ class PointwiseStrategy:
 
             if patience is not None and bad_counts >= patience:
                 logger.info(
-                    '[EARLY STOP] No validation MRR improvement for %d evaluations (epoch %s).',
-                    patience, epoch + 1,
+                    '[EARLY STOP] No validation %s improvement for %d evaluations (epoch %s).',
+                    monitor_name, patience, epoch + 1,
                 )
                 break
 

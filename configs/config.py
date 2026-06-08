@@ -147,7 +147,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help='number of batches per epoch; batch_size = train_total // n_batches (DaBR pointwise, overrides batch_size)')
     parser.add_argument('--early-stopping-patience', '--early_stopping_patience', default=None, type=int,
                         dest='early_stopping_patience',
-                        help='stop DaBR pointwise training after this many evaluations without Hit@10 improvement')
+                        help='stop pointwise training after this many evaluations without monitor_metric improvement')
+    parser.add_argument('--monitor-metric', '--monitor_metric', default=None, type=str, dest='monitor_metric',
+                        help='validation metric for checkpointing/early stopping in pointwise strategy (default mrr; DaBR paper uses hit@10)')
 
     # RotatE / pRotatE adversarial training (adversarial_strategy.py).
     parser.add_argument('--margin', default=None, type=float,
