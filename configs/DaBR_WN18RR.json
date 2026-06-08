@@ -24,6 +24,7 @@
   "relation_reg_weight": 0.01,
 
   "monitor_metric": "hit@10",
+  "early_stopping_patience": 10,
   "epoch_per_eval": 10,
   "eval_entity_chunk_size": 4096,
   "eval_distance_chunk_size": 8192,

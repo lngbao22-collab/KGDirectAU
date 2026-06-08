@@ -153,7 +153,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     # RotatE / pRotatE adversarial training (adversarial_strategy.py).
     parser.add_argument('--margin', default=None, type=float,
-                        help='fixed margin for distance-based adversarial models')
+                        help='fixed margin for distance-based adversarial models; also sets DistMult adversarial init range')
+    parser.add_argument('--adversarial-training', '--adversarial_training', default=None,
+                        type=lambda value: str(value).lower() in {'1', 'true', 'yes', 'y'},
+                        dest='adversarial_training',
+                        help='use RotatE-repo adversarial BCE training (DistMult/ComplEx encoders)')
+    parser.add_argument('--regularization', default=None, type=float,
+                        help='L3 embedding regularization for adversarial DistMult/ComplEx training')
     parser.add_argument('--adversarial-temperature', '--adversarial_temperature', default=None, type=float,
                         dest='adversarial_temperature',
                         help='self-adversarial negative-sampling temperature')
@@ -480,6 +486,10 @@ if getattr(args, 'relation_reg_weight', None) is None:
         if _legacy_value is not None:
             args.relation_reg_weight = _legacy_value
             break
+
+# DaBR paper selects the test model by validation Hit@10.
+if getattr(args, 'monitor_metric', None) is None and (args.model or '').lower() == 'dabr':
+    args.monitor_metric = 'hit@10'
 
 args.train_path = _resolve_data_path(getattr(args, 'train_path', ''))
 args.valid_path = _resolve_data_path(_derive_split_variant(getattr(args, 'valid_path', ''), split_name='valid', labeled=False))

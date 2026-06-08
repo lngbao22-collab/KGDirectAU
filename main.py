@@ -14,7 +14,7 @@ from models.builder import import_module_from_path, load_attr_from_path
 from models.samplers.bernoulli_sampler import BernoulliListwiseSampler
 from utils.device import init_hardware
 from utils.checkpoint import best_model_path, last_model_path
-from utils.logger import setup_logger, write_results_report
+from utils.logger import setup_logger, write_results_report, _format_metric_key
 
 
 logger = setup_logger(log_file=os.path.join(args.output_dir, 'run.log'))
@@ -54,17 +54,28 @@ def _write_results(current_args, train_summary, evaluator, link_metrics, triple_
     best_metric = checkpoint.get('best_metric') or {}
     best_epoch = train_summary.get('best_epoch') if train_summary else None
     best_mrr = train_summary.get('best_mrr') if train_summary else None
+    best_monitor_metric = train_summary.get('best_monitor_metric') if train_summary else None
+    best_monitor_score = train_summary.get('best_monitor_score') if train_summary else None
 
     if best_epoch is None:
         best_epoch = best_metric.get('epoch')
     if best_mrr is None:
-        best_mrr = best_metric.get('score')
+        checkpoint_metrics = best_metric.get('metrics') or {}
+        best_mrr = checkpoint_metrics.get('mrr')
+    if best_monitor_metric is None:
+        best_monitor_metric = best_metric.get('metric')
+    if best_monitor_score is None:
+        best_monitor_score = best_metric.get('score')
 
     train_time = train_summary.get('train_time') if train_summary else None
     valid_time = train_summary.get('valid_time') if train_summary else None
     total_time = None
     if train_summary and train_summary.get('total_time') is not None:
         total_time = train_summary['total_time'] + test_time
+
+    best_valid_extra = {}
+    if best_monitor_metric and best_monitor_score is not None:
+        best_valid_extra[f'Best {_format_metric_key(best_monitor_metric)}'] = best_monitor_score
 
     write_results_report(
         os.path.join(current_args.output_dir, 'results.txt'),
@@ -77,6 +88,7 @@ def _write_results(current_args, train_summary, evaluator, link_metrics, triple_
         test_time=test_time,
         total_time=total_time,
         configs=configs_snapshot,
+        extra_sections={'Best Valid Monitor': best_valid_extra} if best_valid_extra else None,
     )
 
 
@@ -200,7 +212,7 @@ def _build_adversarial_trainer(current_args):
         model.cuda()
 
     entity_dict = get_entity_dict()
-    relation_to_idx = get_relation_id_map()
+    relation_to_idx = getattr(model, 'rel_to_idx', None) or get_relation_id_map()
     train_examples = load_data(current_args.train_path, add_forward_triplet=True, add_backward_triplet=False)
     if not train_examples:
         raise ValueError(f'No training examples loaded from {current_args.train_path}')

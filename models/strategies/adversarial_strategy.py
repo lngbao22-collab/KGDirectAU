@@ -75,6 +75,10 @@ class AdversarialStrategy:
         nentity = getattr(args, "nentity", getattr(args, "ent_total", None))
         if nentity is None and hasattr(encoder, "entity_embedding"):
             nentity = encoder.entity_embedding.size(0)
+        if nentity is None and hasattr(encoder, "ent_embed"):
+            nentity = encoder.ent_embed.num_embeddings
+        if nentity is None and hasattr(encoder, "nentity"):
+            nentity = encoder.nentity
         if nentity is None:
             raise ValueError("`nentity` or `ent_total` is required for FilteredSubsampler")
 
@@ -196,6 +200,15 @@ class AdversarialStrategy:
                 pos_scores = outputs["positive_scores"]
                 neg_scores = outputs["negative_scores"]
                 loss = compute_adversarial_bce_loss(pos_scores, neg_scores, adv_temp, weights)
+                reg_coef = _config_float(self.args, "regularization", 0.0)
+                if reg_coef > 0.0:
+                    if hasattr(self.encoder, "adversarial_l3_regularization"):
+                        loss = loss + reg_coef * self.encoder.adversarial_l3_regularization()
+                    elif hasattr(self.encoder, "entity_embedding") and hasattr(self.encoder, "relation_embedding"):
+                        loss = loss + reg_coef * (
+                            self.encoder.entity_embedding.norm(p=3) ** 3
+                            + self.encoder.relation_embedding.norm(p=3) ** 3
+                        )
 
             if self.use_amp:
                 self.scaler.scale(loss).backward()

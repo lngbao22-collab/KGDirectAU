@@ -13,6 +13,15 @@ from utils.logger import logger
 from models.samplers.uniform_pointwise_sampler import get_pointwise_negatives
 from models.losses.pointwise_logistic_loss import compute_softplus_loss
 
+_MONITOR_ALIASES = {
+    'hit@10': ('hit@10', 'hits@10', 'h@10'),
+    'mrr': ('mrr',),
+}
+_MONITOR_LABELS = {
+    'hit@10': 'Hit@10',
+    'mrr': 'MRR',
+}
+
 
 class PointwiseStrategy:
     """Pointwise training loop for DaBR KG encoders."""
@@ -164,14 +173,31 @@ class PointwiseStrategy:
         metric_name = getattr(self.args, 'monitor_metric', None) or 'mrr'
         return str(metric_name).strip().lower()
 
+    def _monitor_metric_label(self, metric_name: str | None = None) -> str:
+        """Human-readable monitor metric name for logs."""
+
+        name = metric_name or self._monitor_metric_name()
+        return _MONITOR_LABELS.get(name, name)
+
+    def _lookup_monitor_value(self, metric_dict: dict, metric_name: str | None = None):
+        """Read the configured monitor metric from a validation metrics dict."""
+
+        if not metric_dict:
+            return None
+        name = metric_name or self._monitor_metric_name()
+        for key in _MONITOR_ALIASES.get(name, (name,)):
+            if key in metric_dict:
+                return metric_dict[key]
+        return None
+
     def _extract_monitor_value(self, metric_dict: dict, train_loss: float):
         """Return the scalar used to pick the best checkpoint."""
 
+        monitor_value = self._lookup_monitor_value(metric_dict)
+        if monitor_value is not None:
+            return monitor_value
         if not metric_dict:
             return -train_loss
-        metric_name = self._monitor_metric_name()
-        if metric_name in metric_dict:
-            return metric_dict[metric_name]
         if 'mrr' in metric_dict:
             return metric_dict['mrr']
         for value in metric_dict.values():
@@ -185,6 +211,12 @@ class PointwiseStrategy:
         total_epochs = max(getattr(self.args, 'epochs', 1), 1)
         patience = getattr(self.args, 'early_stopping_patience', None)
         patience = int(patience) if patience else None
+        monitor_name = self._monitor_metric_name()
+        monitor_label = self._monitor_metric_label(monitor_name)
+        logger.info(
+            'Pointwise checkpoint selection and early stopping use validation %s (%s).',
+            monitor_label, monitor_name,
+        )
         bad_counts = 0
         total_start = time.time()
         for epoch in range(total_epochs):
@@ -199,7 +231,6 @@ class PointwiseStrategy:
             metric_dict = self.eval_epoch(epoch)
             self.valid_time += time.time() - eval_start
 
-            monitor_name = self._monitor_metric_name()
             monitor_value = self._extract_monitor_value(metric_dict, train_loss)
             is_best = self.best_metric is None or monitor_value > self.best_metric.get('score', float('-inf'))
             if is_best:
@@ -210,6 +241,13 @@ class PointwiseStrategy:
                     'epoch': epoch,
                 }
                 bad_counts = 0
+                logger.info(
+                    '[EPOCH %s] New best checkpoint | %s: %.4f | MRR: %.4f',
+                    epoch + 1,
+                    monitor_label,
+                    float(monitor_value),
+                    float(metric_dict.get('mrr', 0.0)),
+                )
             else:
                 bad_counts += 1
 
@@ -232,7 +270,7 @@ class PointwiseStrategy:
             if patience is not None and bad_counts >= patience:
                 logger.info(
                     '[EARLY STOP] No validation %s improvement for %d evaluations (epoch %s).',
-                    monitor_name, patience, epoch + 1,
+                    monitor_label, patience, epoch + 1,
                 )
                 break
 
@@ -246,6 +284,8 @@ class PointwiseStrategy:
         return {
             'best_epoch': None if self.best_metric is None else self.best_metric.get('epoch', 0) + 1,
             'best_mrr': best_mrr,
+            'best_monitor_metric': None if self.best_metric is None else self.best_metric.get('metric'),
+            'best_monitor_score': None if self.best_metric is None else self.best_metric.get('score'),
             'train_time': self.train_time,
             'valid_time': self.valid_time,
             'total_time': self.total_time,
