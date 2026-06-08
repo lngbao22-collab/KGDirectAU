@@ -132,11 +132,12 @@ class PointwiseStrategy:
         eval_seconds = time.time() - eval_start
 
         if forward_metrics and backward_metrics:
-            mrr = (forward_metrics.get('mrr', 0) + backward_metrics.get('mrr', 0)) / 2
-            metric_dict['mrr'] = mrr
+            for key in ('mr', 'mrr', 'hit@1', 'hit@3', 'hit@10'):
+                metric_dict[key] = (forward_metrics.get(key, 0.0) + backward_metrics.get(key, 0.0)) / 2
             logger.info(
-                '[EPOCH %s] Valid | MRR: %.4f (fwd=%.4f, bwd=%.4f, eval_s=%.1f)',
-                epoch + 1, mrr, forward_metrics.get('mrr', 0.0), backward_metrics.get('mrr', 0.0), eval_seconds,
+                '[EPOCH %s] Valid | MRR: %.4f | H@10: %.4f (fwd=%.4f, bwd=%.4f, eval_s=%.1f)',
+                epoch + 1, metric_dict['mrr'], metric_dict['hit@10'],
+                forward_metrics.get('mrr', 0.0), backward_metrics.get('mrr', 0.0), eval_seconds,
             )
 
         return metric_dict
@@ -161,22 +162,31 @@ class PointwiseStrategy:
         import time
 
         total_epochs = max(getattr(self.args, 'epochs', 1), 1)
+        patience = getattr(self.args, 'early_stopping_patience', None)
+        patience = int(patience) if patience else None
+        bad_counts = 0
         total_start = time.time()
         for epoch in range(total_epochs):
             epoch_start = time.time()
             train_loss = self.train_epoch(train_dataloader, epoch)
             self.train_time += time.time() - epoch_start
 
-            metric_dict = {}
-            if self._should_evaluate(epoch, total_epochs):
-                eval_start = time.time()
-                metric_dict = self.eval_epoch(epoch)
-                self.valid_time += time.time() - eval_start
+            if not self._should_evaluate(epoch, total_epochs):
+                continue
 
+            eval_start = time.time()
+            metric_dict = self.eval_epoch(epoch)
+            self.valid_time += time.time() - eval_start
+
+            # Select the test model by the highest validation MRR (consistent with
+            # the other model configs in this repo).
             monitor_value = metric_dict.get('mrr', -train_loss)
             is_best = self.best_metric is None or monitor_value > self.best_metric.get('score', float('-inf'))
             if is_best:
                 self.best_metric = {'score': monitor_value, 'metrics': metric_dict, 'epoch': epoch}
+                bad_counts = 0
+            else:
+                bad_counts += 1
 
             saved_checkpoint_path = save_checkpoint(
                 {
@@ -194,12 +204,23 @@ class PointwiseStrategy:
             elif self.best_checkpoint_path is None:
                 self.best_checkpoint_path = saved_checkpoint_path
 
+            if patience is not None and bad_counts >= patience:
+                logger.info(
+                    '[EARLY STOP] No validation MRR improvement for %d evaluations (epoch %s).',
+                    patience, epoch + 1,
+                )
+                break
+
         self.total_time = time.time() - total_start
         if self.best_checkpoint_path is None or not os.path.exists(self.best_checkpoint_path):
             self.best_checkpoint_path = last_model_path(self.args.output_dir)
+        best_metrics = (self.best_metric or {}).get('metrics', {}) or {}
+        best_mrr = best_metrics.get('mrr')
+        if best_mrr is None and self.best_metric is not None:
+            best_mrr = self.best_metric.get('score')
         return {
             'best_epoch': None if self.best_metric is None else self.best_metric.get('epoch', 0) + 1,
-            'best_mrr': None if self.best_metric is None else self.best_metric.get('score'),
+            'best_mrr': best_mrr,
             'train_time': self.train_time,
             'valid_time': self.valid_time,
             'total_time': self.total_time,

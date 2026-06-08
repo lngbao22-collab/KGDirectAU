@@ -143,6 +143,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help='negative sampling frequency')
     parser.add_argument('-ns', '--n-sample', '--n_sample', default=None, type=int,
                         help='number of negative samples per positive')
+    parser.add_argument('--n-batches', '--n_batches', default=None, type=int, dest='n_batches',
+                        help='number of batches per epoch; batch_size = train_total // n_batches (DaBR pointwise, overrides batch_size)')
+    parser.add_argument('--early-stopping-patience', '--early_stopping_patience', default=None, type=int,
+                        dest='early_stopping_patience',
+                        help='stop DaBR pointwise training after this many evaluations without Hit@10 improvement')
 
     # RotatE / pRotatE adversarial training (adversarial_strategy.py).
     parser.add_argument('--margin', default=None, type=float,

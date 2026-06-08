@@ -233,9 +233,22 @@ def _build_pointwise_trainer(current_args):
 
     train_examples = load_data(current_args.train_path, add_forward_triplet=True, add_backward_triplet=False)
     train_dataset = PointwiseDataset(train_examples)
+
+    # DaBR/OpenKE convention: a fixed number of batches per epoch, so the batch
+    # size is derived from the training set size (batch_size = train_total // n_batches).
+    # This reproduces the paper's "100 batches" setting exactly for any dataset.
+    n_batches = getattr(current_args, 'n_batches', None)
+    if n_batches:
+        derived_batch_size = max(len(train_examples) // int(n_batches), 1)
+        current_args.batch_size = derived_batch_size
+        logger.info(
+            'DaBR pointwise batching: n_batches=%d -> batch_size=%d (train_total=%d)',
+            int(n_batches), derived_batch_size, len(train_examples),
+        )
+    batch_size = max(getattr(current_args, 'batch_size', 1), 1)
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_size=max(getattr(current_args, 'batch_size', 1), 1),
+        batch_size=batch_size,
         shuffle=True,
         collate_fn=collate_pointwise,
         num_workers=getattr(current_args, 'workers', 0),
