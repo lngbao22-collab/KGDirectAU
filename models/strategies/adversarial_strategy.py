@@ -16,6 +16,7 @@ from models.samplers.filtered_1_to_n_sampler import FilteredSubsampler
 from utils.checkpoint import best_model_path, delete_old_ckt, last_model_path, save_checkpoint
 from utils.device import get_model_obj
 from utils.logger import logger
+from utils.memory import PhaseMemoryTracker, format_memory
 
 
 def _config_float(args, name: str, default: float) -> float:
@@ -58,6 +59,7 @@ class AdversarialStrategy:
         self.train_time = 0.0
         self.valid_time = 0.0
         self.total_time = 0.0
+        self.memory_tracker = PhaseMemoryTracker()
 
         self.base_lr = _config_float(args, "lr", _config_float(args, "learning_rate", 5e-5))
         weight_decay = _config_float(args, "weight_decay", 0.0)
@@ -282,13 +284,17 @@ class AdversarialStrategy:
                 break
 
             train_start = time.time()
+            self.memory_tracker.begin_phase()
             train_loss = self.train_epoch(self._iter_train_batches(epoch), epoch)
+            self.memory_tracker.end_phase('train')
             self.train_time += time.time() - train_start
 
             metric_dict = {}
             if self._should_validate(epoch):
                 eval_start = time.time()
+                self.memory_tracker.begin_phase()
                 metric_dict = self.eval_epoch(epoch)
+                self.memory_tracker.end_phase('eval')
                 self.valid_time += time.time() - eval_start
 
             monitor_value = self._extract_monitor_value(metric_dict, train_loss)
@@ -329,12 +335,16 @@ class AdversarialStrategy:
                 break
 
         self.total_time = time.time() - total_start
+        logger.info('[Memory] Training peak: %s', format_memory(self.memory_tracker.train_peak_mb))
+        logger.info('[Memory] Eval peak: %s', format_memory(self.memory_tracker.eval_peak_mb))
+        logger.info('[Memory] Peak memory: %s', format_memory(self.memory_tracker.peak_memory_mb))
         return {
             "best_epoch": None if self.best_metric is None else self.best_metric.get("epoch", 0) + 1,
             "best_mrr": None if self.best_metric is None else self.best_metric.get("score"),
             "train_time": self.train_time,
             "valid_time": self.valid_time,
             "total_time": self.total_time,
+            **self.memory_tracker.to_dict(),
         }
 
 

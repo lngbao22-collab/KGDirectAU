@@ -15,6 +15,7 @@ from models.samplers.bernoulli_sampler import BernoulliListwiseSampler
 from utils.device import init_hardware
 from utils.checkpoint import best_model_path, last_model_path
 from utils.logger import setup_logger, write_results_report, _format_metric_key
+from utils.memory import PhaseMemoryTracker
 
 
 logger = setup_logger(log_file=os.path.join(args.output_dir, 'run.log'))
@@ -42,7 +43,7 @@ def _resolve_test_lp_path(current_args) -> str:
     return ''
 
 
-def _write_results(current_args, train_summary, evaluator, link_metrics, triple_metrics, test_time, configs_snapshot) -> None:
+def _write_results(current_args, train_summary, evaluator, link_metrics, triple_metrics, test_time, configs_snapshot, memory_tracker=None) -> None:
     """Write the evaluation results and training summary to a report file."""
 
     if link_metrics:
@@ -73,6 +74,11 @@ def _write_results(current_args, train_summary, evaluator, link_metrics, triple_
     if train_summary and train_summary.get('total_time') is not None:
         total_time = train_summary['total_time'] + test_time
 
+    memory_summary = memory_tracker.to_dict() if memory_tracker is not None else {}
+    train_peak_mb = memory_summary.get('train_peak_mb')
+    eval_peak_mb = memory_summary.get('eval_peak_mb')
+    peak_memory_mb = memory_summary.get('peak_memory_mb')
+
     best_valid_extra = {}
     if best_monitor_metric and best_monitor_score is not None:
         best_valid_extra[f'Best {_format_metric_key(best_monitor_metric)}'] = best_monitor_score
@@ -87,6 +93,9 @@ def _write_results(current_args, train_summary, evaluator, link_metrics, triple_
         valid_time=valid_time,
         test_time=test_time,
         total_time=total_time,
+        train_peak_mb=train_peak_mb,
+        eval_peak_mb=eval_peak_mb,
+        peak_memory_mb=peak_memory_mb,
         configs=configs_snapshot,
         extra_sections={'Best Valid Monitor': best_valid_extra} if best_valid_extra else None,
     )
@@ -294,7 +303,9 @@ def main():
         evaluator = Evaluator(args)
         eval_model_path = args.eval_model_path or best_model_path(args.output_dir)
         evaluator.load(eval_model_path)
+        memory_tracker = PhaseMemoryTracker()
         test_start = time.time()
+        memory_tracker.begin_phase()
         link_metrics = None
         triple_metrics = None
         test_lp_path = _resolve_test_lp_path(args)
@@ -309,8 +320,9 @@ def main():
             link_metrics = _average_link_metrics(forward_metrics, backward_metrics)
         if run_tc:
             triple_metrics = evaluator.evaluate_test_triple_classification()
+        memory_tracker.end_phase('eval')
         test_time = time.time() - test_start
-        _write_results(args, None, evaluator, link_metrics, triple_metrics, test_time, config_snapshot)
+        _write_results(args, None, evaluator, link_metrics, triple_metrics, test_time, config_snapshot, memory_tracker)
         return
 
     strategy_path = args.model_strategy_path
@@ -328,7 +340,10 @@ def main():
         _release_gpu_memory()
         evaluator = Evaluator(args)
         evaluator.load(eval_model_path)
+        memory_tracker = PhaseMemoryTracker()
+        memory_tracker.update_from_summary(train_summary)
         test_start = time.time()
+        memory_tracker.begin_phase()
         link_metrics = None
         triple_metrics = None
         test_lp_path = _resolve_test_lp_path(args)
@@ -343,8 +358,9 @@ def main():
             link_metrics = _average_link_metrics(forward_metrics, backward_metrics)
         if run_tc:
             triple_metrics = evaluator.evaluate_test_triple_classification()
+        memory_tracker.end_phase('eval')
         test_time = time.time() - test_start
-        _write_results(args, train_summary, evaluator, link_metrics, triple_metrics, test_time, config_snapshot)
+        _write_results(args, train_summary, evaluator, link_metrics, triple_metrics, test_time, config_snapshot, memory_tracker)
         return
     else:
         strategy_mod = import_module_from_path(strategy_path)
@@ -382,7 +398,10 @@ def main():
     _release_gpu_memory()
     evaluator = Evaluator(args)
     evaluator.load(eval_model_path)
+    memory_tracker = PhaseMemoryTracker()
+    memory_tracker.update_from_summary(train_summary)
     test_start = time.time()
+    memory_tracker.begin_phase()
     link_metrics = None
     triple_metrics = None
     test_lp_path = _resolve_test_lp_path(args)
@@ -397,8 +416,9 @@ def main():
         link_metrics = _average_link_metrics(forward_metrics, backward_metrics)
     if run_tc:
         triple_metrics = evaluator.evaluate_test_triple_classification()
+    memory_tracker.end_phase('eval')
     test_time = time.time() - test_start
-    _write_results(args, train_summary, evaluator, link_metrics, triple_metrics, test_time, config_snapshot)
+    _write_results(args, train_summary, evaluator, link_metrics, triple_metrics, test_time, config_snapshot, memory_tracker)
 
 
 if __name__ == '__main__':

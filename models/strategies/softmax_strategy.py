@@ -14,6 +14,7 @@ from models.losses.infonce_loss import compute_listwise_loss
 from utils.checkpoint import best_model_path, delete_old_ckt, last_model_path, save_checkpoint
 from utils.device import get_model_obj
 from utils.logger import logger
+from utils.memory import PhaseMemoryTracker, format_memory
 
 
 def _build_optimizer(args, parameters, weight_decay: float):
@@ -46,6 +47,7 @@ class SoftmaxStrategy(object):
 		self.train_time = 0.0
 		self.valid_time = 0.0
 		self.total_time = 0.0
+		self.memory_tracker = PhaseMemoryTracker()
 
 		if torch.cuda.is_available():
 			self.model.cuda()
@@ -292,10 +294,14 @@ class SoftmaxStrategy(object):
 		total_start = time.time()
 		for epoch in range(getattr(self.args, 'epochs', 1)):
 			epoch_start = time.time()
+			self.memory_tracker.begin_phase()
 			train_loss = self.train_epoch(epoch)
+			self.memory_tracker.end_phase('train')
 			self.train_time += time.time() - epoch_start
 			eval_start = time.time()
+			self.memory_tracker.begin_phase()
 			metric_dict = self.eval_epoch(epoch)
+			self.memory_tracker.end_phase('eval')
 			self.valid_time += time.time() - eval_start
 			if not metric_dict:
 				metric_dict = {'loss': round(train_loss, 4)}
@@ -317,10 +323,14 @@ class SoftmaxStrategy(object):
 			delete_old_ckt(path_pattern='{}/checkpoint_*.mdl'.format(self.args.output_dir), keep=getattr(self.args, 'max_to_keep', 5))
 
 		self.total_time = time.time() - total_start
+		logger.info('[Memory] Training peak: %s', format_memory(self.memory_tracker.train_peak_mb))
+		logger.info('[Memory] Eval peak: %s', format_memory(self.memory_tracker.eval_peak_mb))
+		logger.info('[Memory] Peak memory: %s', format_memory(self.memory_tracker.peak_memory_mb))
 		return {
 			'best_epoch': None if self.best_metric is None else self.best_metric.get('epoch', 0) + 1,
 			'best_mrr': None if self.best_metric is None else self.best_metric.get('score'),
 			'train_time': self.train_time,
 			'valid_time': self.valid_time,
 			'total_time': self.total_time,
+			**self.memory_tracker.to_dict(),
 		}

@@ -5,6 +5,8 @@ import logging
 from pathlib import Path
 from typing import Optional, Union
 
+from utils.memory import format_memory
+
 
 DEFAULT_LOG_FORMAT = '[%(asctime)s %(levelname)s] %(name)s: %(message)s'
 
@@ -140,7 +142,7 @@ def _format_metric_value(value) -> str:
     return str(value)
 
 
-def write_results_report(path: Union[str, Path], *, link_metrics: Optional[dict] = None, triple_metrics: Optional[dict] = None, best_epoch: Optional[int] = None, best_mrr: Optional[float] = None, train_time: Optional[float] = None, valid_time: Optional[float] = None, test_time: Optional[float] = None, total_time: Optional[float] = None, configs: Optional[dict] = None, extra_sections: Optional[dict] = None) -> str:
+def write_results_report(path: Union[str, Path], *, link_metrics: Optional[dict] = None, triple_metrics: Optional[dict] = None, best_epoch: Optional[int] = None, best_mrr: Optional[float] = None, train_time: Optional[float] = None, valid_time: Optional[float] = None, test_time: Optional[float] = None, total_time: Optional[float] = None, train_peak_mb: Optional[float] = None, eval_peak_mb: Optional[float] = None, peak_memory_mb: Optional[float] = None, configs: Optional[dict] = None, extra_sections: Optional[dict] = None) -> str:
     """Write a structured results summary to disk."""
 
     lines = []
@@ -177,6 +179,16 @@ def write_results_report(path: Union[str, Path], *, link_metrics: Optional[dict]
             lines.append(f'  Test Time: {format_duration(test_time)}')
         if total_time is not None:
             lines.append(f'  Total Time: {format_duration(total_time)}')
+        lines.append('')
+
+    if train_peak_mb is not None or eval_peak_mb is not None or peak_memory_mb is not None:
+        lines.append('Memory')
+        if train_peak_mb is not None:
+            lines.append(f'  Training Peak: {format_memory(train_peak_mb)}')
+        if eval_peak_mb is not None:
+            lines.append(f'  Eval Peak: {format_memory(eval_peak_mb)}')
+        if peak_memory_mb is not None:
+            lines.append(f'  Peak Memory: {format_memory(peak_memory_mb)}')
         lines.append('')
 
     if configs is not None:

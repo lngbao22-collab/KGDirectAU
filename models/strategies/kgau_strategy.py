@@ -20,6 +20,7 @@ from models.builder import load_attr_from_path
 from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, save_checkpoint
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
 from utils.logger import AverageMeter, ProgressMeter, logger
+from utils.memory import PhaseMemoryTracker, format_memory
 from models.losses.au_loss import KGAULoss, distinct_first_indices, select_distinct_rows
 
 
@@ -207,6 +208,7 @@ class KGAUStrategy(Evaluator):
 		self.train_time = 0.0
 		self.valid_time = 0.0
 		self.total_time = 0.0
+		self.memory_tracker = PhaseMemoryTracker()
 
 	def _resolve_relation_index(self, relation: str) -> int:
 		"""Resolve a relation string to its index.
@@ -838,12 +840,16 @@ class KGAUStrategy(Evaluator):
 		total_start_time = time.time()
 		for epoch in range(self.args.epochs):
 			epoch_train_start = time.time()
+			self.memory_tracker.begin_phase()
 			train_loss = self.train_epoch(epoch)
+			self.memory_tracker.end_phase('train')
 			self.train_time += time.time() - epoch_train_start
 
 			if self._should_validate(epoch):
 				eval_start = time.time()
+				self.memory_tracker.begin_phase()
 				metric_dict = self.eval_epoch(epoch, train_loss=train_loss)
+				self.memory_tracker.end_phase('eval')
 				self.valid_time += time.time() - eval_start
 			else:
 				metric_dict = {'loss': round(train_loss, 4)}
@@ -885,6 +891,9 @@ class KGAUStrategy(Evaluator):
 		logger.info('[Timing] Training time (s): %.2f', round(self.train_time, 2))
 		logger.info('[Timing] Valid time (s): %.2f', round(self.valid_time, 2))
 		logger.info('[Timing] Total run time (s): %.2f', round(self.total_time, 2))
+		logger.info('[Memory] Training peak: %s', format_memory(self.memory_tracker.train_peak_mb))
+		logger.info('[Memory] Eval peak: %s', format_memory(self.memory_tracker.eval_peak_mb))
+		logger.info('[Memory] Peak memory: %s', format_memory(self.memory_tracker.peak_memory_mb))
 
 		return {
 			'best_epoch': None if self.best_metric is None else self.best_metric.get('epoch'),
@@ -892,6 +901,7 @@ class KGAUStrategy(Evaluator):
 			'train_time': self.train_time,
 			'valid_time': self.valid_time,
 			'total_time': self.total_time,
+			**self.memory_tracker.to_dict(),
 		}
 
 Strategy = KGAUStrategy

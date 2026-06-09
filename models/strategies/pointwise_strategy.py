@@ -1,6 +1,8 @@
 """Pointwise training strategy for DaBR training."""
 
 import os
+import time
+
 import torch
 from torch import optim
 from base.evaluator import Evaluator
@@ -9,6 +11,7 @@ from data.dataset import load_data, Example, reverse_triplet
 from utils.checkpoint import best_model_path, last_model_path, save_checkpoint
 from utils.device import get_model_obj
 from utils.logger import logger
+from utils.memory import PhaseMemoryTracker, format_memory
 
 from models.samplers.uniform_pointwise_sampler import get_pointwise_negatives
 from models.losses.pointwise_logistic_loss import compute_softplus_loss
@@ -37,6 +40,7 @@ class PointwiseStrategy:
         self.train_time = 0.0
         self.valid_time = 0.0
         self.total_time = 0.0
+        self.memory_tracker = PhaseMemoryTracker()
 
         lr = getattr(args, 'lr', getattr(args, 'learning_rate', 0.1))
         optim_name = getattr(args, 'optim', 'sgd').lower()
@@ -221,14 +225,18 @@ class PointwiseStrategy:
         total_start = time.time()
         for epoch in range(total_epochs):
             epoch_start = time.time()
+            self.memory_tracker.begin_phase()
             train_loss = self.train_epoch(train_dataloader, epoch)
+            self.memory_tracker.end_phase('train')
             self.train_time += time.time() - epoch_start
 
             if not self._should_evaluate(epoch, total_epochs):
                 continue
 
             eval_start = time.time()
+            self.memory_tracker.begin_phase()
             metric_dict = self.eval_epoch(epoch)
+            self.memory_tracker.end_phase('eval')
             self.valid_time += time.time() - eval_start
 
             monitor_value = self._extract_monitor_value(metric_dict, train_loss)
@@ -275,6 +283,9 @@ class PointwiseStrategy:
                 break
 
         self.total_time = time.time() - total_start
+        logger.info('[Memory] Training peak: %s', format_memory(self.memory_tracker.train_peak_mb))
+        logger.info('[Memory] Eval peak: %s', format_memory(self.memory_tracker.eval_peak_mb))
+        logger.info('[Memory] Peak memory: %s', format_memory(self.memory_tracker.peak_memory_mb))
         if self.best_checkpoint_path is None or not os.path.exists(self.best_checkpoint_path):
             self.best_checkpoint_path = last_model_path(self.args.output_dir)
         best_metrics = (self.best_metric or {}).get('metrics', {}) or {}
@@ -290,6 +301,7 @@ class PointwiseStrategy:
             'valid_time': self.valid_time,
             'total_time': self.total_time,
             'best_checkpoint_path': self.best_checkpoint_path,
+            **self.memory_tracker.to_dict(),
         }
 
 Strategy = PointwiseStrategy
