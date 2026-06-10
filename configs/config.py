@@ -351,7 +351,7 @@ def _cuda_unavailable_reason() -> str:
     """Return a human-readable reason when CUDA is unavailable in the current Python env."""
 
     torch_cuda = getattr(torch.version, 'cuda', None)
-    torch_version = getattr(torch, '_version_', 'unknown')
+    torch_version = getattr(torch, '__version__', 'unknown')
     executable = sys.executable
 
     if not torch_cuda:

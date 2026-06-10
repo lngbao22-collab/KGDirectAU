@@ -55,14 +55,31 @@ KGDirectAU_root/
 
 ```bash
 python -m venv .venv
+
 # Linux/macOS
 source .venv/bin/activate
 
-# Windows (PowerShell)
+# PowerShell
 .venv\Scripts\Activate.ps1
+
+# CMD
+.venv\Scripts\activate.bat
+
+# Bash
+source .venv/Scripts/activate
 ```
 
-1) Install dependencies (recommended inside a virtualenv):
+1) Install dependencies (recommended inside a virtualenv).
+
+If you have an NVIDIA GPU, install the CUDA-enabled PyTorch wheel that matches your driver before the rest of the requirements. This machine currently reports a non-NVIDIA GPU, so CUDA cannot be enabled here.
+
+```bash
+# CUDA 12.1 example
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# CPU-only fallback
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+```
 
 ```bash
 pip install -r requirements.txt
