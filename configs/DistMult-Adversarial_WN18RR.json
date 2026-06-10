@@ -1,6 +1,6 @@
 {
   "model": "DistMult-Adversarial",
-  "model_encoder_path": "models/encoders/distmult_encoder.py",
+  "model_encoder_path": "models/scorers/distmult_scorer.py",
   "model_loss_path": "models/losses/adversarial_bce_loss.py",
   "model_sampler_path": "models/samplers/filtered_1_to_n_sampler.py",
   "model_strategy_path": "models/strategies/adversarial_strategy.py",

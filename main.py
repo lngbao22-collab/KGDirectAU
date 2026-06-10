@@ -162,7 +162,7 @@ def _build_softmax_trainer(current_args):
     if strategy_cls is None:
         raise ImportError(f'Could not find SoftmaxStrategy in {current_args.model_strategy_path}')
 
-    encoder_path = getattr(current_args, 'model_encoder_path', '') or 'models/encoders/distmult_encoder.py'
+    encoder_path = getattr(current_args, 'model_encoder_path', '') or 'models/scorers/distmult_scorer.py'
     try:
         build_model = load_attr_from_path(encoder_path, 'build_model')
     except Exception:
@@ -209,7 +209,7 @@ def _build_adversarial_trainer(current_args):
     if strategy_cls is None:
         raise ImportError(f'Could not find AdversarialStrategy in {current_args.model_strategy_path}')
 
-    encoder_path = getattr(current_args, 'model_encoder_path', '') or 'models/encoders/rotate_encoder.py'
+    encoder_path = getattr(current_args, 'model_encoder_path', '') or 'models/scorers/rotate_scorer.py'
     try:
         build_model = load_attr_from_path(encoder_path, 'build_model')
     except Exception:
@@ -241,7 +241,7 @@ def _build_pointwise_trainer(current_args):
     if strategy_cls is None:
         raise ImportError(f'Could not find PointwiseStrategy in {current_args.model_strategy_path}')
 
-    encoder_path = getattr(current_args, 'model_encoder_path', '') or 'models/encoders/dabr_encoder.py'
+    encoder_path = getattr(current_args, 'model_encoder_path', '') or 'models/scorers/dabr_scorer.py'
     try:
         build_model = load_attr_from_path(encoder_path, 'build_model')
     except Exception:

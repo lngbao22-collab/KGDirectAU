@@ -27,7 +27,7 @@ from models.losses.au_loss import KGAULoss, distinct_first_indices, select_disti
 def _load_encoder(args) -> torch.nn.Module:
 	"""Factory helper used by the evaluator to rebuild the model from checkpoints."""
 
-	encoder_path = getattr(args, 'model_encoder_path', '') or 'models/encoders/distmult_encoder.py'
+	encoder_path = getattr(args, 'model_encoder_path', '') or 'models/scorers/distmult_scorer.py'
 	build_model = load_attr_from_path(encoder_path, 'build_model')
 	return build_model(args)
 

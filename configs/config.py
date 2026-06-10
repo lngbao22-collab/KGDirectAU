@@ -531,17 +531,17 @@ if not args.model_strategy_path:
 
 if not args.model_encoder_path:
     if _model_name == 'distmult':
-        args.model_encoder_path = 'models/encoders/distmult_encoder.py'
+        args.model_encoder_path = 'models/scorers/distmult_scorer.py'
     elif _model_name == 'distmult-au':
-        args.model_encoder_path = 'models/encoders/distmult-au_encoder.py'
+        args.model_encoder_path = 'models/scorers/distmult_scorer.py'
     elif _model_name == 'complex':
-        args.model_encoder_path = 'models/encoders/complex_encoder.py'
+        args.model_encoder_path = 'models/scorers/complex_scorer.py'
     elif _model_name == 'complex-au':
-        args.model_encoder_path = 'models/encoders/complex-au_encoder.py'
+        args.model_encoder_path = 'models/scorers/complex_scorer.py'
     elif _model_name == 'dabr':
-        args.model_encoder_path = 'models/encoders/dabr_encoder.py'
+        args.model_encoder_path = 'models/scorers/dabr_scorer.py'
     elif _model_name == 'dabr-au':
-        args.model_encoder_path = 'models/encoders/dabr_encoder.py'
+        args.model_encoder_path = 'models/scorers/dabr_scorer.py'
     else:
         args.model_encoder_path = 'models/encoders/bert_encoder.py'
 

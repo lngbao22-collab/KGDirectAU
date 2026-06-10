@@ -1,6 +1,6 @@
 {
   "model": "DistMult-Adversarial-AU",
-  "model_encoder_path": "models/encoders/distmult_encoder.py",
+  "model_encoder_path": "models/scorers/distmult_scorer.py",
   "model_loss_path": "models/losses/au_loss.py",
   "model_sampler_path": "",
   "model_strategy_path": "models/strategies/kgau_strategy.py",
