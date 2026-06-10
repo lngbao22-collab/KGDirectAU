@@ -16,6 +16,32 @@ from models.samplers.filtered_1_to_n_sampler import FilteredSubsampler
 from utils.checkpoint import best_model_path, delete_old_ckt, last_model_path, save_checkpoint
 from utils.device import get_model_obj
 from utils.logger import logger
+from utils.memory import PhaseMemoryTracker, format_memory
+
+
+def _config_float(args, name: str, default: float) -> float:
+    """Read a float hyperparameter, treating JSON/null argparse defaults as unset."""
+
+    value = getattr(args, name, None)
+    return default if value is None else float(value)
+
+
+def _config_int(args, name: str, default: int | None = None) -> int | None:
+    """Read an integer hyperparameter, treating JSON/null argparse defaults as unset."""
+
+    value = getattr(args, name, None)
+    if value is None:
+        return default
+    return int(value)
+
+
+def _config_bool(args, name: str, default: bool = False) -> bool:
+    """Read a boolean hyperparameter, treating JSON/null argparse defaults as unset."""
+
+    value = getattr(args, name, None)
+    if value is None:
+        return default
+    return bool(value)
 
 
 class AdversarialStrategy:
@@ -33,14 +59,28 @@ class AdversarialStrategy:
         self.train_time = 0.0
         self.valid_time = 0.0
         self.total_time = 0.0
+        self.memory_tracker = PhaseMemoryTracker()
 
-        lr = getattr(args, "lr", getattr(args, "learning_rate", 5e-5))
-        weight_decay = getattr(args, "weight_decay", 0.0)
-        self.optimizer = torch.optim.Adam(self.encoder.parameters(), lr=lr, weight_decay=weight_decay)
+        self.base_lr = _config_float(args, "lr", _config_float(args, "learning_rate", 5e-5))
+        weight_decay = _config_float(args, "weight_decay", 0.0)
+        self.optimizer = torch.optim.Adam(self.encoder.parameters(), lr=self.base_lr, weight_decay=weight_decay)
+        self.global_step = 0
+        self.next_lr_decay_step = _config_int(args, "warm_up_steps", None)
+        self.lr_decay_factor = _config_float(args, "lr_decay_factor", 0.1)
+        self.max_steps = _config_int(args, "max_steps", None)
+        self.shuffle_train = _config_bool(args, "shuffle_train", False)
+        self.use_amp = bool(getattr(args, "use_amp", False)) and torch.cuda.is_available()
+        self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
+        self._cached_valid_exs = None
+        self._cached_valid_backward_exs = None
 
         nentity = getattr(args, "nentity", getattr(args, "ent_total", None))
         if nentity is None and hasattr(encoder, "entity_embedding"):
             nentity = encoder.entity_embedding.size(0)
+        if nentity is None and hasattr(encoder, "ent_embed"):
+            nentity = encoder.ent_embed.num_embeddings
+        if nentity is None and hasattr(encoder, "nentity"):
+            nentity = encoder.nentity
         if nentity is None:
             raise ValueError("`nentity` or `ent_total` is required for FilteredSubsampler")
 
@@ -50,13 +90,78 @@ class AdversarialStrategy:
             self.encoder.cuda()
         self.device = next(self.encoder.parameters()).device
 
-    def _iter_train_batches(self):
+    def _maybe_decay_learning_rate(self) -> None:
+        """Decay the optimizer learning rate at configured step boundaries."""
+
+        if self.next_lr_decay_step is None or self.global_step < self.next_lr_decay_step:
+            return
+
+        decay_factor = max(self.lr_decay_factor, 0.0)
+        new_lr = self.optimizer.param_groups[0]["lr"] * decay_factor
+        for param_group in self.optimizer.param_groups:
+            param_group["lr"] = new_lr
+        logger.info(
+            "Change learning rate to %.8f at step %d",
+            new_lr,
+            self.global_step,
+        )
+        self.next_lr_decay_step = int(self.next_lr_decay_step * 3)
+
+    def _validation_interval(self) -> int:
+        """Epochs between validation runs (0 or unset means every epoch)."""
+
+        raw = getattr(self.args, "epoch_per_eval", None)
+        interval = int(raw) if raw is not None else 0
+        if interval <= 0 or interval > int(getattr(self.args, "epochs", 1)):
+            return 1
+        return interval
+
+    def _should_validate(self, epoch: int) -> bool:
+        """Return True when validation should run after this epoch."""
+
+        interval = self._validation_interval()
+        epoch_number = epoch + 1
+        max_epochs = max(int(getattr(self.args, "epochs", 1)), 1)
+        return epoch_number % interval == 0 or epoch_number >= max_epochs
+
+    def _get_valid_examples(self):
+        """Load and cache validation examples for link prediction."""
+
+        if self._cached_valid_exs is not None:
+            return self._cached_valid_exs, self._cached_valid_backward_exs
+
+        valid_path = getattr(self.args, "valid_path", "")
+        valid_exs = load_data(valid_path, add_forward_triplet=True, add_backward_triplet=False)
+        if getattr(get_model_obj(self.encoder), "bidirectional_score_batch", False):
+            valid_backward_exs = valid_exs
+        else:
+            valid_backward_exs = [
+                Example(**reverse_triplet({
+                    "head_id": ex.head_id,
+                    "head": ex.head,
+                    "relation": ex.relation,
+                    "tail_id": ex.tail_id,
+                    "tail": ex.tail,
+                }))
+                for ex in valid_exs
+            ]
+        self._cached_valid_exs = valid_exs
+        self._cached_valid_backward_exs = valid_backward_exs
+        return valid_exs, valid_backward_exs
+
+    def _iter_train_batches(self, epoch: int):
         """Iterate over tensorized train triples using configured batch size."""
 
         batch_size = max(getattr(self.args, "batch_size", 1024), 1)
-        for start in range(0, len(self.all_train_triples), batch_size):
+        triples = self.all_train_triples
+        if self.shuffle_train:
+            generator = torch.Generator()
+            generator.manual_seed(int(getattr(self.args, "seed", 0) or 0) + int(epoch))
+            permutation = torch.randperm(triples.size(0), generator=generator)
+            triples = triples[permutation]
+        for start in range(0, len(triples), batch_size):
             end = start + batch_size
-            yield self.all_train_triples[start:end]
+            yield triples[start:end]
 
     def _extract_monitor_value(self, metric_dict, train_loss):
         """Prefer validation MRR for checkpointing, fallback to negative train loss."""
@@ -74,6 +179,9 @@ class AdversarialStrategy:
         modes = ["head-batch", "tail-batch"]
 
         for batch in dataloader:
+            if self.max_steps is not None and self.global_step >= self.max_steps:
+                break
+
             self.optimizer.zero_grad()
             current_mode = modes[step % 2]
             step += 1
@@ -84,15 +192,35 @@ class AdversarialStrategy:
             neg_sample = neg_sample.to(self.device)
             weights = weights.to(self.device)
 
-            outputs = self.encoder(pos_sample, neg_sample, current_mode)
-            pos_scores = outputs["positive_scores"]
-            neg_scores = outputs["negative_scores"]
+            adv_temp = _config_float(
+                self.args,
+                "adversarial_temp",
+                _config_float(self.args, "adversarial_temperature", 1.0),
+            )
+            with torch.autocast(device_type="cuda", enabled=self.use_amp):
+                outputs = self.encoder(pos_sample, neg_sample, current_mode)
+                pos_scores = outputs["positive_scores"]
+                neg_scores = outputs["negative_scores"]
+                loss = compute_adversarial_bce_loss(pos_scores, neg_scores, adv_temp, weights)
+                reg_coef = _config_float(self.args, "regularization", 0.0)
+                if reg_coef > 0.0:
+                    if hasattr(self.encoder, "adversarial_l3_regularization"):
+                        loss = loss + reg_coef * self.encoder.adversarial_l3_regularization()
+                    elif hasattr(self.encoder, "entity_embedding") and hasattr(self.encoder, "relation_embedding"):
+                        loss = loss + reg_coef * (
+                            self.encoder.entity_embedding.norm(p=3) ** 3
+                            + self.encoder.relation_embedding.norm(p=3) ** 3
+                        )
 
-            adv_temp = getattr(self.args, "adversarial_temp", getattr(self.args, "adversarial_temperature", 1.0))
-            loss = compute_adversarial_bce_loss(pos_scores, neg_scores, adv_temp, weights)
-
-            loss.backward()
-            self.optimizer.step()
+            if self.use_amp:
+                self.scaler.scale(loss).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                loss.backward()
+                self.optimizer.step()
+            self.global_step += 1
+            self._maybe_decay_learning_rate()
             total_loss += float(loss.item())
 
         avg_loss = total_loss / max(step, 1)
@@ -104,22 +232,13 @@ class AdversarialStrategy:
         """Evaluate the model using the common evaluator path."""
 
         self.encoder.eval()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         metric_dict = {}
         valid_path = getattr(self.args, "valid_path", "")
 
         if valid_path and os.path.exists(valid_path):
-            valid_exs = load_data(valid_path, add_forward_triplet=True, add_backward_triplet=False)
-            valid_backward_exs = [
-                Example(**reverse_triplet({
-                    "head_id": ex.head_id,
-                    "head": ex.head,
-                    "relation": ex.relation,
-                    "tail_id": ex.tail_id,
-                    "tail": ex.tail,
-                }))
-                for ex in valid_exs
-            ]
-
+            valid_exs, valid_backward_exs = self._get_valid_examples()
             valid_output_path = os.path.join(self.args.output_dir, "valid_link_prediction.log")
             forward_metrics = self.evaluator.evaluate_link_prediction_inplace(
                 self.encoder,
@@ -149,19 +268,43 @@ class AdversarialStrategy:
         """Run full adversarial training with periodic evaluation and checkpointing."""
 
         total_start = time.time()
-        for epoch in range(max(getattr(self.args, "epochs", 1), 1)):
+        max_epochs = max(getattr(self.args, "epochs", 1), 1)
+        patience = _config_int(self.args, "early_stopping_patience", None)
+        bad_counts = 0
+        if patience is not None and patience > 0:
+            logger.info(
+                "Adversarial early stopping: stop after %d validation(s) without MRR improvement.",
+                patience,
+            )
+        else:
+            patience = None
+
+        for epoch in range(max_epochs):
+            if self.max_steps is not None and self.global_step >= self.max_steps:
+                break
+
             train_start = time.time()
-            train_loss = self.train_epoch(self._iter_train_batches(), epoch)
+            self.memory_tracker.begin_phase()
+            train_loss = self.train_epoch(self._iter_train_batches(epoch), epoch)
+            self.memory_tracker.end_phase('train')
             self.train_time += time.time() - train_start
 
-            eval_start = time.time()
-            metric_dict = self.eval_epoch(epoch)
-            self.valid_time += time.time() - eval_start
+            metric_dict = {}
+            if self._should_validate(epoch):
+                eval_start = time.time()
+                self.memory_tracker.begin_phase()
+                metric_dict = self.eval_epoch(epoch)
+                self.memory_tracker.end_phase('eval')
+                self.valid_time += time.time() - eval_start
 
             monitor_value = self._extract_monitor_value(metric_dict, train_loss)
             is_best = self.best_metric is None or monitor_value > self.best_metric.get("score", float("-inf"))
             if is_best:
                 self.best_metric = {"score": monitor_value, "metrics": metric_dict, "epoch": epoch}
+                if metric_dict and "mrr" in metric_dict:
+                    bad_counts = 0
+            elif metric_dict and "mrr" in metric_dict:
+                bad_counts += 1
 
             saved_checkpoint_path = save_checkpoint(
                 {
@@ -180,13 +323,28 @@ class AdversarialStrategy:
                 self.best_checkpoint_path = saved_checkpoint_path
             delete_old_ckt(path_pattern="{}/checkpoint_*.mdl".format(self.args.output_dir), keep=getattr(self.args, "max_to_keep", 5))
 
+            if self.max_steps is not None and self.global_step >= self.max_steps:
+                break
+
+            if patience is not None and bad_counts >= patience:
+                logger.info(
+                    "[EARLY STOP] No validation MRR improvement for %d evaluations (epoch %s).",
+                    patience,
+                    epoch + 1,
+                )
+                break
+
         self.total_time = time.time() - total_start
+        logger.info('[Memory] Training peak: %s', format_memory(self.memory_tracker.train_peak_mb))
+        logger.info('[Memory] Eval peak: %s', format_memory(self.memory_tracker.eval_peak_mb))
+        logger.info('[Memory] Peak memory: %s', format_memory(self.memory_tracker.peak_memory_mb))
         return {
             "best_epoch": None if self.best_metric is None else self.best_metric.get("epoch", 0) + 1,
             "best_mrr": None if self.best_metric is None else self.best_metric.get("score"),
             "train_time": self.train_time,
             "valid_time": self.valid_time,
             "total_time": self.total_time,
+            **self.memory_tracker.to_dict(),
         }
 
 

@@ -22,18 +22,16 @@
   "weight_decay": 0.0001,
 
   "bert_encoder": "distilbert-base-uncased",
-  "additive_margin": 0.02,
-  "finetune_t": true,
+  "additive_margin": 0.00,
+
   "pooling": "mean",
   "pre_batch": 0,
   "workers": 2,
 
-  "infonce_t": 0.05,
 
   "is_test": false,
 
-  "pre_batch_weight": 0.5,
-  "eval_every_n_step": 10000,
+  "epoch_per_eval": 1,
   "print_freq": 20,
   "grad_clip": 10.0,
   "use_amp": true,
@@ -41,19 +39,19 @@
 
   "max_num_tokens": 50,
   "use_link_graph": true,
-  "max_to_keep": 3,
+  "max_to_keep": 1,
 
   "lr_scheduler": "linear",
   "warmup": 400,
 
   "neighbor_weight": 0.0,
-  "rerank_n_hop": 2,
+  "rerank_n_hop": 0,
 
   "seed": null,
 
-  "gamma_q": 1.0,
-  "gamma_t": 1.0,
-  "gamma_h": 0.0,
-  "gamma_ent": 0.0,
+  "gamma_q": 0.5,
+  "gamma_t": 0.5,
+  "gamma_h": 0.5,
+  "gamma_ent": 0.5,
   "tuni": 4.0
 }

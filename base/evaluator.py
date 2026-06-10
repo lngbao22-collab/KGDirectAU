@@ -1,6 +1,7 @@
 """Abstract evaluation loop shared by KG evaluators."""
 
 from typing import List, Optional, Sequence, Tuple
+import inspect
 import os
 from types import SimpleNamespace
 
@@ -50,11 +51,105 @@ def _filter_known(batch_score: torch.Tensor, examples: List[Example], all_triple
         batch_score[idx].index_fill_(0, mask_tensor, float('-inf'))
 
 
-def _infer_target_indices(examples: Sequence[Example], entity_dict) -> torch.Tensor:
+def _filter_known_heads(batch_score: torch.Tensor, examples: List[Example], all_triplet_dict, entity_dict) -> None:
+    """Mask other known heads for filtered head-prediction evaluation."""
+
+    for idx, ex in enumerate(examples):
+        gold_head_ids = all_triplet_dict.get_heads(ex.relation, ex.tail_id)
+        if not gold_head_ids:
+            continue
+
+        mask_indices = [
+            entity_dict.entity_to_idx(entity_id)
+            for entity_id in gold_head_ids
+            if entity_id != ex.head_id
+        ]
+        if not mask_indices:
+            continue
+
+        mask_tensor = torch.LongTensor(mask_indices).to(batch_score.device)
+        batch_score[idx].index_fill_(0, mask_tensor, float('-inf'))
+
+
+def _coerce_forward_examples(examples: Sequence[Example]) -> List[Example]:
+    """Normalize backward/reversed examples to forward (head, relation, tail) form."""
+
+    normalized: List[Example] = []
+    for ex in examples:
+        relation = ex.relation
+        head_id = ex.head_id
+        tail_id = ex.tail_id
+        head = getattr(ex, 'head', head_id)
+        tail = getattr(ex, 'tail', tail_id)
+
+        if str(relation).startswith('inverse '):
+            relation = relation[len('inverse '):]
+            head_id, tail_id = ex.tail_id, ex.head_id
+            head = getattr(ex, 'tail', tail_id)
+            tail = getattr(ex, 'head', head_id)
+
+        normalized.append(Example(
+            head_id=head_id,
+            head=head,
+            relation=relation,
+            tail_id=tail_id,
+            tail=tail,
+            label=getattr(ex, 'label', None),
+        ))
+    return normalized
+
+
+def _uses_head_batch_scoring(model) -> bool:
+    """Return True when the model exposes native head-batch link-prediction scoring."""
+
+    return bool(getattr(model, 'bidirectional_score_batch', False))
+
+
+def _score_batch_supports_mode(model) -> bool:
+    """Return True when score_batch accepts an explicit batch mode argument."""
+
+    if not hasattr(model, 'score_batch'):
+        return False
+    return 'mode' in inspect.signature(model.score_batch).parameters
+
+
+def _examples_to_query_index_tensors(examples: Sequence[Example], entity_dict, model) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Convert examples to head/relation/tail index tensors once per evaluation pass."""
+
+    head_indices = [entity_dict.entity_to_idx(ex.head_id) for ex in examples]
+    tail_indices = [entity_dict.entity_to_idx(ex.tail_id) for ex in examples]
+    relation_lookup = getattr(model, '_relation_to_idx', getattr(model, 'rel_to_idx', None))
+    if relation_lookup is None:
+        raise RuntimeError('Model is missing a relation index lookup for fast evaluation')
+    relation_indices = [relation_lookup(ex.relation) for ex in examples]
+    return (
+        torch.tensor(head_indices, dtype=torch.long),
+        torch.tensor(relation_indices, dtype=torch.long),
+        torch.tensor(tail_indices, dtype=torch.long),
+    )
+
+
+def _entity_indices(entity_dict, entity_ids: Sequence[str]) -> torch.Tensor:
+    """Convert entity id strings to a single index tensor."""
+
+    return torch.tensor([entity_dict.entity_to_idx(entity_id) for entity_id in entity_ids], dtype=torch.long)
+
+
+def _infer_target_indices(examples: Sequence[Example], entity_dict, predict_head: bool = False) -> torch.Tensor:
     """Infer target entity indices for a batch of examples."""
 
-    target_indices = [entity_dict.entity_to_idx(ex.tail_id) for ex in examples]
+    if predict_head:
+        target_indices = [entity_dict.entity_to_idx(ex.head_id) for ex in examples]
+    else:
+        target_indices = [entity_dict.entity_to_idx(ex.tail_id) for ex in examples]
     return torch.LongTensor(target_indices)
+
+
+def _ranks_from_score_matrix(score: torch.Tensor, target_indices: torch.Tensor) -> list[int]:
+    """Compute 1-based filtered ranks without sorting the full score matrix."""
+
+    target_scores = score.gather(1, target_indices.unsqueeze(1))
+    return (score > target_scores).sum(dim=1).add(1).tolist()
 
 
 def _score_by_embedding_adapter(model, examples: List[Example], entity_tensor: torch.Tensor) -> torch.Tensor:
@@ -301,7 +396,7 @@ class Evaluator:
             f.write(log_cls + '\n')
         return metrics_cls
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def evaluate_link_prediction_inplace(self, model, eval_path, entity_dict, output_log_path, batch_size=128, eval_forward=True, examples=None) -> dict:
         """Evaluate link prediction using the model's forward pass."""
         model = get_model_obj(model)
@@ -313,22 +408,111 @@ class Evaluator:
         if examples is None:
             examples = load_data(eval_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
 
+        predict_head = (not eval_forward) and _uses_head_batch_scoring(model)
+        scoring_examples = _coerce_forward_examples(examples) if predict_head else list(examples)
+
         if hasattr(model, 'score_batch'):
             all_entity_ids = [entity_ex.entity_id for entity_ex in entity_dict.entity_exs]
-            score = torch.zeros(len(examples), len(all_entity_ids))
-            for start in range(0, len(all_entity_ids), max(batch_size, 512)):
-                end = min(start + max(batch_size, 512), len(all_entity_ids))
-                entity_chunk = all_entity_ids[start:end]
-                chunk_score = model.score_batch(
-                    [ex.head_id for ex in examples],
-                    [ex.relation for ex in examples],
-                    entity_chunk,
+            score_device = next(model.parameters()).device
+            head_ids = [ex.head_id for ex in scoring_examples]
+            relations = [ex.relation for ex in scoring_examples]
+            score_batch_mode = 'head-batch' if predict_head and _score_batch_supports_mode(model) else 'tail-batch'
+            use_fast_indices = hasattr(model, 'score_batch_from_indices')
+            query_head_idx = query_rel_idx = query_tail_idx = None
+            all_entity_idx = None
+            if use_fast_indices:
+                query_head_idx, query_rel_idx, query_tail_idx = _examples_to_query_index_tensors(
+                    scoring_examples, entity_dict, model
                 )
-                if not isinstance(chunk_score, torch.Tensor):
-                    chunk_score = torch.tensor(chunk_score)
-                score[:, start:end] = chunk_score.detach().cpu()
+                all_entity_idx = _entity_indices(entity_dict, all_entity_ids)
+
+            if (
+                score_batch_mode == 'head-batch'
+                and hasattr(model, 'prepare_head_prediction_queries')
+                and hasattr(model, 'score_head_prediction_full')
+            ):
+                tail_ids = [ex.tail_id for ex in scoring_examples]
+                query_cache = model.prepare_head_prediction_queries(tail_ids, relations)
+                score = model.score_head_prediction_full(query_cache)
+                if score.size(0) != len(scoring_examples) or score.size(1) != len(all_entity_ids):
+                    raise RuntimeError('DaBR fast head-prediction score matrix has unexpected shape')
+            elif (
+                score_batch_mode == 'tail-batch'
+                and hasattr(model, 'prepare_link_prediction_queries')
+                and hasattr(model, 'score_link_prediction_full')
+            ):
+                query_cache = model.prepare_link_prediction_queries(head_ids, relations)
+                score = model.score_link_prediction_full(query_cache)
+                if score.size(0) != len(scoring_examples) or score.size(1) != len(all_entity_ids):
+                    raise RuntimeError('DaBR fast link-prediction score matrix has unexpected shape')
+            else:
+                score = torch.zeros(len(scoring_examples), len(all_entity_ids), device=score_device)
+                entity_chunk_size = getattr(model, 'eval_entity_chunk_size', None)
+                if entity_chunk_size is None:
+                    entity_chunk_size = getattr(model.config, 'eval_entity_chunk_size', None) if hasattr(model, 'config') else None
+                if entity_chunk_size is None:
+                    entity_chunk_size = getattr(global_args, 'eval_entity_chunk_size', None)
+                if entity_chunk_size is None:
+                    entity_chunk_size = max(batch_size, 4096)
+                entity_chunk_size = max(int(entity_chunk_size), 1)
+
+                if score_batch_mode == 'head-batch' and hasattr(model, 'prepare_head_prediction_queries'):
+                    tail_ids = [ex.tail_id for ex in scoring_examples]
+                    query_cache = model.prepare_head_prediction_queries(tail_ids, relations)
+                    score_candidates = getattr(model, 'score_head_prediction_candidates', None)
+                elif hasattr(model, 'prepare_link_prediction_queries'):
+                    query_cache = model.prepare_link_prediction_queries(head_ids, relations)
+                    score_candidates = model.score_link_prediction_candidates
+                else:
+                    query_cache = None
+                    score_candidates = None
+
+                use_eval_amp = (
+                    score_device.type == 'cuda'
+                    and bool(getattr(global_args, 'eval_use_amp', getattr(global_args, 'use_amp', False)))
+                )
+                for start in range(0, len(all_entity_ids), entity_chunk_size):
+                    end = min(start + entity_chunk_size, len(all_entity_ids))
+                    if score_candidates is not None:
+                        chunk_score = score_candidates(query_cache, (start, end))
+                    elif use_fast_indices:
+                        candidate_idx = all_entity_idx[start:end].to(score_device)
+                        with torch.autocast(device_type='cuda', enabled=use_eval_amp):
+                            if score_batch_mode == 'head-batch':
+                                chunk_score = model.score_batch_from_indices(
+                                    query_rel_idx,
+                                    candidate_idx,
+                                    mode='head-batch',
+                                    query_tail_indices=query_tail_idx,
+                                )
+                            else:
+                                chunk_score = model.score_batch_from_indices(
+                                    query_rel_idx,
+                                    candidate_idx,
+                                    mode='tail-batch',
+                                    query_head_indices=query_head_idx,
+                                )
+                    else:
+                        entity_chunk = all_entity_ids[start:end]
+                        score_batch_kwargs = {}
+                        if score_batch_mode == 'head-batch':
+                            score_batch_kwargs['mode'] = 'head-batch'
+                            score_batch_kwargs['query_tail_ids'] = [ex.tail_id for ex in scoring_examples]
+                        with torch.autocast(device_type='cuda', enabled=use_eval_amp):
+                            if score_batch_mode == 'head-batch':
+                                chunk_score = model.score_batch(
+                                    head_ids,
+                                    relations,
+                                    entity_chunk,
+                                    **score_batch_kwargs,
+                                )
+                            else:
+                                chunk_score = model.score_batch(head_ids, relations, entity_chunk)
+                    if not isinstance(chunk_score, torch.Tensor):
+                        chunk_score = torch.tensor(chunk_score, device=score_device)
+                    score[:, start:end] = chunk_score
         else:
-            hr_tensor, _ = model.predict_by_examples(examples, batch_size=batch_size)
+            hr_tensor, _ = model.predict_by_examples(scoring_examples, batch_size=batch_size)
             entity_examples = [Example(head_id='', relation='', tail_id=entity_ex.entity_id) for entity_ex in entity_dict.entity_exs]
             entities_tensor = model.predict_by_entities(entity_examples, batch_size=max(batch_size, 512))
 
@@ -337,18 +521,12 @@ class Evaluator:
                 entities_tensor = entities_tensor.cuda()
             score = torch.mm(hr_tensor, entities_tensor.t())
         all_triplet_dict = get_all_triplet_dict()
-        _filter_known(score, examples, all_triplet_dict, entity_dict)
-        target = torch.LongTensor([entity_dict.entity_to_idx(ex.tail_id) for ex in examples]).to(score.device)
-        sorted_indices = torch.sort(score, dim=-1, descending=True).indices
-        target_rank = torch.nonzero(sorted_indices.eq(target.unsqueeze(-1)).long(), as_tuple=False)
-        if target_rank.size(0) != score.size(0):
-            raise RuntimeError('Unable to compute one rank per example')
-        ranks = []
-        for idx in range(target_rank.size(0)):
-            row = target_rank[idx].tolist()
-            if row[0] != idx:
-                raise RuntimeError('Target rank rows are misaligned')
-            ranks.append(row[1] + 1)
+        if predict_head:
+            _filter_known_heads(score, scoring_examples, all_triplet_dict, entity_dict)
+        else:
+            _filter_known(score, scoring_examples, all_triplet_dict, entity_dict)
+        target_indices = _infer_target_indices(scoring_examples, entity_dict, predict_head=predict_head).to(score.device)
+        ranks = _ranks_from_score_matrix(score, target_indices)
         metrics = ranking_metrics_from_ranks(ranks)
         return metrics
 

@@ -27,6 +27,10 @@ def build_model(args) -> nn.Module:
 class pRotatEEncoder(BaseModel):
     """pRotatE encoder with 1D phase entity embeddings and phase relations."""
 
+    bidirectional_score_batch = True
+    # Opt-in for KGAU: only this encoder uses sin-phase AU (see ``KGAULoss.alignment_mode``).
+    kga_u_alignment_mode = 'sin_phase'
+
     def __init__(self, n_ent: int, n_rel: int, args):
         super().__init__()
         self.args = args
@@ -58,15 +62,27 @@ class pRotatEEncoder(BaseModel):
         self.entity_dict = get_entity_dict()
         self.rel_to_idx = _load_relation_to_idx(args)
 
+    @staticmethod
+    def _pi() -> float:
+        return 3.14159265358979323846
+
+    def _phase_scale(self) -> float:
+        """Scaling factor that maps raw embeddings into pRotatE phase coordinates."""
+
+        return self.embedding_range.item() / self._pi()
+
+    def _to_phase(self, vectors: torch.Tensor) -> torch.Tensor:
+        """Convert raw entity/relation embeddings to the phase space used by pRotatE scoring."""
+
+        return vectors / self._phase_scale()
+
     def _rotate_score(self, head: torch.Tensor, relation: torch.Tensor, tail: torch.Tensor, mode: str) -> torch.Tensor:
         """Compute the pRotatE score for the provided head, relation, and tail embeddings."""
 
-        pi = 3.14159265358979323846
-
         # Make phases of entities and relations uniformly distributed in [-pi, pi]
-        phase_head = head / (self.embedding_range.item() / pi)
-        phase_relation = relation / (self.embedding_range.item() / pi)
-        phase_tail = tail / (self.embedding_range.item() / pi)
+        phase_head = self._to_phase(head)
+        phase_relation = self._to_phase(relation)
+        phase_tail = self._to_phase(tail)
 
         if mode == 'head-batch':
             score = phase_head + (phase_relation - phase_tail)
@@ -119,19 +135,31 @@ class pRotatEEncoder(BaseModel):
         }
 
     def get_queries_targets(self, src: torch.Tensor, rel: torch.Tensor, dst: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Return AU-compatible query, target, and head representations.
+        """Return phase-space AU query, target, and head for sin-phase alignment.
 
-        KGAU expects encoders to expose query/target tensors for alignment-uniformity
-        training. For pRotatE, the query is the phase-addition of head and relation,
-        the target is the tail entity embedding, and the head is the raw head embedding.
+        With ``alignment_mode=sin_phase`` in KGAULoss, alignment minimizes
+        mean_i |sin(phase(h)_i + phase(r)_i - phase(t)_i)| — the same per-dimension
+        quantity summed inside ``_rotate_score`` at link-prediction time.
         """
 
-        head = torch.index_select(self.entity_embedding, dim=0, index=src).unsqueeze(1)
-        relation = torch.index_select(self.relation_embedding, dim=0, index=rel).unsqueeze(1)
-        tail = torch.index_select(self.entity_embedding, dim=0, index=dst).unsqueeze(1)
+        head = torch.index_select(self.entity_embedding, dim=0, index=src)
+        relation = torch.index_select(self.relation_embedding, dim=0, index=rel)
+        tail = torch.index_select(self.entity_embedding, dim=0, index=dst)
 
-        query = (head + relation).squeeze(1)
-        return query, tail.squeeze(1), head.squeeze(1)
+        phase_head = self._to_phase(head)
+        phase_relation = self._to_phase(relation)
+        phase_tail = self._to_phase(tail)
+        query = phase_head + phase_relation
+        return query, phase_tail, phase_head
+
+    def sin_phase_score_penalty(
+        self,
+        phase_query: torch.Tensor,
+        phase_target: torch.Tensor,
+    ) -> torch.Tensor:
+        """Per-example pRotatE score penalty: sum_i |sin(phase_query_i - phase_target_i)|."""
+
+        return torch.abs(torch.sin(phase_query - phase_target)).sum(dim=-1)
 
     def compute_logits(self, output_dict: dict, batch_dict: dict) -> dict:
         """Compatibility adapter used by generic trainer paths."""
@@ -151,8 +179,16 @@ class pRotatEEncoder(BaseModel):
             entity_vectors = entity_vectors.to(device)
         return entity_vectors
 
+    def au_entity_embeddings(self, device: torch.device | None = None) -> torch.Tensor:
+        """Entity phases for KGAU uniformity (same coordinates as sin-phase alignment)."""
+
+        entity_vectors = self._to_phase(self.entity_embedding)
+        if device is not None:
+            entity_vectors = entity_vectors.to(device)
+        return entity_vectors
+
     def hr_embeddings(self, examples: Sequence[Example], device: torch.device | None = None) -> torch.Tensor:
-        """Build query vectors as head phase + relation phase."""
+        """Build query vectors as phase(head) + phase(relation)."""
 
         if device is None:
             device = self.entity_embedding.device
@@ -160,12 +196,9 @@ class pRotatEEncoder(BaseModel):
         head_indices = _as_index_tensor([example.head_id for example in examples], self.entity_dict.entity_to_idx, device)
         relation_indices = _as_index_tensor([example.relation for example in examples], self._relation_to_idx, device)
 
-        head = torch.index_select(self.entity_embedding, dim=0, index=head_indices).unsqueeze(1)
-        relation = torch.index_select(self.relation_embedding, dim=0, index=relation_indices).unsqueeze(1)
-
-        # In pRotatE, the theoretical query is just the addition of phases
-        query = head + relation
-        return query.squeeze(1)
+        head = torch.index_select(self.entity_embedding, dim=0, index=head_indices)
+        relation = torch.index_select(self.relation_embedding, dim=0, index=relation_indices)
+        return self._to_phase(head) + self._to_phase(relation)
 
     def predict_by_examples(self, examples: Sequence[Example], batch_size: int | None = None, num_workers: int = 1) -> tuple[torch.Tensor, torch.Tensor]:
         """Return query and target embeddings for link prediction evaluation."""
@@ -173,7 +206,7 @@ class pRotatEEncoder(BaseModel):
         device = self.entity_embedding.device
         query = self.hr_embeddings(examples, device=device)
         tail_indices = _as_index_tensor([example.tail_id for example in examples], self.entity_dict.entity_to_idx, device)
-        tails = self.entity_embeddings(device=device)[tail_indices]
+        tails = self.au_entity_embeddings(device=device)[tail_indices]
         return query, tails
 
     def predict_by_entities(self, entity_exs, batch_size: int | None = None, num_workers: int = 2) -> torch.Tensor:
@@ -184,18 +217,253 @@ class pRotatEEncoder(BaseModel):
         entity_indices = _as_index_tensor(entity_ids, self.entity_dict.entity_to_idx, device)
         return self.entity_embeddings(device=device)[entity_indices]
 
-    def score_batch(self, head_ids, relations, tail_entity_ids) -> torch.Tensor:
-        """Score a batch using pRotatE tail-batch distance scores."""
+    def _resolve_link_prediction_chunk_sizes(
+        self,
+        query_chunk_size: int | None,
+        candidate_chunk_size: int | None,
+    ) -> tuple[int, int]:
+        """Resolve query/candidate chunk sizes for link-prediction scoring."""
+
+        if query_chunk_size is None:
+            query_chunk_size = _config_int(self.args, "score_query_chunk_size", 256)
+        else:
+            query_chunk_size = int(query_chunk_size)
+        if candidate_chunk_size is None:
+            candidate_chunk_size = _config_int(self.args, "eval_candidate_chunk_size", 2048)
+        else:
+            candidate_chunk_size = int(candidate_chunk_size)
+        query_chunk_size = max(query_chunk_size, 1)
+        candidate_chunk_size = max(candidate_chunk_size, 1)
+        return _cap_link_prediction_chunks_for_memory(
+            query_chunk_size,
+            candidate_chunk_size,
+            self.hidden_dim,
+            self.entity_embedding.device,
+        )
+
+    @torch.inference_mode()
+    def _score_link_prediction_matrix(
+        self,
+        relation_indices: torch.Tensor,
+        candidate_indices: torch.Tensor,
+        batch_mode: str,
+        anchor_indices: torch.Tensor,
+        query_chunk_size: int,
+        candidate_chunk_size: int,
+    ) -> torch.Tensor:
+        """Score many queries against candidate entity indices using chunked tail/head batching."""
 
         device = self.entity_embedding.device
+        num_queries = relation_indices.size(0)
+        num_candidates = candidate_indices.size(0)
+        if num_queries == 0 or num_candidates == 0:
+            return torch.empty(num_queries, num_candidates, device=device)
 
-        head_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
+        scores = torch.empty(num_queries, num_candidates, device=device, dtype=torch.float32)
+        for cand_start in range(0, num_candidates, candidate_chunk_size):
+            cand_end = min(cand_start + candidate_chunk_size, num_candidates)
+            cand_chunk = candidate_indices[cand_start:cand_end]
+
+            for q_start in range(0, num_queries, query_chunk_size):
+                q_end = min(q_start + query_chunk_size, num_queries)
+                query_slice = slice(q_start, q_end)
+                zero_heads = torch.zeros(q_end - q_start, dtype=torch.long, device=device)
+                if batch_mode == "tail-batch":
+                    positive_sample = torch.stack(
+                        [
+                            anchor_indices[query_slice],
+                            relation_indices[query_slice],
+                            zero_heads,
+                        ],
+                        dim=-1,
+                    )
+                else:
+                    positive_sample = torch.stack(
+                        [
+                            zero_heads,
+                            relation_indices[query_slice],
+                            anchor_indices[query_slice],
+                        ],
+                        dim=-1,
+                    )
+                negative_sample = cand_chunk.unsqueeze(0).expand(q_end - q_start, cand_chunk.size(0))
+                try:
+                    block_score = self._score(positive_sample, negative_sample, mode=batch_mode)
+                except torch.cuda.OutOfMemoryError:
+                    torch.cuda.empty_cache()
+                    block_score = self._score_link_prediction_block_safe(
+                        relation_indices,
+                        cand_chunk,
+                        batch_mode,
+                        anchor_indices,
+                        q_start,
+                        q_end,
+                        max(query_chunk_size // 2, 64),
+                        max(candidate_chunk_size // 2, 128),
+                    )
+                scores[q_start:q_end, cand_start:cand_end] = block_score.float()
+
+        return scores
+
+    def _score_link_prediction_block_safe(
+        self,
+        relation_indices: torch.Tensor,
+        candidate_indices: torch.Tensor,
+        batch_mode: str,
+        anchor_indices: torch.Tensor,
+        q_start: int,
+        q_end: int,
+        query_chunk_size: int,
+        candidate_chunk_size: int,
+    ) -> torch.Tensor:
+        """Score one query/candidate tile, recursively splitting on CUDA OOM."""
+
+        device = self.entity_embedding.device
+        num_queries = q_end - q_start
+        num_candidates = candidate_indices.size(0)
+        scores = torch.empty(num_queries, num_candidates, device=device, dtype=torch.float32)
+
+        for cand_start in range(0, num_candidates, candidate_chunk_size):
+            cand_end = min(cand_start + candidate_chunk_size, num_candidates)
+            cand_chunk = candidate_indices[cand_start:cand_end]
+            for local_q_start in range(0, num_queries, query_chunk_size):
+                local_q_end = min(local_q_start + query_chunk_size, num_queries)
+                global_q_start = q_start + local_q_start
+                global_q_end = q_start + local_q_end
+                query_slice = slice(global_q_start, global_q_end)
+                zero_heads = torch.zeros(global_q_end - global_q_start, dtype=torch.long, device=device)
+                if batch_mode == "tail-batch":
+                    positive_sample = torch.stack(
+                        [
+                            anchor_indices[query_slice],
+                            relation_indices[query_slice],
+                            zero_heads,
+                        ],
+                        dim=-1,
+                    )
+                else:
+                    positive_sample = torch.stack(
+                        [
+                            zero_heads,
+                            relation_indices[query_slice],
+                            anchor_indices[query_slice],
+                        ],
+                        dim=-1,
+                    )
+                negative_sample = cand_chunk.unsqueeze(0).expand(global_q_end - global_q_start, cand_chunk.size(0))
+                try:
+                    block_score = self._score(positive_sample, negative_sample, mode=batch_mode)
+                except torch.cuda.OutOfMemoryError:
+                    if query_chunk_size <= 64 and candidate_chunk_size <= 128:
+                        raise
+                    torch.cuda.empty_cache()
+                    block_score = self._score_link_prediction_block_safe(
+                        relation_indices,
+                        cand_chunk,
+                        batch_mode,
+                        anchor_indices,
+                        global_q_start,
+                        global_q_end,
+                        max(query_chunk_size // 2, 64),
+                        max(candidate_chunk_size // 2, 128),
+                    )
+                scores[local_q_start:local_q_end, cand_start:cand_end] = block_score.float()
+
+        return scores
+
+    @torch.inference_mode()
+    def score_batch_from_indices(
+        self,
+        relation_indices: torch.Tensor,
+        candidate_indices: torch.Tensor,
+        mode: str = "tail-batch",
+        query_head_indices: torch.Tensor | None = None,
+        query_tail_indices: torch.Tensor | None = None,
+        query_chunk_size: int | None = None,
+        candidate_chunk_size: int | None = None,
+    ) -> torch.Tensor:
+        """Fast link-prediction scoring using precomputed index tensors."""
+
+        device = self.entity_embedding.device
+        batch_mode = str(mode or "tail-batch")
+        if batch_mode not in {"head-batch", "tail-batch"}:
+            raise ValueError(f"mode {batch_mode} not supported")
+
+        relation_indices = relation_indices.to(device=device, dtype=torch.long)
+        candidate_indices = candidate_indices.to(device=device, dtype=torch.long)
+        query_q, query_c = self._resolve_link_prediction_chunk_sizes(query_chunk_size, candidate_chunk_size)
+
+        if batch_mode == "tail-batch":
+            if query_head_indices is None:
+                raise ValueError("query_head_indices is required for tail-batch scoring")
+            anchor_indices = query_head_indices.to(device=device, dtype=torch.long)
+        else:
+            if query_tail_indices is None:
+                raise ValueError("query_tail_indices is required for head-batch scoring")
+            anchor_indices = query_tail_indices.to(device=device, dtype=torch.long)
+
+        return self._score_link_prediction_matrix(
+            relation_indices,
+            candidate_indices,
+            batch_mode,
+            anchor_indices,
+            query_q,
+            query_c,
+        )
+
+    @torch.inference_mode()
+    def score_batch(
+        self,
+        head_ids,
+        relations,
+        tail_entity_ids,
+        mode: str = "tail-batch",
+        query_tail_ids=None,
+        query_chunk_size: int | None = None,
+        candidate_chunk_size: int | None = None,
+    ) -> torch.Tensor:
+        """Score queries against candidate entities.
+
+        tail-batch (default): fix (head, relation), score candidate tails.
+        head-batch: fix (relation, tail), score candidate heads via query_tail_ids.
+        """
+
+        device = self.entity_embedding.device
+        batch_mode = str(mode or "tail-batch")
+
         relation_indices = _as_index_tensor(relations, self._relation_to_idx, device)
         candidate_indices = _as_index_tensor(tail_entity_ids, self.entity_dict.entity_to_idx, device)
 
-        positive_sample = torch.stack([head_indices, relation_indices, torch.zeros_like(head_indices)], dim=-1)
-        negative_sample = candidate_indices.unsqueeze(0).expand(len(head_ids), len(candidate_indices))
-        return self._score(positive_sample, negative_sample, mode="tail-batch")
+        num_queries = relation_indices.size(0)
+        num_candidates = candidate_indices.size(0)
+        if num_queries == 0 or num_candidates == 0:
+            return torch.empty(num_queries, num_candidates, device=device)
+
+        if head_ids is not None and num_queries == num_candidates == len(relations):
+            head_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
+            positive_sample = torch.stack([head_indices, relation_indices, candidate_indices], dim=-1)
+            return self._score(positive_sample, mode="single").squeeze(-1)
+
+        if batch_mode not in {"head-batch", "tail-batch"}:
+            raise ValueError(f"mode {batch_mode} not supported")
+
+        query_q, query_c = self._resolve_link_prediction_chunk_sizes(query_chunk_size, candidate_chunk_size)
+
+        if batch_mode == "tail-batch":
+            anchor_indices = _as_index_tensor(head_ids, self.entity_dict.entity_to_idx, device)
+        else:
+            if query_tail_ids is None:
+                raise ValueError("query_tail_ids is required for head-batch scoring")
+            anchor_indices = _as_index_tensor(query_tail_ids, self.entity_dict.entity_to_idx, device)
+
+        return self._score_link_prediction_matrix(
+            relation_indices,
+            candidate_indices,
+            batch_mode,
+            anchor_indices,
+            query_q,
+            query_c,
+        )
 
     def _relation_to_idx(self, relation: str) -> int:
         """Resolve relation variants used by preprocessing and inverse triplet generation."""
@@ -250,6 +518,49 @@ def _load_relation_to_idx(args) -> dict[str, int]:
             seen.add(example.relation)
             relations.append(example.relation)
     return {relation: idx for idx, relation in enumerate(relations)}
+
+
+def _config_int(args, key: str, default: int) -> int:
+    """Read an integer config value from args, falling back to default when unset."""
+
+    value = getattr(args, key, None)
+    if value is None:
+        return default
+    return int(value)
+
+
+def _cap_link_prediction_chunks_for_memory(
+    query_chunk_size: int,
+    candidate_chunk_size: int,
+    hidden_dim: int,
+    device: torch.device,
+    min_query: int = 64,
+    min_candidate: int = 128,
+) -> tuple[int, int]:
+    """Shrink link-prediction chunks so a Q x C scoring block fits in free GPU memory."""
+
+    query_chunk_size = max(int(query_chunk_size), min_query)
+    candidate_chunk_size = max(int(candidate_chunk_size), min_candidate)
+    if device.type != "cuda":
+        return query_chunk_size, candidate_chunk_size
+
+    free_bytes, _ = torch.cuda.mem_get_info(device)
+    # Rough budget for intermediate [Q, C, D] tensors created during pRotatE scoring.
+    budget_bytes = int(free_bytes * 0.30)
+    bytes_per_pair = max(hidden_dim * 6 * 4, 1)
+    max_pairs = max(budget_bytes // bytes_per_pair, min_query * min_candidate)
+
+    while query_chunk_size * candidate_chunk_size > max_pairs:
+        if candidate_chunk_size > min_candidate and candidate_chunk_size >= query_chunk_size:
+            candidate_chunk_size = max(candidate_chunk_size // 2, min_candidate)
+        elif query_chunk_size > min_query:
+            query_chunk_size = max(query_chunk_size // 2, min_query)
+        elif candidate_chunk_size > min_candidate:
+            candidate_chunk_size = max(candidate_chunk_size // 2, min_candidate)
+        else:
+            break
+
+    return query_chunk_size, candidate_chunk_size
 
 
 def _as_index_tensor(values, lookup, device: torch.device) -> torch.Tensor:

@@ -29,20 +29,108 @@ class DistMultEncoder(nn.Module):
 
 	def __init__(self, n_ent: int, n_rel: int, args):
 		super().__init__()
-		sigma = 0.2
-		self.dim = args.dim
-		self.rel_embed = nn.Embedding(n_rel, args.dim)
-		self.ent_embed = nn.Embedding(n_ent, args.dim)
+		self.args = args
+		self.nentity = n_ent
+		self.dim = int(args.dim)
+		self.rel_embed = nn.Embedding(n_rel, self.dim)
+		self.ent_embed = nn.Embedding(n_ent, self.dim)
 		self.entity_dict = get_entity_dict()
 		self.rel_to_idx = _load_relation_to_idx(args)
+		self.adversarial_training = bool(getattr(args, 'adversarial_training', False))
 		self.normalize_lp_scores = getattr(
 			args,
 			'normalize_lp_scores',
 			str(getattr(args, 'model', '')).endswith('-AU'),
 		)
-		scale = (args.dim / sigma ** 2) ** (1 / 6)
+		if self.adversarial_training:
+			self._init_adversarial_embeddings(args)
+		else:
+			self._init_softmax_embeddings()
+
+	def _init_softmax_embeddings(self) -> None:
+		"""Xavier-style scaling used by the softmax / AU training path."""
+
+		sigma = 0.2
+		scale = (self.dim / sigma ** 2) ** (1 / 6)
 		for param in self.parameters():
 			param.data.div_(scale)
+
+	def _init_adversarial_embeddings(self, args) -> None:
+		"""Uniform init matching the official RotatE-repo DistMult implementation."""
+
+		epsilon = 2.0
+		margin = float(getattr(args, 'margin', 200.0))
+		embedding_range = (margin + epsilon) / self.dim
+		nn.init.uniform_(self.ent_embed.weight, a=-embedding_range, b=embedding_range)
+		nn.init.uniform_(self.rel_embed.weight, a=-embedding_range, b=embedding_range)
+
+	def adversarial_l3_regularization(self) -> torch.Tensor:
+		"""L3 embedding regularization used by the RotatE-repo DistMult trainer."""
+
+		return self.ent_embed.weight.norm(p=3) ** 3 + self.rel_embed.weight.norm(p=3) ** 3
+
+	def _distmult_score(
+		self,
+		head: torch.Tensor,
+		relation: torch.Tensor,
+		tail: torch.Tensor,
+		mode: str,
+	) -> torch.Tensor:
+		"""Score triples in single, head-batch, or tail-batch mode."""
+
+		if mode == 'head-batch':
+			score = head * (relation * tail)
+		else:
+			score = (head * relation) * tail
+		return score.sum(dim=2)
+
+	def _adversarial_score(
+		self,
+		positive_sample: torch.Tensor,
+		negative_sample: torch.Tensor | None = None,
+		mode: str = 'single',
+	) -> torch.Tensor:
+		"""Compute DistMult scores for adversarial BCE training."""
+
+		if mode == 'single':
+			head = self.ent_embed(positive_sample[:, 0]).unsqueeze(1)
+			relation = self.rel_embed(positive_sample[:, 1]).unsqueeze(1)
+			tail = self.ent_embed(positive_sample[:, 2]).unsqueeze(1)
+		elif mode == 'head-batch':
+			if negative_sample is None:
+				raise ValueError('negative_sample is required for head-batch')
+			batch_size, negative_sample_size = negative_sample.size(0), negative_sample.size(1)
+			head = self.ent_embed(negative_sample.reshape(-1)).reshape(batch_size, negative_sample_size, -1)
+			relation = self.rel_embed(positive_sample[:, 1]).unsqueeze(1)
+			tail = self.ent_embed(positive_sample[:, 2]).unsqueeze(1)
+		elif mode == 'tail-batch':
+			if negative_sample is None:
+				raise ValueError('negative_sample is required for tail-batch')
+			batch_size, negative_sample_size = negative_sample.size(0), negative_sample.size(1)
+			head = self.ent_embed(positive_sample[:, 0]).unsqueeze(1)
+			relation = self.rel_embed(positive_sample[:, 1]).unsqueeze(1)
+			tail = self.ent_embed(negative_sample.reshape(-1)).reshape(batch_size, negative_sample_size, -1)
+		else:
+			raise ValueError(f'mode {mode} not supported')
+
+		return self._distmult_score(head, relation, tail, mode)
+
+	def _adversarial_forward(
+		self,
+		positive_sample: torch.Tensor,
+		negative_sample: torch.Tensor | None = None,
+		mode: str = 'single',
+	) -> dict:
+		"""Return positive and optional negative scores for adversarial training."""
+
+		pos_scores = self._adversarial_score(positive_sample, mode='single')
+		neg_scores = None
+		if negative_sample is not None:
+			neg_scores = self._adversarial_score(positive_sample, negative_sample=negative_sample, mode=mode)
+		return {
+			'positive_scores': pos_scores,
+			'negative_scores': neg_scores,
+		}
 
 	def _link_prediction_scores(self, query_vectors: torch.Tensor, candidate_vectors: torch.Tensor) -> torch.Tensor:
 		"""Dot-product scores; L2-normalize when training uses AU loss on unit vectors."""
@@ -52,8 +140,11 @@ class DistMultEncoder(nn.Module):
 			candidate_vectors = F.normalize(candidate_vectors, p=2, dim=-1)
 		return torch.mm(query_vectors, candidate_vectors.t())
 
-	def forward(self, src, rel, dst) -> torch.Tensor:
-		"""Return DistMult scores for the provided triples."""
+	def forward(self, src, rel=None, dst=None):
+		"""Return DistMult scores or adversarial score dicts depending on the call shape."""
+
+		if torch.is_tensor(src) and src.dim() == 2 and src.size(-1) == 3 and isinstance(dst, str):
+			return self._adversarial_forward(src, rel, dst)
 
 		query_vectors = self.ent_embed(src) * self.rel_embed(rel)
 		candidate_vectors = self.ent_embed(dst)
@@ -140,7 +231,8 @@ class DistMultEncoder(nn.Module):
 			return self.rel_to_idx[relation]
 		if relation.startswith('inverse '):
 			base_relation = relation[len('inverse '):]
-			if base_relation in self.rel_to_idx:
+			inverse_relation = f'inverse {base_relation}'
+			if inverse_relation not in self.rel_to_idx and base_relation in self.rel_to_idx:
 				return self.rel_to_idx[base_relation]
 		if relation.startswith('inverse_'):
 			base_relation = relation[len('inverse_'):]

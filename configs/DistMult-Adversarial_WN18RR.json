@@ -1,11 +1,10 @@
 {
-
-  "model": "pRotatE",
-  "model_encoder_path": "models/encoders/rotate_encoder.py",
+  "model": "DistMult-Adversarial",
+  "model_encoder_path": "models/encoders/distmult_encoder.py",
   "model_loss_path": "models/losses/adversarial_bce_loss.py",
   "model_sampler_path": "models/samplers/filtered_1_to_n_sampler.py",
   "model_strategy_path": "models/strategies/adversarial_strategy.py",
-  
+
   "dataset": "WN18RR",
   "task": "both",
   "train_path": "data/WN18RR/preprocessed/train.txt.json",
@@ -14,23 +13,23 @@
   "valid_w_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
   "test_w_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
 
-  "output_dir_prefix": "logs/pRotatE_WN18RR",
+  "output_dir_prefix": "logs/DistMult-Adversarial_WN18RR",
 
-  "dim": 500,
-  "batch_size": 512,
-  "epochs": 800,
-  "lr": 5e-05,
+  "adversarial_training": true,
+
+  "dim": 1000,
+  "batch_size": 1024,
+  "epochs": 500,
+  "max_steps": 80000,
+  "lr": 0.002,
   "weight_decay": 0.0,
-  "margin": 6.0,
-  "adversarial_temperature": 0.5,
+
+  "margin": 200.0,
+  "adversarial_temperature": 1.0,
+  "regularization": 0.000005,
+
   "n_sample": 1024,
-  "shuffle_train": true,
-  "use_amp": true,
+  "normalize_lp_scores": false,
 
-  "eval_use_amp": true,
-  "score_query_chunk_size": 256,
-  "eval_candidate_chunk_size": 2048,
-  "eval_entity_chunk_size": 4096
-
+  "early_stopping_patience": 10
 }
-

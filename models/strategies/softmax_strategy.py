@@ -3,6 +3,8 @@
 import os
 import time
 import torch
+import torch.nn.functional as F
+from torch import optim
 from torch.optim import Adam
 
 from base.evaluator import Evaluator
@@ -12,6 +14,19 @@ from models.losses.infonce_loss import compute_listwise_loss
 from utils.checkpoint import best_model_path, delete_old_ckt, last_model_path, save_checkpoint
 from utils.device import get_model_obj
 from utils.logger import logger
+from utils.memory import PhaseMemoryTracker, format_memory
+
+
+def _build_optimizer(args, parameters, weight_decay: float):
+	"""Build the training optimizer; respects ``optim`` in config (adam / adagrad / sgd)."""
+
+	lr = float(getattr(args, 'lr', 1e-3))
+	optim_name = str(getattr(args, 'optim', 'adam')).lower()
+	if optim_name == 'adagrad':
+		return optim.Adagrad(parameters, lr=lr, weight_decay=weight_decay)
+	if optim_name == 'sgd':
+		return optim.SGD(parameters, lr=lr, weight_decay=weight_decay)
+	return Adam(parameters, lr=lr, weight_decay=weight_decay)
 
 
 class SoftmaxStrategy(object):
@@ -32,6 +47,7 @@ class SoftmaxStrategy(object):
 		self.train_time = 0.0
 		self.valid_time = 0.0
 		self.total_time = 0.0
+		self.memory_tracker = PhaseMemoryTracker()
 
 		if torch.cuda.is_available():
 			self.model.cuda()
@@ -39,11 +55,15 @@ class SoftmaxStrategy(object):
 
 		batch_size = max(getattr(args, 'batch_size', 1), 1)
 		num_batches = max(num_train_triples // batch_size, 1)
-		weight_decay = getattr(args, 'weight_decay', None)
-		if weight_decay is None:
-			weight_decay = 0.0
-		self.weight_decay = float(weight_decay) / num_batches
-		self.optimizer = Adam(self.model.parameters(), lr=getattr(args, 'lr', 2e-5), weight_decay=self.weight_decay)
+		weight_decay = float(getattr(args, 'weight_decay', None) or 0.0)
+		# Divide by num_batches only in the legacy sampled mode (keeps the per-epoch
+		# L2 budget constant regardless of batch size). In 1-vs-all mode the user
+		# should supply weight_decay directly as the per-step Adam/AdaGrad value.
+		if getattr(args, 'train_1_to_n', False):
+			self.weight_decay = weight_decay
+		else:
+			self.weight_decay = weight_decay / num_batches
+		self.optimizer = _build_optimizer(args, self.model.parameters(), self.weight_decay)
 
 	def _iter_batches(self, src, rel, dst, batch_size):
 		"""Yield batches of triples from the provided tensors."""
@@ -146,6 +166,13 @@ class SoftmaxStrategy(object):
 		return None
 
 	def train_epoch(self, epoch):
+		if getattr(self.args, 'train_1_to_n', False):
+			return self._train_1_to_n_epoch(epoch)
+		return self._train_sampled_epoch(epoch)
+
+	def _train_sampled_epoch(self, epoch):
+		"""Original sampled-softmax training: Bernoulli listwise with n_sample negatives."""
+
 		self.model.train()
 		batch_size = max(getattr(self.args, 'batch_size', 1), 1)
 		if self.train_data is None:
@@ -168,6 +195,45 @@ class SoftmaxStrategy(object):
 		display_epoch = epoch + 1
 		logger.info(f"[EPOCH {display_epoch}] Train | Loss: {epoch_loss / max(len(src), 1):.4f}")
 		return epoch_loss / max(len(src), 1)
+
+	def _train_1_to_n_epoch(self, epoch):
+		"""1-vs-all softmax: score against the full entity vocabulary each step.
+
+		This matches the training regime used to obtain the reference MRR=0.44
+		results for ComplEx/DistMult on WN18RR. Shuffles triples each epoch and
+		uses ``model.query_all_entities_scores`` when available (avoids an extra
+		torch.cat on the full entity table).
+		"""
+
+		self.model.train()
+		batch_size = max(getattr(self.args, 'batch_size', 1), 1)
+		if self.train_data is None:
+			raise ValueError('SoftmaxStrategy requires train_data to train an epoch')
+		src, rel, dst = self.train_data
+		n = src.size(0)
+
+		perm = torch.randperm(n)
+		src = src[perm].to(self.device)
+		rel = rel[perm].to(self.device)
+		dst = dst[perm].to(self.device)
+
+		epoch_loss = 0.0
+		for ss, rs, ts in self._iter_batches(src, rel, dst, batch_size):
+			if hasattr(self.model, 'query_all_entities_scores'):
+				scores = self.model.query_all_entities_scores(ss, rs)
+			else:
+				q, _, _ = self.model.get_queries_targets(ss, rs, ss)
+				all_ent = self.model.entity_embeddings(device=self.device)
+				scores = torch.mm(q, all_ent.t())
+			loss = F.cross_entropy(scores, ts)
+			self.optimizer.zero_grad()
+			loss.backward()
+			self.optimizer.step()
+			epoch_loss += loss.item() * ss.size(0)
+
+		display_epoch = epoch + 1
+		logger.info(f"[EPOCH {display_epoch}] Train | Loss: {epoch_loss / max(n, 1):.4f}")
+		return epoch_loss / max(n, 1)
 
 	@torch.no_grad()
 	def eval_epoch(self, epoch):
@@ -228,10 +294,14 @@ class SoftmaxStrategy(object):
 		total_start = time.time()
 		for epoch in range(getattr(self.args, 'epochs', 1)):
 			epoch_start = time.time()
+			self.memory_tracker.begin_phase()
 			train_loss = self.train_epoch(epoch)
+			self.memory_tracker.end_phase('train')
 			self.train_time += time.time() - epoch_start
 			eval_start = time.time()
+			self.memory_tracker.begin_phase()
 			metric_dict = self.eval_epoch(epoch)
+			self.memory_tracker.end_phase('eval')
 			self.valid_time += time.time() - eval_start
 			if not metric_dict:
 				metric_dict = {'loss': round(train_loss, 4)}
@@ -253,10 +323,14 @@ class SoftmaxStrategy(object):
 			delete_old_ckt(path_pattern='{}/checkpoint_*.mdl'.format(self.args.output_dir), keep=getattr(self.args, 'max_to_keep', 5))
 
 		self.total_time = time.time() - total_start
+		logger.info('[Memory] Training peak: %s', format_memory(self.memory_tracker.train_peak_mb))
+		logger.info('[Memory] Eval peak: %s', format_memory(self.memory_tracker.eval_peak_mb))
+		logger.info('[Memory] Peak memory: %s', format_memory(self.memory_tracker.peak_memory_mb))
 		return {
 			'best_epoch': None if self.best_metric is None else self.best_metric.get('epoch', 0) + 1,
 			'best_mrr': None if self.best_metric is None else self.best_metric.get('score'),
 			'train_time': self.train_time,
 			'valid_time': self.valid_time,
 			'total_time': self.total_time,
+			**self.memory_tracker.to_dict(),
 		}

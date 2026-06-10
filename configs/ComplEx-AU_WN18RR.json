@@ -17,7 +17,11 @@
 
   "dim": 200,
   "batch_size": 512,
+<<<<<<< HEAD
   "epochs": 100,
+=======
+  "epochs": 1000,
+>>>>>>> 2019e137f06564c5661963e994a26394a4cca8eb
   "lr": 0.001,
   "weight_decay": 0.0001,
 

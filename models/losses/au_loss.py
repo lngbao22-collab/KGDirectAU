@@ -51,6 +51,8 @@ class KGAULoss(nn.Module):
 		tuni=2.0,
 		max_uniformity_samples: int = 1024,
 		additive_margin: float = 0.0,
+		alignment_mode: str = 'cosine',
+		normalize_uniformity: bool = True,
 	):
 		super().__init__()
 		self.gamma_q = _coalesce_float(gamma_q, 1.0)
@@ -62,6 +64,11 @@ class KGAULoss(nn.Module):
 		self.max_uniformity_samples = max_uniformity_samples
 		# InfoNCE additive margin gamma; geometric threshold m = 2 * gamma on squared L2.
 		self.additive_margin = _coalesce_float(additive_margin, 0.0)
+		# `cosine`: L2-normalize paired vectors (DistMult/ComplEx/SimKGC).
+		# `phase_residual`: element-wise squared phase residual without global normalization.
+		# `sin_phase`: pRotatE link-pred term sum_i |sin(theta_q,i - theta_t,i)| (no global normalize).
+		self.alignment_mode = alignment_mode or 'cosine'
+		self.normalize_uniformity = normalize_uniformity
 
 	def alignment_loss(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
 		"""Expected squared L2 distance between paired positive query and target embeddings."""
@@ -70,24 +77,74 @@ class KGAULoss(nn.Module):
 		t = F.normalize(t, p=2, dim=-1)
 		return (q - t).pow(2).sum(dim=-1).mean()
 
-	def _prepare_uniformity_pairs(self, x: torch.Tensor) -> torch.Tensor | None:
-		"""Normalize and subsample embeddings; return squared pairwise L2 distances."""
+	def sin_phase_alignment_loss(self, phase_query: torch.Tensor, phase_target: torch.Tensor) -> torch.Tensor:
+		"""Alignment in native pRotatE geometry: mean sum of |sin(phase residual)| per dimension.
 
-		if x is None:
-			return None
-		if x.size(0) < 2:
+		Matches the penalty inside ``pRotatEEncoder._rotate_score`` (before margin/modulus):
+		minimizing this term raises positive link-prediction scores without cosine normalization.
+		"""
+
+		residual = phase_query - phase_target
+		return torch.abs(torch.sin(residual)).sum(dim=-1).mean()
+
+	def _subsample_uniformity_rows(self, x: torch.Tensor) -> torch.Tensor | None:
+		"""Cap row count before uniformity (entity table or large batches)."""
+
+		if x is None or x.size(0) < 2:
 			return None
 		max_samples = int(getattr(self, 'max_uniformity_samples', 0) or 0)
 		if max_samples > 0 and x.size(0) > max_samples:
 			indices = torch.randperm(x.size(0), device=x.device)[:max_samples]
 			x = x.index_select(0, indices)
-			if x.size(0) < 2:
-				return None
-		x = F.normalize(x, p=2, dim=-1)
-		pairwise = torch.pdist(x, p=2)
-		if pairwise.numel() == 0:
+		return x if x.size(0) >= 2 else None
+
+	def _max_uniformity_pair_count(self, num_rows: int, dim: int) -> int:
+		"""Choose how many pairwise distances to estimate without O(n^2) autograd memory."""
+
+		full_pairs = num_rows * (num_rows - 1) // 2
+		if full_pairs <= 0:
+			return 0
+		max_samples = int(getattr(self, 'max_uniformity_samples', 0) or 0)
+		# `pdist` backward requires O(n^2 * dim) intermediate storage; budget 32 MiB to stay safe
+		# across high-dim AU vectors (e.g. DaBR concatenates two 2000-D vectors → 4000-D).
+		pdist_budget = 32 * 1024 * 1024
+		if num_rows * num_rows * max(dim, 1) * 2 <= pdist_budget:  # assume fp16 (×2 bytes)
+			return full_pairs
+		pair_cap = int(getattr(self, 'max_uniformity_pairs', 0) or 0)
+		if pair_cap <= 0:
+			pair_cap = max(4096, max_samples * 8)
+		return min(full_pairs, pair_cap)
+
+	@staticmethod
+	def _random_pairwise_dist_sq(x: torch.Tensor, num_pairs: int) -> torch.Tensor:
+		"""Monte Carlo squared L2 distances between random row pairs (memory-safe)."""
+
+		n = x.size(0)
+		i = torch.randint(0, n, (num_pairs,), device=x.device)
+		j = torch.randint(0, n, (num_pairs,), device=x.device)
+		same = i == j
+		if same.any():
+			j = torch.where(same, (j + 1) % n, j)
+		return (x[i] - x[j]).pow(2).sum(dim=-1)
+
+	def _prepare_uniformity_pairs(self, x: torch.Tensor) -> torch.Tensor | None:
+		"""Normalize and subsample embeddings; return squared pairwise L2 distances."""
+
+		x = self._subsample_uniformity_rows(x)
+		if x is None:
 			return None
-		return pairwise.pow(2)
+		if self.normalize_uniformity:
+			x = F.normalize(x, p=2, dim=-1)
+		num_pairs = self._max_uniformity_pair_count(x.size(0), x.size(-1))
+		if num_pairs <= 0:
+			return None
+		full_pairs = x.size(0) * (x.size(0) - 1) // 2
+		if num_pairs >= full_pairs:
+			pairwise = torch.pdist(x, p=2)
+			if pairwise.numel() == 0:
+				return None
+			return pairwise.pow(2)
+		return self._random_pairwise_dist_sq(x, num_pairs)
 
 	def uniformity_loss(self, x: torch.Tensor) -> torch.Tensor:
 		"""Uniformity on the unit hypersphere.
@@ -105,6 +162,26 @@ class KGAULoss(nn.Module):
 		# gamma=0.02 -> penalize the closest ~20% of pairs; clamp for stability.
 		return min(0.5, max(0.05, margin * 10.0))
 
+	def _scaled_uniformity_dist_sq(self, dist_sq: torch.Tensor) -> torch.Tensor:
+		"""Map pairwise distances to a stable scale for the Gaussian potential."""
+
+		if self.normalize_uniformity:
+			return dist_sq
+		# Raw phase vectors have O(dim) squared L2 distance; normalize by batch geometry so
+		# `tuni` stays comparable to the unit-sphere case (typically 2-4).
+		scale = dist_sq.median().clamp_min(1e-6)
+		return dist_sq / scale
+
+	@staticmethod
+	def _log_mean_potential(neg_scaled_dist_sq: torch.Tensor) -> torch.Tensor:
+		"""Compute log(mean(exp(-x))) without log(0) underflow or 0/0 NaN gradients."""
+
+		if neg_scaled_dist_sq.numel() == 0:
+			return neg_scaled_dist_sq.new_zeros(())
+		return torch.logsumexp(-neg_scaled_dist_sq, dim=0) - torch.log(
+			neg_scaled_dist_sq.new_tensor(float(neg_scaled_dist_sq.numel()))
+		)
+
 	def uniformity_loss_with_stats(self, x: torch.Tensor) -> tuple[torch.Tensor, float]:
 		"""Return uniformity loss and the fraction of pairs inside the margin buffer (margin mode only)."""
 
@@ -115,19 +192,19 @@ class KGAULoss(nn.Module):
 		dist_sq = self._prepare_uniformity_pairs(x)
 		if dist_sq is None:
 			return x.new_zeros(()), 0.0
+		scaled_dist_sq = self._scaled_uniformity_dist_sq(dist_sq)
 		margin = float(self.additive_margin)
 		if margin <= 0.0:
-			potential = torch.exp(-self.tuni * dist_sq)
-			return potential.mean().log(), 1.0
+			return self._log_mean_potential(self.tuni * scaled_dist_sq), 1.0
 		# Fixed m = 2*gamma is far too small in high dimensions (random pairs have d^2 ~ 2).
 		# Use an adaptive buffer from batch geometry: repel the closest fraction of pairs.
 		target_frac = self._margin_uniformity_fraction(margin)
-		geom_margin = torch.quantile(dist_sq, target_frac)
-		buffer_penalty = torch.exp(self.tuni * F.relu(geom_margin - dist_sq))
+		geom_margin = torch.quantile(scaled_dist_sq, target_frac)
+		buffer_penalty = torch.exp(self.tuni * F.relu(geom_margin - scaled_dist_sq))
 		# Keep classic AU spread so early epochs still have strong uniformity signal.
-		spread = torch.exp(-self.tuni * dist_sq).mean().log()
-		buffer = buffer_penalty.mean().log()
-		active_frac = float((dist_sq < geom_margin).float().mean().item())
+		spread = self._log_mean_potential(self.tuni * scaled_dist_sq)
+		buffer = buffer_penalty.mean().clamp_min(1e-12).log()
+		active_frac = float((scaled_dist_sq < geom_margin).float().mean().item())
 		return spread + buffer, active_frac
 
 	def forward(
@@ -139,27 +216,56 @@ class KGAULoss(nn.Module):
 		q_uni: torch.Tensor | None = None,
 		t_uni: torch.Tensor | None = None,
 		h_uni: torch.Tensor | None = None,
-	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-		"""Return the total AU loss together with alignment and uniformity terms."""
+		external_align: torch.Tensor | None = None,
+		return_stats: bool = False,
+	):
+		"""Return the total AU loss together with alignment and uniformity terms.
 
-		q_norm = F.normalize(q, p=2, dim=-1)
-		t_norm = F.normalize(t, p=2, dim=-1)
-		l_align = self.alignment_loss(q_norm, t_norm)
+		Each uniformity term is computed exactly once. When ``return_stats`` is
+		True, also return the gamma-weighted fraction of query/target pairs that
+		fall inside the margin buffer (only meaningful when ``additive_margin`` > 0).
+		"""
 
-		l_unif = q_norm.new_zeros(())
+		if external_align is not None:
+			l_align = external_align
+		elif self.alignment_mode == 'sin_phase':
+			l_align = self.sin_phase_alignment_loss(q, t)
+		elif self.alignment_mode == 'phase_residual':
+			l_align = (q - t).pow(2).sum(dim=-1).mean()
+		else:
+			l_align = self.alignment_loss(q, t)
+
+		l_unif = q.new_zeros(())
+		active_sum = 0.0
+		active_weight = 0.0
 
 		if self.gamma_q > 0:
-			q_uniformity = q_uni if q_uni is not None else q_norm
-			l_unif = l_unif + self.gamma_q * self.uniformity_loss(q_uniformity)
+			q_uniformity = q_uni if q_uni is not None else q
+			term, frac = self.uniformity_loss_with_stats(q_uniformity)
+			l_unif = l_unif + self.gamma_q * term
+			active_sum += self.gamma_q * frac
+			active_weight += self.gamma_q
 		if self.gamma_t > 0:
-			t_uniformity = t_uni if t_uni is not None else t_norm
-			l_unif = l_unif + self.gamma_t * self.uniformity_loss(t_uniformity)
+			t_uniformity = t_uni if t_uni is not None else t
+			term, frac = self.uniformity_loss_with_stats(t_uniformity)
+			l_unif = l_unif + self.gamma_t * term
+			active_sum += self.gamma_t * frac
+			active_weight += self.gamma_t
 		if h is not None and self.gamma_h > 0:
-			h_uniformity = h_uni if h_uni is not None else F.normalize(h, p=2, dim=-1)
-			l_unif = l_unif + self.gamma_h * self.uniformity_loss(h_uniformity)
+			h_uniformity = h_uni if h_uni is not None else h
+			term, _ = self.uniformity_loss_with_stats(h_uniformity)
+			l_unif = l_unif + self.gamma_h * term
 		if ent is not None and self.gamma_ent > 0:
-			ent_norm = F.normalize(ent, p=2, dim=-1)
-			l_unif = l_unif + self.gamma_ent * self.uniformity_loss(ent_norm)
+			ent_rows = self._subsample_uniformity_rows(ent)
+			if ent_rows is not None:
+				term, _ = self.uniformity_loss_with_stats(ent_rows)
+				l_unif = l_unif + self.gamma_ent * term
 
 		total_loss = l_align + l_unif
+		if return_stats:
+			if float(self.additive_margin) > 0.0 and active_weight > 0:
+				margin_active_frac = active_sum / active_weight
+			else:
+				margin_active_frac = 0.0
+			return total_loss, l_align, l_unif, margin_active_frac
 		return total_loss, l_align, l_unif

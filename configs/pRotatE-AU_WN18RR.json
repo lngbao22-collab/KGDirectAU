@@ -15,19 +15,26 @@
 
   "output_dir_prefix": "logs/pRotatE-AU_WN18RR",
 
-  "dim": 200,
-  "batch_size": 512,
+  "dim": 500,
+  "batch_size": 1024,
   "epochs": 800,
   "lr": 5e-05,
   "weight_decay": 0.0,
 
   "margin": 6.0,
 
-  "adversarial_temperature": 1.0,
-  
+  "alignment_mode": "sin_phase",
+  "normalize_uniformity": false,
+
   "gamma_q": 1.0,
   "gamma_t": 1.0,
   "gamma_h": 1.0,
   "gamma_ent": 1.0,
-  "tuni": 4.0
+  "tuni": 4.0,
+
+  "use_amp": true,
+  "eval_use_amp": true,
+  "score_query_chunk_size": 256,
+  "eval_candidate_chunk_size": 2048,
+  "eval_entity_chunk_size": 4096
 }

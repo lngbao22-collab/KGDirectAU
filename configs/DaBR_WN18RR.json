@@ -15,15 +15,27 @@
 
   "output_dir_prefix": "logs/DaBR_WN18RR",
 
+<<<<<<< HEAD
   "dim": 100,
   "batch_size": 512,
+=======
+  "dim": 500,
+  "n_batches": 100,
+>>>>>>> 2019e137f06564c5661963e994a26394a4cca8eb
   "epochs": 400,
   "lr": 0.1,
 
   "entity_reg_weight": 0.5,
   "relation_reg_weight": 0.01,
-  
-  "eval_every_n_step": 400,
+
+  "monitor_metric": "hit@10",
+  "early_stopping_patience": 10,
+  "epoch_per_eval": 10,
+  "eval_entity_chunk_size": 4096,
+  "eval_distance_chunk_size": 8192,
+  "use_fast_link_prediction": true,
+  "use_amp": true,
+  "compile_eval": true,
   "optim": "adagrad",
   
   "n_sample": 5

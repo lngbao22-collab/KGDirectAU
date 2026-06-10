@@ -64,6 +64,7 @@ class TripletDict:
 		self.path_list = path_list
 		self.relations = set()
 		self.hr2tails = {}
+		self.rt2heads = {}
 		self.triplet_cnt = 0
 
 		for path in self.path_list:
@@ -86,6 +87,12 @@ class TripletDict:
 		else:
 			raise ValueError(f'Unsupported format: {path}')
 
+		for ex in examples:
+			rt_key = (ex['relation'], ex['tail_id'])
+			if rt_key not in self.rt2heads:
+				self.rt2heads[rt_key] = set()
+			self.rt2heads[rt_key].add(ex['head_id'])
+
 		reversed_examples = [
 			{
 				'head_id': ex['tail_id'],
@@ -107,6 +114,11 @@ class TripletDict:
 		"""Given a head entity ID and a relation, return the set of tail entity IDs that are connected to the head via the relation."""
 
 		return self.hr2tails.get((h, r), set())
+
+	def get_heads(self, r: str, t: str) -> set:
+		"""Given a relation and tail entity ID, return known head entities for filtered head prediction."""
+
+		return self.rt2heads.get((r, t), set())
 
 
 class EntityDict:
@@ -385,6 +397,19 @@ class Dataset(torch.utils.data.dataset.Dataset):
 		"""Given an index, return the vectorized representation of the corresponding example."""
 
 		return self.examples[index].vectorize()
+
+
+class PointwiseDataset(torch.utils.data.dataset.Dataset):
+	"""Dataset for embedding models (e.g. DaBR) that only need Example objects, not token ids."""
+
+	def __init__(self, examples):
+		self.examples = examples
+
+	def __len__(self) -> int:
+		return len(self.examples)
+
+	def __getitem__(self, index) -> dict:
+		return {'obj': self.examples[index]}
 
 
 def load_data(path: str, add_forward_triplet: bool = True, add_backward_triplet: bool = True) -> List[Example]:

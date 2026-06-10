@@ -22,8 +22,6 @@
   "weight_decay": 0.0,
 
   "margin": 6.0,
-
-  "adversarial_temperature": 1.0,
   
   "gamma_q": 1.0,
   "gamma_t": 1.0,

@@ -16,8 +16,13 @@
   "output_dir_prefix": "logs/DistMult_WN18RR",
 
   "dim": 200,
+<<<<<<< HEAD
   "batch_size": 512,
   "epochs": 100,
+=======
+  "batch_size": 100,
+  "epochs": 200,
+>>>>>>> 2019e137f06564c5661963e994a26394a4cca8eb
   "lr": 0.001,
   "weight_decay": 0.0001,
   

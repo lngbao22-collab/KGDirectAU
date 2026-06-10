@@ -13,6 +13,7 @@ from data.dataloader import collate
 from utils.checkpoint import save_checkpoint, best_model_path, last_model_path
 from utils.device import report_num_trainable_parameters
 from utils.logger import logger
+from utils.memory import PhaseMemoryTracker, format_memory
 
 
 class Trainer(ABC):
@@ -28,6 +29,7 @@ class Trainer(ABC):
         self.train_time = 0.0
         self.valid_time = 0.0
         self.total_time = 0.0
+        self.memory_tracker = PhaseMemoryTracker()
 
         self._setup_training()
 
@@ -76,7 +78,9 @@ class Trainer(ABC):
 
         for epoch in range(self.args.epochs):
             epoch_train_start = time.time()
+            self.memory_tracker.begin_phase()
             self.train_epoch(epoch)
+            self.memory_tracker.end_phase('train')
             self.train_time += time.time() - epoch_train_start
             self._run_eval(epoch=epoch)
 
@@ -84,6 +88,9 @@ class Trainer(ABC):
         logger.info(f"[Timing] Training time (s): {round(self.train_time, 2)}")
         logger.info(f"[Timing] Valid time (s): {round(self.valid_time, 2)}")
         logger.info(f"[Timing] Total run time (s): {round(self.total_time, 2)}")
+        logger.info('[Memory] Training peak: %s', format_memory(self.memory_tracker.train_peak_mb))
+        logger.info('[Memory] Eval peak: %s', format_memory(self.memory_tracker.eval_peak_mb))
+        logger.info('[Memory] Peak memory: %s', format_memory(self.memory_tracker.peak_memory_mb))
 
         return {
             'best_epoch': None if self.best_metric is None else self.best_metric.get('epoch'),
@@ -92,6 +99,7 @@ class Trainer(ABC):
             'valid_time': self.valid_time,
             'total_time': self.total_time,
             'best_checkpoint_path': self.best_checkpoint_path,
+            **self.memory_tracker.to_dict(),
         }
 
     @abstractmethod
@@ -109,7 +117,9 @@ class Trainer(ABC):
         """Run evaluation and handle checkpointing based on the results."""
 
         eval_start = time.time()
+        self.memory_tracker.begin_phase()
         metric_dict = self.eval_epoch(epoch)
+        self.memory_tracker.end_phase('eval')
         self.valid_time += time.time() - eval_start
         monitor_value = self._extract_monitor_value(metric_dict)
         is_best = monitor_value is not None and (self.best_metric is None or monitor_value > self.best_metric.get('score', float('-inf')))

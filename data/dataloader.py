@@ -72,3 +72,9 @@ def collate(batch_data: List[dict]) -> dict:
 	}
 
 	return batch_dict
+
+
+def collate_pointwise(batch_data: List[dict]) -> dict:
+	"""Collate embedding-based pointwise batches without text tokenization."""
+
+	return {'batch_data': [ex['obj'] for ex in batch_data]}

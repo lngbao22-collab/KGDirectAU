@@ -82,6 +82,32 @@ class FilteredSubsampler:
                 )
         return torch.tensor([self._normalize_triple(t) for t in batch_triples], dtype=torch.long)
 
+    def _subsampling_weights(self, head: np.ndarray, relation: np.ndarray, tail: np.ndarray) -> torch.Tensor:
+        """Compute sqrt-inverse-frequency subsampling weights for a batch."""
+
+        weights = np.empty(head.shape[0], dtype=np.float64)
+        for idx, (h, r, t) in enumerate(zip(head, relation, tail)):
+            weights[idx] = self.count.get((int(h), int(r)), 4) + self.count.get((int(t), -int(r) - 1), 4)
+        return torch.from_numpy(np.sqrt(1.0 / weights)).float()
+
+    def _sample_filtered_negatives_row(self, key: tuple[int, int], filter_dict: dict, oversample: int) -> np.ndarray:
+        """Draw filtered negatives for one row, resampling only when the first pass is short."""
+
+        blocked = filter_dict.get(key, np.array([], dtype=np.int64))
+        collected = []
+        remaining = self.num_negatives
+        attempts = 0
+        while remaining > 0 and attempts < 4:
+            candidate = np.random.randint(self.nentity, size=max(oversample, remaining * 2))
+            valid = candidate[~np.isin(candidate, blocked, assume_unique=True)]
+            if valid.size:
+                collected.append(valid)
+                remaining -= valid.size
+            attempts += 1
+        if not collected:
+            return np.random.randint(self.nentity, size=self.num_negatives)
+        return np.concatenate(collected)[: self.num_negatives]
+
     def sample(self, batch_triples, mode: str) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, str]:
         """Sample filtered negatives and subsampling weights for a batch.
 
@@ -95,30 +121,17 @@ class FilteredSubsampler:
         relation = positive_sample[:, 1].cpu().numpy()
         tail = positive_sample[:, 2].cpu().numpy()
 
-        subsampling_weight = []
-        for h, r, t in zip(head, relation, tail):
-            weight = self.count[(int(h), int(r))] + self.count[(int(t), -int(r) - 1)]
-            subsampling_weight.append(weight)
-        subsampling_weight = torch.sqrt(1.0 / torch.tensor(subsampling_weight, dtype=torch.float))
+        subsampling_weight = self._subsampling_weights(head, relation, tail)
+        oversample = max(self.num_negatives * 2, 64)
+        negative_rows = []
+        if mode == "head-batch":
+            for r, t in zip(relation, tail):
+                negative_rows.append(self._sample_filtered_negatives_row((int(r), int(t)), self.true_head, oversample))
+        elif mode == "tail-batch":
+            for h, r in zip(head, relation):
+                negative_rows.append(self._sample_filtered_negatives_row((int(h), int(r)), self.true_tail, oversample))
+        else:
+            raise ValueError(f"Training batch mode {mode} not supported")
 
-        negative_samples = []
-        for h, r, t in zip(head, relation, tail):
-            negative_sample_list = []
-            negative_sample_size = 0
-            while negative_sample_size < self.num_negatives:
-                candidate = np.random.randint(self.nentity, size=self.num_negatives * 2)
-                if mode == "head-batch":
-                    mask = np.isin(candidate, self.true_head.get((int(r), int(t)), np.array([], dtype=np.int64)), assume_unique=True, invert=True)
-                elif mode == "tail-batch":
-                    mask = np.isin(candidate, self.true_tail.get((int(h), int(r)), np.array([], dtype=np.int64)), assume_unique=True, invert=True)
-                else:
-                    raise ValueError(f"Training batch mode {mode} not supported")
-                candidate = candidate[mask]
-                negative_sample_list.append(candidate)
-                negative_sample_size += candidate.size
-
-            negative_sample = np.concatenate(negative_sample_list)[: self.num_negatives]
-            negative_samples.append(torch.LongTensor(negative_sample))
-
-        negative_sample = torch.stack(negative_samples, dim=0)
+        negative_sample = torch.from_numpy(np.stack(negative_rows, axis=0)).long()
         return positive_sample, negative_sample, subsampling_weight, mode

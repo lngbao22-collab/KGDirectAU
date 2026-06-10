@@ -104,6 +104,12 @@ By default, the script reads from `data/<dataset>/` and writes the processed fil
 ## DistMult
 python main.py --config-path configs/DistMult_WN18RR.json
 
+## DistMult-Adversarial (RotatE-repo training: filtered negatives + adversarial BCE)
+python main.py --config-path configs/DistMult-Adversarial_WN18RR.json
+
+## DistMult-Adversarial-AU (same encoder scale as adversarial; AU loss instead of BCE)
+python main.py --config-path configs/DistMult-Adversarial-AU_WN18RR.json
+
 ## DistMult-AU
 python main.py --config-path configs/DistMult-AU_WN18RR.json
 
@@ -203,6 +209,8 @@ This repository uses a modular, component-driven architecture. Each experiment i
 | Model | Encoder (`models/encoders/`) | Loss (`models/losses/`) | Sampler (`models/samplers/`) | Strategy (`models/strategies/`) |
 | :--- | :--- | :--- | :--- | :--- |
 | **DistMult** | `distmult_encoder.py` | `infonce_loss.py` | `bernoulli_sampler.py` | `softmax_strategy.py` |
+| **DistMult-Adversarial** | `distmult_encoder.py` | `adversarial_bce_loss.py` | `filtered_1_to_n_sampler.py` | `adversarial_strategy.py` |
+| **DistMult-Adversarial-AU** | `distmult_encoder.py` | `au_loss.py` | *(None)* | `kgau_strategy.py` |
 | **ComplEx** | `complex_encoder.py` | `infonce_loss.py` | `bernoulli_sampler.py` | `softmax_strategy.py` |
 | **DaBR** | `dabr_encoder.py` | `pointwise_logistic_loss.py`| `uniform_pointwise_sampler.py` | `pointwise_strategy.py` |
 | **RotatE** | `rotate_encoder.py` | `adversarial_bce_loss.py` | `filtered_1_to_n_sampler.py`| `adversarial_strategy.py` |

@@ -1,6 +1,6 @@
 {
-  "model": "DaBR-AU",
-  "model_encoder_path": "models/encoders/dabr_encoder.py",
+  "model": "DistMult-Adversarial-AU",
+  "model_encoder_path": "models/encoders/distmult_encoder.py",
   "model_loss_path": "models/losses/au_loss.py",
   "model_sampler_path": "",
   "model_strategy_path": "models/strategies/kgau_strategy.py",
@@ -13,32 +13,26 @@
   "valid_w_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
   "test_w_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
 
-  "output_dir_prefix": "logs/DaBR-AU_WN18RR",
+  "output_dir_prefix": "logs/DistMult-Adversarial-AU_WN18RR",
 
-  "dim": 500,
-  "batch_size": 512,
-  "max_uniformity_samples": 512,
-  "epochs": 100,
-  "optim": "adagrad",
-  "lr": 0.1,
+  "adversarial_training": true,
+
+  "dim": 1000,
+  "batch_size": 1024,
+  "epochs": 471,
+  "lr": 0.002,
   "weight_decay": 0.0,
-  
-  "epoch_per_eval": 1,
-  "eval_entity_chunk_size": 4096,
-  "eval_distance_chunk_size": 8192,
-  "use_fast_link_prediction": true,
-  "use_amp": true,
-  "compile_eval": true,
+  "regularization": 0.000005,
+
+  "margin": 200.0,
+
+  "normalize_lp_scores": true,
 
   "gamma_q": 1.0,
   "gamma_t": 1.0,
-<<<<<<< HEAD
-  "gamma_h": 1.0,
-  "gamma_ent": 1.0,
-  "tuni": 4.0
-=======
   "gamma_h": 0.0,
   "gamma_ent": 0.0,
-  "tuni": 2.0
->>>>>>> 2019e137f06564c5661963e994a26394a4cca8eb
+  "tuni": 2.0,
+
+  "early_stopping_patience": 10
 }

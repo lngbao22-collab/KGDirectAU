@@ -144,6 +144,24 @@ def get_link_graph() -> 'LinkGraph':
     return link_graph
 
 
+def init_dataloader_worker(_worker_id: int = 0) -> None:
+    """Pre-load read-only caches in DataLoader worker processes (spawn-safe)."""
+
+    _init_entity_dict()
+    _init_train_triplet_dict()
+    if getattr(args, 'use_link_graph', False):
+        _init_link_graph()
+
+
+def warmup_data_structures() -> None:
+    """Eagerly load shared data structures in the main training process."""
+
+    _init_entity_dict()
+    _init_train_triplet_dict()
+    if getattr(args, 'use_link_graph', False):
+        _init_link_graph()
+
+
 def build_tokenizer(args) -> None:
     """Build the tokenizer from the specified pretrained model, caching it for future use."""
 

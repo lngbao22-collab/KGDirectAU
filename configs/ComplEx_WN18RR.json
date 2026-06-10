@@ -16,12 +16,12 @@
   "output_dir_prefix": "logs/ComplEx_WN18RR",
 
   "dim": 200,
-  "batch_size": 512, 
-  "epochs": 100,
+  "batch_size": 512,
+  "epochs": 1000,
   "lr": 0.001,
   "weight_decay": 0.0001,
 
   "normalize_lp_scores": false,
-  
+
   "n_sample": 100
 }
