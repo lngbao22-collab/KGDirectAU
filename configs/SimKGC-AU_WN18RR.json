@@ -28,7 +28,6 @@
   "pre_batch": 0,
   "workers": 2,
 
-  "infonce_t": 0.05,
 
   "is_test": false,
 
@@ -50,9 +49,9 @@
 
   "seed": null,
 
-  "gamma_q": 1.0,
-  "gamma_t": 1.0,
-  "gamma_h": 1.0,
-  "gamma_ent": 1.0,
+  "gamma_q": 0.5,
+  "gamma_t": 0.5,
+  "gamma_h": 0.5,
+  "gamma_ent": 0.5,
   "tuni": 4.0
 }
