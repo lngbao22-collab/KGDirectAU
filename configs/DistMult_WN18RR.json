@@ -1,10 +1,10 @@
 {
   "model": "DistMult",
-  "model_encoder_path": "models/scorers/distmult_scorer.py",
+  "model_embedder_path": "models/embedders/lookup_embedder.py",
+  "model_scorer_path": "models/scorers/distmult_scorer.py",
   "model_loss_path": "models/losses/infonce_loss.py",
   "model_sampler_path": "models/samplers/bernoulli_sampler.py",
-  "model_strategy_path": "models/strategies/softmax_strategy.py",
-
+  "model_strategy_path": "models/strategies/1vsall_strategy.py",
   "dataset": "WN18RR",
   "task": "both",
   "train_path": "data/WN18RR/preprocessed/train.txt.json",
@@ -12,21 +12,14 @@
   "test_path": "data/WN18RR/preprocessed/test.txt.json",
   "valid_w_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
   "test_w_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
-
   "output_dir_prefix": "logs/DistMult_WN18RR",
-
   "dim": 200,
-<<<<<<< HEAD
-  "batch_size": 512,
-  "epochs": 100,
-=======
-  "batch_size": 100,
-  "epochs": 200,
->>>>>>> 2019e137f06564c5661963e994a26394a4cca8eb
   "lr": 0.001,
   "weight_decay": 0.0001,
-  
-  "normalize_lp_scores": false,
-  
+  "epochs": 100,
+  "batch_size": 100,
+  "pre_batch": 20,
+  "eval_every_n_step": 50,
+  "sample_freq": 1,
   "n_sample": 100
 }

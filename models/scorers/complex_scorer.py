@@ -6,9 +6,7 @@ import torch
 import torch.nn as nn
 
 
-def build_model(args) -> nn.Module:
-	"""Factory helper kept for compatibility with the model loader."""
-
+def build_scorer(args) -> ComplExScorer:
 	return ComplExScorer(args)
 
 
@@ -45,7 +43,7 @@ class ComplExScorer(nn.Module):
 		query_im = h_re * r_im + h_im * r_re
 		return torch.mm(query_re, t_re.t()) + torch.mm(query_im, t_im.t())
 
-	def forward(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-		"""Alias for score_spo to keep the module callable."""
-
-		return self.score_spo(h_emb, r_emb, t_emb)
+	def build_query(self, h_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
+		h_re, h_im = self._split_complex(h_emb)
+		r_re, r_im = self._split_complex(r_emb)
+		return torch.cat([h_re * r_re - h_im * r_im, h_re * r_im + h_im * r_re], dim=-1)

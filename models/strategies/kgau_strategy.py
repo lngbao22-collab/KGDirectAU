@@ -25,18 +25,16 @@ from models.losses.au_loss import KGAULoss, distinct_first_indices, select_disti
 
 
 def _load_encoder(args) -> torch.nn.Module:
-	"""Factory helper used by the evaluator to rebuild the model from checkpoints."""
+	from models.builder import build_model
 
-	encoder_path = getattr(args, 'model_encoder_path', '') or 'models/scorers/distmult_scorer.py'
-	build_model = load_attr_from_path(encoder_path, 'build_model')
 	return build_model(args)
 
 
 def _uses_text_inputs(args) -> bool:
-	"""Return True when the configured encoder consumes tokenized text inputs."""
-
-	encoder_path = getattr(args, 'model_encoder_path', '') or ''
-	return os.path.basename(encoder_path) == 'bert_encoder.py'
+	if 'simkgc' in str(getattr(args, 'model', '') or '').lower():
+		return True
+	scorer_path = str(getattr(args, 'model_scorer_path', '') or getattr(args, 'model_encoder_path', '') or '')
+	return os.path.basename(scorer_path) in {'bert_encoder.py', 'simkgc_scorer.py'}
 
 
 def _config_float(args, name: str, default: float) -> float:
@@ -47,11 +45,13 @@ def _config_float(args, name: str, default: float) -> float:
 
 
 def _is_dabr_encoder(args) -> bool:
-	"""Return True when the configured encoder is DaBR (or DaBR-AU)."""
+	"""Return True when the configured model is DaBR (or DaBR-AU)."""
 
-	encoder_path = str(getattr(args, 'model_encoder_path', '') or '').lower()
+	scorer_path = str(
+		getattr(args, 'model_scorer_path', '') or getattr(args, 'model_encoder_path', '') or ''
+	).lower()
 	model_name = str(getattr(args, 'model', '') or '').lower()
-	return 'dabr' in encoder_path or 'dabr' in model_name
+	return 'dabr' in scorer_path or 'dabr' in model_name
 
 
 def _add_inverse_relations(relation_to_idx: dict[str, int]) -> dict[str, int]:
@@ -133,11 +133,11 @@ def _entity_embeddings_call_kwargs(model, device: torch.device, criterion: KGAUL
 class KGAUStrategy(Evaluator):
 	"""Knowledge Graph Alignment and Uniformity training loop for KG encoders."""
 
-	def __init__(self, args, ngpus_per_node):
+	def __init__(self, model, sampler, loss_fn, args, ngpus_per_node=1, **_kwargs):
+		del sampler, loss_fn
 		super().__init__(args)
 		self.ngpus_per_node = ngpus_per_node
 		self.uses_text_inputs = _uses_text_inputs(args)
-		# Inverse triplets (reverse_triplet) are only used by text encoders (e.g. SimKGC/BERT).
 		add_backward_triplet = self.uses_text_inputs
 		self.train_examples = load_data(
 			args.train_path, add_forward_triplet=True, add_backward_triplet=add_backward_triplet)
@@ -146,7 +146,7 @@ class KGAUStrategy(Evaluator):
 			len(self.train_examples), add_backward_triplet,
 		)
 		self.entity_dict = get_entity_dict()
-		self.model = _load_encoder(args)
+		self.model = model if model is not None else _load_encoder(args)
 		logger.info(self.model)
 		self.relation_to_idx = _build_relation_to_idx()
 		if not self.uses_text_inputs:
@@ -481,6 +481,27 @@ class KGAUStrategy(Evaluator):
 			model, ss, rs, ts, use_amp, n_uq_log, n_ut_log, total, micro_batch,
 		)
 
+	def _au_representation_batch(
+		self,
+		model,
+		ss: torch.Tensor,
+		rs: torch.Tensor,
+		ts: torch.Tensor,
+	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+		"""Fetch AU vectors via decoupled embedders and optional scorer query builder."""
+
+		h_emb = model.embed_s(ss)
+		r_emb = model.embed_p(rs)
+		t_emb = model.embed_o(ts)
+		scorer = model.get_scorer()
+		if hasattr(scorer, 'build_query'):
+			try:
+				q_emb = scorer.build_query(h_emb, r_emb)
+				return q_emb, t_emb, h_emb
+			except NotImplementedError:
+				pass
+		return model.get_queries_targets(ss, rs, ts)
+
 	def _train_au_tensor_batch_single(
 		self,
 		model,
@@ -498,7 +519,7 @@ class KGAUStrategy(Evaluator):
 		q_keys, t_keys, h_keys = self._uniformity_keys(ss, rs, ts)
 		if use_amp:
 			with torch.amp.autocast(device_type='cuda'):
-				q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
+				q_raw, t_raw, h_raw = self._au_representation_batch(model, ss, rs, ts)
 				ent_raw = self._entity_uniformity_vectors_for_loss(
 					model, h_raw, t_raw, h_keys, t_keys)
 				loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
@@ -509,7 +530,7 @@ class KGAUStrategy(Evaluator):
 			self.scaler.step(self.optimizer)
 			self.scaler.update()
 		else:
-			q_raw, t_raw, h_raw = model.get_queries_targets(ss, rs, ts)
+			q_raw, t_raw, h_raw = self._au_representation_batch(model, ss, rs, ts)
 			ent_raw = self._entity_uniformity_vectors_for_loss(
 				model, h_raw, t_raw, h_keys, t_keys)
 			loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
@@ -546,14 +567,16 @@ class KGAUStrategy(Evaluator):
 			q_keys, t_keys, h_keys = self._uniformity_keys(ss[start:end], rs[start:end], ts[start:end])
 			if use_amp:
 				with torch.amp.autocast(device_type='cuda'):
-					q_raw, t_raw, h_raw = model.get_queries_targets(ss[start:end], rs[start:end], ts[start:end])
+					q_raw, t_raw, h_raw = self._au_representation_batch(
+						model, ss[start:end], rs[start:end], ts[start:end])
 					ent_raw = self._entity_uniformity_vectors_for_loss(
 						model, h_raw, t_raw, h_keys, t_keys)
 					loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
 						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 				self._backward_au_loss(loss, fraction, use_amp=True)
 			else:
-				q_raw, t_raw, h_raw = model.get_queries_targets(ss[start:end], rs[start:end], ts[start:end])
+				q_raw, t_raw, h_raw = self._au_representation_batch(
+					model, ss[start:end], rs[start:end], ts[start:end])
 				ent_raw = self._entity_uniformity_vectors_for_loss(
 					model, h_raw, t_raw, h_keys, t_keys)
 				loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(

@@ -1,10 +1,10 @@
 {
   "model": "SimKGC",
-  "model_encoder_path": "models/encoders/bert_encoder.py",
+  "model_embedder_path": "models/embedders/text_embedder.py",
+  "model_scorer_path": "models/scorers/simkgc_scorer.py",
   "model_loss_path": "models/losses/infonce_loss.py",
   "model_sampler_path": "models/samplers/masking_sampler.py",
-  "model_strategy_path": "models/strategies/contrastive_strategy.py",
-
+  "model_strategy_path": "models/strategies/inbatch_strategy.py",
   "dataset": "WN18RR",
   "task": "both",
   "train_path": "data/WN18RR/preprocessed/train.txt.json",
@@ -12,41 +12,31 @@
   "test_path": "data/WN18RR/preprocessed/test.txt.json",
   "valid_w_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
   "test_w_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
-
   "output_dir_prefix": "logs/SimKGC_WN18RR",
-
   "dim": 768,
   "batch_size": 512,
   "epochs": 50,
   "lr": 5e-05,
-
   "bert_encoder": "distilbert-base-uncased",
   "additive_margin": 0.02,
   "finetune_t": true,
   "pooling": "mean",
   "pre_batch": 0,
   "workers": 2,
-
   "infonce_t": 0.05,
-
   "is_test": false,
-
   "pre_batch_weight": 0.5,
   "eval_every_n_step": 10000,
   "print_freq": 20,
   "grad_clip": 10.0,
   "use_amp": true,
   "use_self_negative": false,
-
   "max_num_tokens": 50,
   "use_link_graph": true,
   "max_to_keep": 3,
-
   "lr_scheduler": "linear",
   "warmup": 400,
-
   "neighbor_weight": 0.0,
   "rerank_n_hop": 2,
-
   "seed": null
 }

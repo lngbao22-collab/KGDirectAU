@@ -24,8 +24,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument('--model', default='simkgc', type=str,
                         help='model family name, e.g. simkgc, transe, transd, rotate')
+    parser.add_argument('--model-embedder-path', default='', type=str,
+                        help='path to embedder module, e.g. models/embedders/lookup_embedder.py')
+    parser.add_argument('--model-scorer-path', default='', type=str,
+                        help='path to scorer module, e.g. models/scorers/distmult_scorer.py')
     parser.add_argument('--model-encoder-path', default='', type=str,
-                        help='path to encoder module, e.g. models/encoders/bert_encoder.py')
+                        help='(legacy) alias for model_scorer_path when embedder/scorer are not split')
     parser.add_argument('--model-loss-path', default='', type=str,
                         help='path to loss module, e.g. models/losses/infonce_loss.py')
     parser.add_argument('--model-sampler-path', default='', type=str,
@@ -68,6 +72,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help='mini-batch size')
     parser.add_argument('--dim', default=768, type=int,
                         help='embedding dimension for non-text KG models')
+    parser.add_argument('--dropout', default=0.1, type=float,
+                        help='dropout rate')
     parser.add_argument('--epochs', default=10, type=int,
                         help='number of epochs to run')
     parser.add_argument('--eval-every-n-step', default=10000, type=int,
@@ -84,7 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help='learning-rate scheduler')
     parser.add_argument('--max-num-tokens', default=50, type=int,
                         help='maximum number of tokens for text-based models')
-    parser.add_argument('--max-uniformity-samples', '--max_uniformity_samples', default=1024, type=int,
+    parser.add_argument('--max-uniformity-samples', default=1024, type=int,
                         help='maximum number of embeddings used to estimate the AU uniformity term')
     parser.add_argument('--max-to-keep', default=5, type=int,
                         help='maximum number of checkpoints to keep')
@@ -118,66 +124,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help='warmup steps')
 
     # Softmax / Bernoulli negative-sampling (DistMult, ComplEx, etc.).
-    parser.add_argument('--epoch-per-eval', '--epoch_per_eval', default=None, type=int,
-                        help='evaluate on validation every N epochs (0 = every epoch)')
-    parser.add_argument('--eval-entity-chunk-size', '--eval_entity_chunk_size', default=None, type=int,
-                        help='entity chunk size for DaBR-style full link-prediction eval')
-    parser.add_argument('--score-query-chunk-size', '--score_query_chunk_size', default=None, type=int,
-                        help='query chunk size inside DaBR score_batch during eval')
-    parser.add_argument('--eval-candidate-chunk-size', '--eval_candidate_chunk_size', default=None, type=int,
-                        help='candidate sub-chunk size for DaBR link-prediction scoring (limits Q×C memory)')
-    parser.add_argument('--eval-distance-chunk-size', '--eval_distance_chunk_size', default=None, type=int,
-                        help='entity chunk size for DaBR fast eval distance term')
-    parser.add_argument('--eval-distance-query-chunk-size', '--eval_distance_query_chunk_size', default=None, type=int,
-                        help='query micro-batch size for DaBR fast eval distance term (limits Q×C memory)')
-    parser.add_argument('--use-fast-link-prediction', '--use_fast_link_prediction', default=None,
-                        type=lambda value: str(value).lower() in {'1', 'true', 'yes', 'y'},
-                        help='use relation-grouped fast DaBR link-prediction eval')
-    parser.add_argument('--eval-use-amp', '--eval_use_amp', default=None,
-                        type=lambda value: str(value).lower() in {'1', 'true', 'yes', 'y'},
-                        help='use CUDA autocast for DaBR link-prediction eval (defaults to use_amp when unset)')
-    parser.add_argument('--compile-eval', '--compile_eval', default=None,
-                        type=lambda value: str(value).lower() in {'1', 'true', 'yes', 'y'},
-                        help='torch.compile DaBR link-prediction scoring kernels (first eval warms up)')
     parser.add_argument('--sample-freq', '--sample_freq', default=None, type=int,
                         help='negative sampling frequency')
     parser.add_argument('-ns', '--n-sample', '--n_sample', default=None, type=int,
                         help='number of negative samples per positive')
-    parser.add_argument('--n-batches', '--n_batches', default=None, type=int, dest='n_batches',
-                        help='number of batches per epoch; batch_size = train_total // n_batches (DaBR pointwise, overrides batch_size)')
-    parser.add_argument('--early-stopping-patience', '--early_stopping_patience', default=None, type=int,
-                        dest='early_stopping_patience',
-                        help='stop after this many validation evaluations without monitor_metric improvement (pointwise/adversarial/KGAU)')
-    parser.add_argument('--monitor-metric', '--monitor_metric', default=None, type=str, dest='monitor_metric',
-                        help='validation metric for checkpointing/early stopping in pointwise strategy (default mrr; DaBR paper uses hit@10)')
-
-    # RotatE / pRotatE adversarial training (adversarial_strategy.py).
-    parser.add_argument('--margin', default=None, type=float,
-                        help='fixed margin for distance-based adversarial models; also sets DistMult adversarial init range')
-    parser.add_argument('--adversarial-training', '--adversarial_training', default=None,
-                        type=lambda value: str(value).lower() in {'1', 'true', 'yes', 'y'},
-                        dest='adversarial_training',
-                        help='use RotatE-repo adversarial BCE training (DistMult/ComplEx encoders)')
-    parser.add_argument('--regularization', default=None, type=float,
-                        help='L3 embedding regularization for adversarial DistMult/ComplEx training')
-    parser.add_argument('--adversarial-temperature', '--adversarial_temperature', default=None, type=float,
-                        dest='adversarial_temperature',
-                        help='self-adversarial negative-sampling temperature')
-    parser.add_argument('--max-steps', '--max_steps', default=None, type=int,
-                        help='maximum training steps for adversarial strategy (optional cap)')
-    parser.add_argument('--warm-up-steps', '--warm_up_steps', default=None, type=int,
-                        help='global step at which adversarial strategy decays learning rate')
-    parser.add_argument('--lr-decay-factor', '--lr_decay_factor', default=None, type=float,
-                        help='multiplicative learning-rate decay factor for adversarial strategy')
-    parser.add_argument('--shuffle-train', '--shuffle_train', default=None,
-                        type=lambda value: str(value).lower() in {'1', 'true', 'yes', 'y'},
-                        help='shuffle training triples each epoch in adversarial strategy')
     parser.add_argument('--lam', default=None, type=float,
                         help='L2 regularization strength (kgau/softmax; overrides weight_decay when set)')
-    parser.add_argument('--entity-reg-weight', '--entity_reg_weight', default=None, type=float, dest='entity_reg_weight',
-                        help='DaBR regularization weight for entity embeddings')
-    parser.add_argument('--relation-reg-weight', '--relation_reg_weight', default=None, type=float, dest='relation_reg_weight',
-                        help='DaBR regularization weight for relation embeddings')
 
     # KGAU alignment-uniformity hyperparameters (DistMult-AU, ComplEx-AU, etc.).
     parser.add_argument('--gamma-q', '--gamma_q', default=None, type=float,
@@ -190,11 +142,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help='uniformity weight for all entity embeddings')
     parser.add_argument('--tuni', default=None, type=float,
                         help='AU uniformity temperature (Gaussian potential scale)')
-    parser.add_argument('--alignment-mode', '--alignment_mode', default=None, type=str, dest='alignment_mode',
-                        help='KGAU alignment: cosine (default), sin_phase (pRotatE-AU), or phase_residual')
-    parser.add_argument('--normalize-uniformity', '--normalize_uniformity', default=None,
-                        dest='normalize_uniformity', action=argparse.BooleanOptionalAction,
-                        help='L2-normalize vectors before AU uniformity (default true except phase_residual)')
     normalize_group = parser.add_mutually_exclusive_group()
     normalize_group.add_argument(
         '--normalize-lp-scores', '--normalize_lp_scores',
@@ -307,13 +254,7 @@ def _load_json_defaults(path: str) -> Dict[str, Any]:
     if not path or not os.path.exists(path):
         return {}
     with open(path, 'r', encoding='utf-8') as f:
-        try:
-            raw = f.read().strip()
-            if not raw:
-                return {}
-            cfg = json.loads(raw)
-        except json.JSONDecodeError:
-            return {}
+        cfg = json.load(f)
     if not isinstance(cfg, dict):
         raise ValueError(f'Config file must contain a JSON object: {path}')
     return cfg
@@ -408,7 +349,7 @@ def _cuda_unavailable_reason() -> str:
     """Return a human-readable reason when CUDA is unavailable in the current Python env."""
 
     torch_cuda = getattr(torch.version, 'cuda', None)
-    torch_version = getattr(torch, '__version__', 'unknown')
+    torch_version = getattr(torch, '_version_', 'unknown')
     executable = sys.executable
 
     if not torch_cuda:
@@ -473,24 +414,6 @@ for _name, _default in (('gamma_h', 0.0), ('gamma_ent', 0.0)):
     if getattr(args, _name, None) is None:
         setattr(args, _name, _default)
 
-# Normalize legacy DaBR regularization names to the explicit variants used by the strategy.
-if getattr(args, 'entity_reg_weight', None) is None:
-    for _legacy_name in ('lmbda', 'lam'):
-        _legacy_value = getattr(args, _legacy_name, None)
-        if _legacy_value is not None:
-            args.entity_reg_weight = _legacy_value
-            break
-if getattr(args, 'relation_reg_weight', None) is None:
-    for _legacy_name in ('lmbda_two', 'lmbda2'):
-        _legacy_value = getattr(args, _legacy_name, None)
-        if _legacy_value is not None:
-            args.relation_reg_weight = _legacy_value
-            break
-
-# DaBR paper selects the test model by validation Hit@10.
-if getattr(args, 'monitor_metric', None) is None and (args.model or '').lower() == 'dabr':
-    args.monitor_metric = 'hit@10'
-
 args.train_path = _resolve_data_path(getattr(args, 'train_path', ''))
 args.valid_path = _resolve_data_path(_derive_split_variant(getattr(args, 'valid_path', ''), split_name='valid', labeled=False))
 args.test_path = _resolve_data_path(_derive_split_variant(getattr(args, 'test_path', ''), split_name='test', labeled=False))
@@ -509,11 +432,7 @@ assert args.lr_scheduler in ['linear', 'cosine']
 args.config_path = config_path
 
 _model_name = (args.model or '').lower()
-_NON_TEXT_MODELS = frozenset({
-    'distmult', 'distmult-au', 'complex', 'complex-au', 'dabr', 'dabr-au',
-    'rotate', 'rotate-au', 'protate', 'protate-au',
-})
-_is_text_model = _model_name not in _NON_TEXT_MODELS
+_is_text_model = _model_name not in {'distmult', 'distmult-au', 'complex', 'complex-au', 'dabr', 'dabr-au'}
 
 if _is_text_model:
     args.encoder = args.bert_encoder
@@ -525,9 +444,9 @@ else:
 
 if not args.model_strategy_path:
     if _model_name in {'distmult', 'distmult-au', 'complex', 'complex-au', 'dabr', 'dabr-au'}:
-        args.model_strategy_path = 'models/strategies/softmax_strategy.py'
+        args.model_strategy_path = 'models/strategies/1vsall_strategy.py'
     else:
-        args.model_strategy_path = 'models/strategies/simkgc_strategy.py'
+        args.model_strategy_path = 'models/strategies/inbatch_strategy.py'
 
 if not args.model_encoder_path:
     if _model_name == 'distmult':
@@ -542,8 +461,23 @@ if not args.model_encoder_path:
         args.model_encoder_path = 'models/scorers/dabr_scorer.py'
     elif _model_name == 'dabr-au':
         args.model_encoder_path = 'models/scorers/dabr_scorer.py'
+    elif _model_name == 'rotate':
+        args.model_encoder_path = 'models/scorers/rotate_scorer.py'
+    elif _model_name == 'rotate-au':
+        args.model_encoder_path = 'models/scorers/rotate_scorer.py'
+    elif _model_name in {'protate', 'protate-au'}:
+        args.model_encoder_path = 'models/scorers/protate_scorer.py'
     else:
-        args.model_encoder_path = 'models/encoders/bert_encoder.py'
+        args.model_encoder_path = 'models/scorers/simkgc_scorer.py'
+
+if not args.model_scorer_path:
+    args.model_scorer_path = args.model_encoder_path
+
+if not args.model_embedder_path:
+    if 'simkgc' in _model_name:
+        args.model_embedder_path = 'models/embedders/text_embedder.py'
+    else:
+        args.model_embedder_path = 'models/embedders/lookup_embedder.py'
 
 if not args.model_sampler_path:
     if _model_name in {'distmult', 'distmult-au', 'complex', 'complex-au', 'dabr', 'dabr-au'}:

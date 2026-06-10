@@ -1,10 +1,10 @@
 {
   "model": "DistMult-Adversarial",
-  "model_encoder_path": "models/scorers/distmult_scorer.py",
+  "model_embedder_path": "models/embedders/lookup_embedder.py",
+  "model_scorer_path": "models/scorers/distmult_scorer.py",
   "model_loss_path": "models/losses/adversarial_bce_loss.py",
   "model_sampler_path": "models/samplers/filtered_1_to_n_sampler.py",
-  "model_strategy_path": "models/strategies/adversarial_strategy.py",
-
+  "model_strategy_path": "models/strategies/negsamp_strategy.py",
   "dataset": "WN18RR",
   "task": "both",
   "train_path": "data/WN18RR/preprocessed/train.txt.json",
@@ -12,24 +12,18 @@
   "test_path": "data/WN18RR/preprocessed/test.txt.json",
   "valid_w_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
   "test_w_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
-
   "output_dir_prefix": "logs/DistMult-Adversarial_WN18RR",
-
   "adversarial_training": true,
-
   "dim": 1000,
   "batch_size": 1024,
   "epochs": 500,
   "max_steps": 80000,
   "lr": 0.002,
   "weight_decay": 0.0,
-
   "margin": 200.0,
   "adversarial_temperature": 1.0,
-  "regularization": 0.000005,
-
+  "regularization": 5e-06,
   "n_sample": 1024,
   "normalize_lp_scores": false,
-
   "early_stopping_patience": 10
 }

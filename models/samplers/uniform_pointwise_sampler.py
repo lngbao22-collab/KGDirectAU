@@ -119,6 +119,42 @@ def get_pointwise_negatives(batch: dict, num_neg: int, num_entities: int) -> dic
     }
 
 
+class PointwiseNegSampler:
+    """Wrap pointwise Bernoulli corruption for the negative-sampling strategy."""
+
+    def __init__(self, args, num_entities: int):
+        self.args = args
+        self.num_entities = int(num_entities)
+
+    def sample(self, batch, mode: str | None = None):
+        batch_data = batch.get('batch_data')
+        pos_size = len(batch_data) if batch_data else batch['head_id'].size(0)
+        sampled = get_pointwise_negatives(
+            batch,
+            getattr(self.args, 'n_sample', 1),
+            self.num_entities,
+        )
+        pos_triples = torch.stack([
+            sampled['head_id'][:pos_size],
+            sampled['relation'][:pos_size],
+            sampled['tail_id'][:pos_size],
+        ], dim=-1)
+        neg_triples = torch.stack([
+            sampled['head_id'][pos_size:],
+            sampled['relation'][pos_size:],
+            sampled['tail_id'][pos_size:],
+        ], dim=-1)
+        return pos_triples, neg_triples, sampled['labels'], mode
+
+
+def build_sampler(args, train_triples, model):
+    """Construct a pointwise Bernoulli sampler for DaBR-style training."""
+
+    del train_triples
+    num_entities = model.ent_embeddings.num_embeddings
+    return PointwiseNegSampler(args, num_entities)
+
+
 def _get_batch_field(batch: dict, *candidate_keys, entity_key: str | None = None, relation_key: str | None = None):
     """Resolve a batch field from tensors or from the collated Example objects."""
 

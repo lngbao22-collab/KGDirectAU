@@ -60,3 +60,21 @@ def compute_logits(model, output_dict: dict, batch_dict: dict) -> ModelOutput:
 		hr_vector=hr_vector.detach(),
 		tail_vector=tail_vector.detach(),
     )
+
+
+def build_1vsall_loss_fn(args):
+	"""Factory for LibKGE-style 1-vs-all cross-entropy training."""
+
+	del args
+
+	def loss_fn(scores: torch.Tensor, targets: torch.Tensor, **_kwargs) -> torch.Tensor:
+		return F.cross_entropy(scores, targets.long())
+
+	return loss_fn
+
+
+build_loss_fn = build_1vsall_loss_fn
+
+
+def compute_loss(args):
+	return build_1vsall_loss_fn(args)

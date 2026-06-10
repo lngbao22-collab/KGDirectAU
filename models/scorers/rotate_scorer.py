@@ -8,9 +8,7 @@ import torch
 import torch.nn as nn
 
 
-def build_model(args) -> nn.Module:
-	"""Factory helper kept for compatibility with the model loader."""
-
+def build_scorer(args) -> RotatEScorer:
 	return RotatEScorer(args)
 
 
@@ -38,19 +36,17 @@ class RotatEScorer(nn.Module):
 		return torch.chunk(embeddings, 2, dim=-1)
 
 	def score_spo(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-		"""Return standard RotatE scores for matching batches of triples."""
+		"""Return standard RotatE tail scores for matching batches of triples."""
 
-		h_re, h_im = self._split_complex(h_emb)
-		t_re, t_im = self._split_complex(t_emb)
-		phase = self._phase(r_emb)
-		r_re = torch.cos(phase)
-		r_im = torch.sin(phase)
-		re_score = h_re * r_re - h_im * r_im - t_re
-		im_score = h_re * r_im + h_im * r_re - t_im
-		return self.margin - torch.sqrt(re_score ** 2 + im_score ** 2).sum(dim=-1)
+		return self._distance_score(h_emb, r_emb, t_emb, predict_head=False)
+
+	def score_po(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+		"""Return standard RotatE head scores for matching batches of triples."""
+
+		return self._distance_score(h_emb, r_emb, t_emb, predict_head=True)
 
 	def score_sp_(self, h_emb: torch.Tensor, r_emb: torch.Tensor, all_t_embs: torch.Tensor) -> torch.Tensor:
-		"""Return 1-vs-all RotatE scores using raw tensor broadcasting."""
+		"""Return 1-vs-all RotatE tail scores using raw tensor broadcasting."""
 
 		h_re, h_im = self._split_complex(h_emb)
 		t_re, t_im = self._split_complex(all_t_embs)
@@ -63,7 +59,39 @@ class RotatEScorer(nn.Module):
 		im_score = q_im.unsqueeze(1) - t_im.unsqueeze(0)
 		return self.margin - torch.sqrt(re_score ** 2 + im_score ** 2).sum(dim=-1)
 
-	def forward(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-		"""Alias for score_spo to keep the module callable."""
+	def score_po_(self, all_h_embs: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+		"""Return 1-vs-all RotatE head scores (LibKGE ``_po`` combine)."""
 
-		return self.score_spo(h_emb, r_emb, t_emb)
+		h_re, h_im = self._split_complex(all_h_embs)
+		t_re, t_im = self._split_complex(t_emb)
+		phase = self._phase(r_emb)
+		r_re = torch.cos(phase)
+		r_im = torch.sin(phase)
+		q_re = r_re * t_re + r_im * t_im
+		q_im = r_re * t_im - r_im * t_re
+		re_score = q_re.unsqueeze(1) - h_re.unsqueeze(0)
+		im_score = q_im.unsqueeze(1) - h_im.unsqueeze(0)
+		return self.margin - torch.sqrt(re_score ** 2 + im_score ** 2).sum(dim=-1)
+
+	def _distance_score(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+		*,
+		predict_head: bool,
+	) -> torch.Tensor:
+		"""Shared RotatE distance for tail- or head-prediction."""
+
+		h_re, h_im = self._split_complex(h_emb)
+		t_re, t_im = self._split_complex(t_emb)
+		phase = self._phase(r_emb)
+		r_re = torch.cos(phase)
+		r_im = torch.sin(phase)
+		if predict_head:
+			re_score = r_re * t_re + r_im * t_im - h_re
+			im_score = r_re * t_im - r_im * t_re - h_im
+		else:
+			re_score = h_re * r_re - h_im * r_im - t_re
+			im_score = h_re * r_im + h_im * r_re - t_im
+		return self.margin - torch.sqrt(re_score ** 2 + im_score ** 2).sum(dim=-1)

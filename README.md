@@ -55,31 +55,14 @@ KGDirectAU_root/
 
 ```bash
 python -m venv .venv
-
 # Linux/macOS
 source .venv/bin/activate
 
-# PowerShell
+# Windows (PowerShell)
 .venv\Scripts\Activate.ps1
-
-# CMD
-.venv\Scripts\activate.bat
-
-# Bash
-source .venv/Scripts/activate
 ```
 
-1) Install dependencies (recommended inside a virtualenv).
-
-If you have an NVIDIA GPU, install the CUDA-enabled PyTorch wheel that matches your driver before the rest of the requirements. This machine currently reports a non-NVIDIA GPU, so CUDA cannot be enabled here.
-
-```bash
-# CUDA 12.1 example
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-
-# CPU-only fallback
-# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-```
+1) Install dependencies (recommended inside a virtualenv):
 
 ```bash
 pip install -r requirements.txt
@@ -103,12 +86,6 @@ By default, the script reads from `data/<dataset>/` and writes the processed fil
 # Train with default WN18RR config
 ## DistMult
 python main.py --config-path configs/DistMult_WN18RR.json
-
-## DistMult-Adversarial (RotatE-repo training: filtered negatives + adversarial BCE)
-python main.py --config-path configs/DistMult-Adversarial_WN18RR.json
-
-## DistMult-Adversarial-AU (same encoder scale as adversarial; AU loss instead of BCE)
-python main.py --config-path configs/DistMult-Adversarial-AU_WN18RR.json
 
 ## DistMult-AU
 python main.py --config-path configs/DistMult-AU_WN18RR.json
@@ -209,12 +186,10 @@ This repository uses a modular, component-driven architecture. Each experiment i
 | Model | Encoder (`models/encoders/`) | Loss (`models/losses/`) | Sampler (`models/samplers/`) | Strategy (`models/strategies/`) |
 | :--- | :--- | :--- | :--- | :--- |
 | **DistMult** | `distmult_encoder.py` | `infonce_loss.py` | `bernoulli_sampler.py` | `softmax_strategy.py` |
-| **DistMult-Adversarial** | `distmult_encoder.py` | `adversarial_bce_loss.py` | `filtered_1_to_n_sampler.py` | `adversarial_strategy.py` |
-| **DistMult-Adversarial-AU** | `distmult_encoder.py` | `au_loss.py` | *(None)* | `kgau_strategy.py` |
 | **ComplEx** | `complex_encoder.py` | `infonce_loss.py` | `bernoulli_sampler.py` | `softmax_strategy.py` |
-| **DaBR** | `dabr_encoder.py` | `pointwise_logistic_loss.py`| `uniform_pointwise_sampler.py` | `pointwise_strategy.py` |
 | **RotatE** | `rotate_encoder.py` | `adversarial_bce_loss.py` | `filtered_1_to_n_sampler.py`| `adversarial_strategy.py` |
 | **pRotatE** | `rotate_encoder.py` | `adversarial_bce_loss.py` | `filtered_1_to_n_sampler.py`| `adversarial_strategy.py` |
+| **DaBR** | `dabr_encoder.py` | `pointwise_logistic_loss.py`| `uniform_pointwise_sampler.py` | `pointwise_strategy.py` |
 | **SimKGC** | `bert_encoder.py` | `infonce_loss.py` | `masking_sampler.py` | `contrastive_strategy.py` |
 | **X-AU** | `X_encoder.py` | `au_loss.py` | *(None)* | `kgau_strategy.py` |
 

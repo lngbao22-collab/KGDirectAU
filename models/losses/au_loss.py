@@ -269,3 +269,9 @@ class KGAULoss(nn.Module):
 				margin_active_frac = 0.0
 			return total_loss, l_align, l_unif, margin_active_frac
 		return total_loss, l_align, l_unif
+
+
+def compute_loss(args):
+	"""KGAU builds ``KGAULoss`` inside the strategy; loss pillar is optional."""
+	del args
+	return None

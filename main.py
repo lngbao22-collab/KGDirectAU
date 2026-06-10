@@ -1,5 +1,4 @@
 import json
-import inspect
 import os
 import time
 
@@ -7,11 +6,8 @@ import torch
 
 from configs.config import args
 from base.evaluator import Evaluator
-from data.dataset import Dataset, PointwiseDataset, load_data
-from data.dataloader import collate, collate_pointwise
-from data.dict_hub import get_entity_dict, get_relation_id_map
-from models.builder import import_module_from_path, load_attr_from_path
-from models.samplers.bernoulli_sampler import BernoulliListwiseSampler
+from data.dict_hub import get_entity_dict
+from models.builder import build_pipeline
 from utils.device import init_hardware
 from utils.checkpoint import best_model_path, last_model_path
 from utils.logger import setup_logger, write_results_report, _format_metric_key
@@ -123,162 +119,6 @@ def _average_link_metrics(forward_metrics, backward_metrics) -> dict:
     return averaged_metrics
 
 
-def _resolve_relation_index(relation: str, relation_to_idx: dict) -> int:
-    """Map a relation string to its embedding index.
-
-    Inverse relations must resolve to their own indices when reciprocal
-    relations are enabled; do not silently collapse them onto the forward ID.
-    """
-
-    if relation in relation_to_idx:
-        return relation_to_idx[relation]
-    normalized = ' '.join(relation.split())
-    if normalized in relation_to_idx:
-        return relation_to_idx[normalized]
-    if relation.startswith('inverse '):
-        base_relation = relation[len('inverse '):]
-        if base_relation in relation_to_idx and f'inverse {base_relation}' not in relation_to_idx:
-            return relation_to_idx[base_relation]
-    raise KeyError(relation)
-
-
-def _examples_to_tensors(examples, entity_dict, relation_to_idx):
-    """Convert examples into head, relation, and tail index tensors."""
-
-    head_indices = torch.tensor([entity_dict.entity_to_idx(example.head_id) for example in examples], dtype=torch.long)
-    relation_indices = torch.tensor(
-        [_resolve_relation_index(example.relation, relation_to_idx) for example in examples],
-        dtype=torch.long,
-    )
-    tail_indices = torch.tensor([entity_dict.entity_to_idx(example.tail_id) for example in examples], dtype=torch.long)
-    return head_indices, relation_indices, tail_indices
-
-
-def _build_softmax_trainer(current_args):
-    """Build the encoder, sampler, and strategy used by the softmax configs."""
-
-    strategy_mod = import_module_from_path(current_args.model_strategy_path)
-    strategy_cls = getattr(strategy_mod, 'SoftmaxStrategy', None)
-    if strategy_cls is None:
-        raise ImportError(f'Could not find SoftmaxStrategy in {current_args.model_strategy_path}')
-
-    encoder_path = getattr(current_args, 'model_encoder_path', '') or 'models/scorers/distmult_scorer.py'
-    try:
-        build_model = load_attr_from_path(encoder_path, 'build_model')
-    except Exception:
-        encoder_mod = import_module_from_path(encoder_path)
-        build_model = getattr(encoder_mod, 'build_model')
-
-    model = build_model(current_args)
-    if torch.cuda.is_available():
-        model.cuda()
-
-    entity_dict = get_entity_dict()
-    # When add_reciprocal_relations is set, load inverse triples too.
-    # The encoder's rel_to_idx already includes inverse-relation indices.
-    add_backward = getattr(current_args, 'add_reciprocal_relations', False)
-    train_examples = load_data(current_args.train_path, add_forward_triplet=True, add_backward_triplet=add_backward)
-    if not train_examples:
-        raise ValueError(f'No training examples loaded from {current_args.train_path}')
-
-    # Use the encoder's relation map so inverse-relation indices line up
-    # with what the embedding table was sized for.
-    rel_map = getattr(model, 'rel_to_idx', None) or get_relation_id_map()
-    inverse_relations = sum(1 for relation in rel_map if str(relation).startswith('inverse '))
-    logger.info(
-        'Training examples: %d (reciprocal=%s, relations=%d, inverse=%d)',
-        len(train_examples), add_backward, len(rel_map), inverse_relations,
-    )
-    train_tensors = _examples_to_tensors(train_examples, entity_dict, rel_map)
-    sampler = BernoulliListwiseSampler(
-        train_tensors,
-        len(entity_dict),
-        max(len(rel_map), 1),
-        getattr(current_args, 'n_sample', getattr(current_args, 'batch_size', 1)),
-    )
-    return strategy_cls(model, sampler, current_args, len(train_examples), train_data=train_tensors)
-
-
-def _build_adversarial_trainer(current_args):
-    """Build the encoder and indexed training triples for adversarial RotatE strategy."""
-
-    strategy_mod = import_module_from_path(current_args.model_strategy_path)
-    strategy_cls = getattr(strategy_mod, 'AdversarialStrategy', None)
-    if strategy_cls is None:
-        strategy_cls = getattr(strategy_mod, 'Strategy', None)
-    if strategy_cls is None:
-        raise ImportError(f'Could not find AdversarialStrategy in {current_args.model_strategy_path}')
-
-    encoder_path = getattr(current_args, 'model_encoder_path', '') or 'models/scorers/rotate_scorer.py'
-    try:
-        build_model = load_attr_from_path(encoder_path, 'build_model')
-    except Exception:
-        encoder_mod = import_module_from_path(encoder_path)
-        build_model = getattr(encoder_mod, 'build_model')
-
-    model = build_model(current_args)
-    if torch.cuda.is_available():
-        model.cuda()
-
-    entity_dict = get_entity_dict()
-    relation_to_idx = getattr(model, 'rel_to_idx', None) or get_relation_id_map()
-    train_examples = load_data(current_args.train_path, add_forward_triplet=True, add_backward_triplet=False)
-    if not train_examples:
-        raise ValueError(f'No training examples loaded from {current_args.train_path}')
-
-    src, rel, dst = _examples_to_tensors(train_examples, entity_dict, relation_to_idx)
-    train_triples = torch.stack([src, rel, dst], dim=-1)
-    return strategy_cls(model, current_args, train_triples)
-
-
-def _build_pointwise_trainer(current_args):
-    """Build the encoder and dataloader for DaBR pointwise training."""
-
-    strategy_mod = import_module_from_path(current_args.model_strategy_path)
-    strategy_cls = getattr(strategy_mod, 'PointwiseStrategy', None)
-    if strategy_cls is None:
-        strategy_cls = getattr(strategy_mod, 'Strategy', None)
-    if strategy_cls is None:
-        raise ImportError(f'Could not find PointwiseStrategy in {current_args.model_strategy_path}')
-
-    encoder_path = getattr(current_args, 'model_encoder_path', '') or 'models/scorers/dabr_scorer.py'
-    try:
-        build_model = load_attr_from_path(encoder_path, 'build_model')
-    except Exception:
-        encoder_mod = import_module_from_path(encoder_path)
-        build_model = getattr(encoder_mod, 'build_model')
-
-    model = build_model(current_args)
-    if torch.cuda.is_available():
-        model.cuda()
-
-    train_examples = load_data(current_args.train_path, add_forward_triplet=True, add_backward_triplet=False)
-    train_dataset = PointwiseDataset(train_examples)
-
-    # DaBR/OpenKE convention: a fixed number of batches per epoch, so the batch
-    # size is derived from the training set size (batch_size = train_total // n_batches).
-    # This reproduces the paper's "100 batches" setting exactly for any dataset.
-    n_batches = getattr(current_args, 'n_batches', None)
-    if n_batches:
-        derived_batch_size = max(len(train_examples) // int(n_batches), 1)
-        current_args.batch_size = derived_batch_size
-        logger.info(
-            'DaBR pointwise batching: n_batches=%d -> batch_size=%d (train_total=%d)',
-            int(n_batches), derived_batch_size, len(train_examples),
-        )
-    batch_size = max(getattr(current_args, 'batch_size', 1), 1)
-    train_dataloader = torch.utils.data.DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        collate_fn=collate_pointwise,
-        num_workers=getattr(current_args, 'workers', 0),
-        pin_memory=torch.cuda.is_available(),
-        drop_last=True,
-    )
-    return strategy_cls(model, current_args), train_dataloader
-
-
 def main():
     ngpus_per_node = init_hardware(args)
 
@@ -325,74 +165,12 @@ def main():
         _write_results(args, None, evaluator, link_metrics, triple_metrics, test_time, config_snapshot, memory_tracker)
         return
 
-    strategy_path = args.model_strategy_path
-    if strategy_path.replace('\\', '/').endswith('softmax_strategy.py'):
-        trainer = _build_softmax_trainer(args)
-    elif strategy_path.replace('\\', '/').endswith('adversarial_strategy.py'):
-        trainer = _build_adversarial_trainer(args)
-    elif strategy_path.replace('\\', '/').endswith('pointwise_strategy.py'):
-        trainer, train_dataloader = _build_pointwise_trainer(args)
+    trainer = build_pipeline(args, ngpus_per_node=ngpus_per_node)
+    train_dataloader = getattr(trainer, 'train_dataloader', None)
+    if train_dataloader is not None:
         train_summary = trainer.train_loop(train_dataloader)
-        eval_model_path = train_summary.get('best_checkpoint_path') or best_model_path(args.output_dir)
-        if not os.path.exists(eval_model_path):
-            eval_model_path = last_model_path(args.output_dir)
-        del trainer
-        _release_gpu_memory()
-        evaluator = Evaluator(args)
-        evaluator.load(eval_model_path)
-        memory_tracker = PhaseMemoryTracker()
-        memory_tracker.update_from_summary(train_summary)
-        test_start = time.time()
-        memory_tracker.begin_phase()
-        link_metrics = None
-        triple_metrics = None
-        test_lp_path = _resolve_test_lp_path(args)
-        if run_lp and test_lp_path:
-            entity_dict = get_entity_dict()
-            test_lp_log_path = os.path.join(args.output_dir, 'test_link_prediction.log')
-            forward_metrics = evaluator.evaluate_link_prediction_inplace(
-                evaluator.model, test_lp_path, entity_dict, test_lp_log_path, eval_forward=True)
-            _release_gpu_memory()
-            backward_metrics = evaluator.evaluate_link_prediction_inplace(
-                evaluator.model, test_lp_path, entity_dict, test_lp_log_path, eval_forward=False)
-            link_metrics = _average_link_metrics(forward_metrics, backward_metrics)
-        if run_tc:
-            triple_metrics = evaluator.evaluate_test_triple_classification()
-        memory_tracker.end_phase('eval')
-        test_time = time.time() - test_start
-        _write_results(args, train_summary, evaluator, link_metrics, triple_metrics, test_time, config_snapshot, memory_tracker)
-        return
     else:
-        strategy_mod = import_module_from_path(strategy_path)
-        trainer_cls = None
-        preferred_names = (
-            'SoftmaxTrainer',
-            'SimKGCStrategy',
-            'ContrastiveTrainer',
-            'SimKGCTrainer',
-            'Strategy',
-        )
-        for cand in preferred_names:
-            cls = getattr(strategy_mod, cand, None)
-            if inspect.isclass(cls) and cls.__module__ == strategy_mod.__name__ and not inspect.isabstract(cls):
-                trainer_cls = cls
-                break
-
-        if trainer_cls is None:
-            for name, obj in vars(strategy_mod).items():
-                if (
-                    isinstance(obj, type)
-                    and obj.__module__ == strategy_mod.__name__
-                    and name != 'Trainer'
-                ):
-                    trainer_cls = obj
-                    break
-
-        if trainer_cls is None:
-            raise ImportError(f'Could not find a Trainer class in {strategy_path}')
-
-        trainer = trainer_cls(args, ngpus_per_node=ngpus_per_node)
-    train_summary = trainer.train_loop()
+        train_summary = trainer.train_loop()
     eval_model_path = train_summary.get('best_checkpoint_path') or best_model_path(args.output_dir)
     del trainer
     _release_gpu_memory()

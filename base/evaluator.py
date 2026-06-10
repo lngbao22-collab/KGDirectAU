@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import torch
 import tqdm
 
+from base.model import KGEModel
 from utils.logger import logger
 from utils.device import get_model_obj, move_to_cuda
 
@@ -20,16 +21,178 @@ from metrics.classification import classification_metrics, find_global_threshold
 from configs.config import args as global_args
 from data.dict_hub import build_tokenizer
 from models.builder import import_module_from_path, load_attr_from_path
-from models.builder import import_module_from_path, load_attr_from_path
 from utils.checkpoint import load_state_dict_clean, load_checkpoint, best_model_path, checkpoint_path
 from configs.config import apply_train_args
 import numpy as np
 import json
 
 
+FILTER_MASK_VALUE = -1e30
+
+
 class ModelInterfaceError(RuntimeError):
-    """Custom error for when a model does not conform to the expected evaluation interface."""
-    pass
+	"""Custom error for when a model does not conform to the expected evaluation interface."""
+	pass
+
+
+def _supports_kge_1vsall_eval(model) -> bool:
+	"""Return True when the model exposes LibKGE-style 1-vs-all tail/head scoring."""
+
+	return hasattr(model, 'predict_tail_sp_') or isinstance(model, KGEModel)
+
+
+def _resolve_relation_index(relation: str, relation_to_idx: dict) -> int:
+	"""Map a relation string to its embedding index."""
+
+	if relation in relation_to_idx:
+		return relation_to_idx[relation]
+	normalized = ' '.join(relation.split())
+	if normalized in relation_to_idx:
+		return relation_to_idx[normalized]
+	if relation.startswith('inverse '):
+		base_relation = relation[len('inverse '):]
+		if f'inverse {base_relation}' in relation_to_idx:
+			return relation_to_idx[f'inverse {base_relation}']
+		if base_relation in relation_to_idx:
+			return relation_to_idx[base_relation]
+	raise KeyError(relation)
+
+
+def _relation_lookup(model):
+	"""Return a callable that maps relation strings to embedding indices."""
+
+	if hasattr(model, '_relation_to_idx') and callable(model._relation_to_idx):
+		return model._relation_to_idx
+	rel_to_idx = getattr(model, 'rel_to_idx', None)
+	if rel_to_idx is None:
+		raise RuntimeError('Model is missing a relation index lookup for fast evaluation')
+	return lambda relation: _resolve_relation_index(relation, rel_to_idx)
+
+
+def _build_filter_index_maps(all_triplet_dict, entity_dict, relation_lookup) -> tuple[dict, dict]:
+	"""Build filtered-evaluation maps over integer (h, r) and (r, t) keys."""
+
+	entity_to_idx = entity_dict.entity_to_idx
+	sp_to_tails: dict[tuple[int, int], list[int]] = {}
+	for (head_id, relation), tail_ids in all_triplet_dict.hr2tails.items():
+		try:
+			h_idx = entity_to_idx[head_id]
+			r_idx = relation_lookup(relation)
+		except KeyError:
+			continue
+		tails = [entity_to_idx[tail_id] for tail_id in tail_ids if tail_id in entity_to_idx]
+		if tails:
+			sp_to_tails[(h_idx, r_idx)] = tails
+
+	po_to_heads: dict[tuple[int, int], list[int]] = {}
+	for (relation, tail_id), head_ids in all_triplet_dict.rt2heads.items():
+		try:
+			r_idx = relation_lookup(relation)
+			t_idx = entity_to_idx[tail_id]
+		except KeyError:
+			continue
+		heads = [entity_to_idx[head_id] for head_id in head_ids if head_id in entity_to_idx]
+		if heads:
+			po_to_heads[(r_idx, t_idx)] = heads
+	return sp_to_tails, po_to_heads
+
+
+def _apply_filter_mask(
+	scores: torch.Tensor,
+	h_idx: torch.Tensor,
+	r_idx: torch.Tensor,
+	t_idx: torch.Tensor,
+	filter_map: dict[tuple[int, int], list[int]],
+	*,
+	predict_head: bool,
+) -> torch.Tensor:
+	"""Mask known alternative true entities to ``FILTER_MASK_VALUE``, keeping the target."""
+
+	rows: list[int] = []
+	cols: list[int] = []
+	for i in range(h_idx.size(0)):
+		if predict_head:
+			key = (int(r_idx[i].item()), int(t_idx[i].item()))
+			target = int(h_idx[i].item())
+		else:
+			key = (int(h_idx[i].item()), int(r_idx[i].item()))
+			target = int(t_idx[i].item())
+		for candidate in filter_map.get(key, ()):
+			if candidate != target:
+				rows.append(i)
+				cols.append(candidate)
+	if rows:
+		row_tensor = torch.tensor(rows, device=scores.device, dtype=torch.long)
+		col_tensor = torch.tensor(cols, device=scores.device, dtype=torch.long)
+		scores[row_tensor, col_tensor] = FILTER_MASK_VALUE
+	return scores
+
+
+def _evaluate_kge_1vsall_batch(
+	model,
+	h_idx: torch.Tensor,
+	r_idx: torch.Tensor,
+	t_idx: torch.Tensor,
+	sp_filter: dict[tuple[int, int], list[int]],
+	po_filter: dict[tuple[int, int], list[int]],
+	*,
+	predict_head: bool,
+	filter_known: bool,
+) -> list[int]:
+	"""Score and rank one batch with full-matrix ``sp_`` or ``_po`` broadcasting."""
+
+	device = next(model.parameters()).device
+	h_idx = h_idx.to(device)
+	r_idx = r_idx.to(device)
+	t_idx = t_idx.to(device)
+
+	if predict_head:
+		scores = model.predict_head_po_(r_idx, t_idx)
+		if filter_known:
+			scores = _apply_filter_mask(scores, h_idx, r_idx, t_idx, po_filter, predict_head=True)
+		target_indices = h_idx
+	else:
+		scores = model.predict_tail_sp_(h_idx, r_idx)
+		if filter_known:
+			scores = _apply_filter_mask(scores, h_idx, r_idx, t_idx, sp_filter, predict_head=False)
+		target_indices = t_idx
+
+	return _ranks_from_score_matrix(scores, target_indices)
+
+
+def _evaluate_kge_link_prediction(
+	model,
+	examples: Sequence[Example],
+	entity_dict,
+	batch_size: int,
+	*,
+	eval_forward: bool,
+	filter_known: bool,
+) -> list[int]:
+	"""Fast filtered link prediction for ``KGEModel`` instances."""
+
+	relation_lookup = _relation_lookup(model)
+	sp_filter, po_filter = _build_filter_index_maps(get_all_triplet_dict(), entity_dict, relation_lookup)
+	predict_head = (not eval_forward) and bool(getattr(model, 'bidirectional_score_batch', False))
+	scoring_examples = _coerce_forward_examples(examples) if predict_head else list(examples)
+	h_all, r_all, t_all = _examples_to_query_index_tensors(scoring_examples, entity_dict, model)
+
+	ranks: list[int] = []
+	iterator = range(0, len(scoring_examples), batch_size)
+	for start in tqdm.tqdm(iterator, disable=len(scoring_examples) <= batch_size):
+		end = min(start + batch_size, len(scoring_examples))
+		batch_ranks = _evaluate_kge_1vsall_batch(
+			model,
+			h_all[start:end],
+			r_all[start:end],
+			t_all[start:end],
+			sp_filter,
+			po_filter,
+			predict_head=predict_head,
+			filter_known=filter_known,
+		)
+		ranks.extend(batch_ranks)
+	return ranks
 
 
 def _filter_known(batch_score: torch.Tensor, examples: List[Example], all_triplet_dict, entity_dict) -> None:
@@ -192,6 +355,19 @@ def evaluate_model(
     if total == 0:
         raise ValueError(f'No examples found in {eval_path}')
 
+    model = get_model_obj(model)
+    if _supports_kge_1vsall_eval(model):
+        ranks_all = _evaluate_kge_link_prediction(
+            model,
+            examples,
+            entity_dict,
+            batch_size,
+            eval_forward=True,
+            filter_known=filter_known,
+        )
+        metrics = ranking_metrics_from_ranks(ranks_all)
+        return [], [], metrics
+
     if chunk_size is None:
         chunk_size = getattr(model, 'chunk_size', 8192)
 
@@ -303,22 +479,16 @@ class Evaluator:
 
         apply_train_args(self.train_args)
 
-        encoder_path = getattr(self.train_args, 'model_encoder_path', '') or 'models/encoders/bert_encoder.py'
-        try:
-            build_model = load_attr_from_path(encoder_path, 'build_model')
-        except Exception:
-            mod = import_module_from_path(encoder_path)
-            build_model = getattr(mod, 'build_model')
+        from models.builder import build_model
 
-        if encoder_path.endswith('bert_encoder.py'):
+        model_name = str(getattr(self.train_args, 'model', '') or '').lower()
+        scorer_path = (
+            getattr(self.train_args, 'model_scorer_path', '')
+            or getattr(self.train_args, 'model_encoder_path', '')
+            or ''
+        )
+        if 'simkgc' in model_name or scorer_path.endswith('simkgc_scorer.py'):
             build_tokenizer(self.train_args)
-
-        encoder_path = getattr(self.train_args, 'model_encoder_path', '') or 'models/encoders/bert_encoder.py'
-        try:
-            build_model = load_attr_from_path(encoder_path, 'build_model')
-        except Exception:
-            encoder_mod = import_module_from_path(encoder_path)
-            build_model = getattr(encoder_mod, 'build_model')
 
         self.model = build_model(self.train_args)
         load_state_dict_clean(self.model, ckt_path)
@@ -404,9 +574,19 @@ class Evaluator:
         if not os.path.exists(eval_path):
             logger.info(f"[EVAL] {eval_path} not found, skip link prediction evaluation.")
             return {}
-        eval_set = 'TEST' if 'test' in eval_path else 'VALID'
         if examples is None:
             examples = load_data(eval_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
+
+        if _supports_kge_1vsall_eval(model):
+            ranks = _evaluate_kge_link_prediction(
+                model,
+                examples,
+                entity_dict,
+                batch_size,
+                eval_forward=eval_forward,
+                filter_known=True,
+            )
+            return ranking_metrics_from_ranks(ranks)
 
         predict_head = (not eval_forward) and _uses_head_batch_scoring(model)
         scoring_examples = _coerce_forward_examples(examples) if predict_head else list(examples)

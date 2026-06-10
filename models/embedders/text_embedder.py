@@ -18,8 +18,19 @@ class TextEmbedder(nn.Module):
 		self.encoder = AutoModel.from_pretrained(pretrained_model_name_or_path)
 
 	def forward(self, text_dict: Mapping[str, torch.Tensor]) -> torch.Tensor:
-		"""Return the pooled [CLS] representation for a tokenized text batch."""
-
 		outputs = self.encoder(**dict(text_dict), return_dict=True)
 		return outputs.last_hidden_state[:, 0, :]
 
+
+def build_entity_embedder(args) -> TextEmbedder:
+	"""SimKGC uses a dedicated scorer model; reserved for future text-KGE wiring."""
+
+	pretrained = getattr(args, 'bert_encoder', '') or getattr(args, 'pretrained_model', '')
+	return TextEmbedder(pretrained, args)
+
+
+def build_relation_embedder(args) -> TextEmbedder:
+	"""SimKGC encodes relations inside ``simkgc_scorer``; relation text embedder is unused."""
+
+	pretrained = getattr(args, 'bert_encoder', '') or getattr(args, 'pretrained_model', '')
+	return TextEmbedder(pretrained, args)

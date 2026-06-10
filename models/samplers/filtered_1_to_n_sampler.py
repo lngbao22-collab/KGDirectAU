@@ -135,3 +135,15 @@ class FilteredSubsampler:
 
         negative_sample = torch.from_numpy(np.stack(negative_rows, axis=0)).long()
         return positive_sample, negative_sample, subsampling_weight, mode
+
+
+def build_sampler(args, train_triples, model):
+    """Construct a filtered 1-N subsampler for adversarial RotatE-style training."""
+
+    nentity = getattr(args, 'nentity', getattr(args, 'ent_total', None))
+    if nentity is None and hasattr(model, 'entity_embedding'):
+        nentity = model.entity_embedding.size(0)
+    if nentity is None:
+        raise ValueError('`nentity` or `ent_total` is required for FilteredSubsampler')
+    num_neg = int(getattr(args, 'n_sample', 1))
+    return FilteredSubsampler(train_triples, int(nentity), num_neg)

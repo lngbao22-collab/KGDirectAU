@@ -20,3 +20,28 @@ def compute_softplus_loss(scores: torch.Tensor, labels: torch.Tensor) -> torch.T
     scores = scores.view(-1)
     labels = labels.view(-1).to(scores.device)
     return F.softplus(-scores * labels).mean()
+
+
+def build_negsamp_loss_fn(args):
+    """Factory for pointwise logistic negative-sampling training."""
+
+    del args
+
+    def loss_fn(pos_scores, neg_scores, weights=None, **_kwargs):
+        pos_scores = pos_scores.reshape(-1)
+        neg_scores = neg_scores.reshape(-1)
+        labels = torch.cat([
+            torch.ones_like(pos_scores),
+            -torch.ones_like(neg_scores),
+        ], dim=0)
+        scores = torch.cat([pos_scores, neg_scores], dim=0)
+        return compute_softplus_loss(scores, labels)
+
+    return loss_fn
+
+
+build_loss_fn = build_negsamp_loss_fn
+
+
+def compute_loss(args):
+	return build_negsamp_loss_fn(args)

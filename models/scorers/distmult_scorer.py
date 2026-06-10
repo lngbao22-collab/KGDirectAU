@@ -6,9 +6,7 @@ import torch
 import torch.nn as nn
 
 
-def build_model(args) -> nn.Module:
-	"""Factory helper kept for compatibility with the model loader."""
-
+def build_scorer(args) -> DistMultScorer:
 	return DistMultScorer(args)
 
 
@@ -29,7 +27,5 @@ class DistMultScorer(nn.Module):
 
 		return torch.mm(h_emb * r_emb, all_t_embs.t())
 
-	def forward(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-		"""Alias for score_spo to keep the module callable."""
-
-		return self.score_spo(h_emb, r_emb, t_emb)
+	def build_query(self, h_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
+		return h_emb * r_emb

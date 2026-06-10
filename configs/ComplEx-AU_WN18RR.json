@@ -1,10 +1,10 @@
 {
   "model": "ComplEx-AU",
-  "model_encoder_path": "models/scorers/complex_scorer.py",
+  "model_embedder_path": "models/embedders/lookup_embedder.py",
+  "model_scorer_path": "models/scorers/complex_scorer.py",
   "model_loss_path": "models/losses/au_loss.py",
   "model_sampler_path": "",
   "model_strategy_path": "models/strategies/kgau_strategy.py",
-
   "dataset": "WN18RR",
   "task": "both",
   "train_path": "data/WN18RR/preprocessed/train.txt.json",
@@ -12,24 +12,16 @@
   "test_path": "data/WN18RR/preprocessed/test.txt.json",
   "valid_w_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
   "test_w_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
-
   "output_dir_prefix": "logs/ComplEx-AU_WN18RR",
-
   "dim": 200,
-  "batch_size": 512,
-<<<<<<< HEAD
-  "epochs": 100,
-=======
-  "epochs": 1000,
->>>>>>> 2019e137f06564c5661963e994a26394a4cca8eb
   "lr": 0.001,
   "weight_decay": 0.0001,
-
-  "normalize_lp_scores": true,
-  
+  "epochs": 100,
+  "batch_size": 100,
   "gamma_q": 1.0,
   "gamma_t": 1.0,
   "gamma_h": 1.0,
   "gamma_ent": 1.0,
-  "tuni": 4.0
+  "normalize_lp_scores": true,
+  "tuni": 6.0
 }
