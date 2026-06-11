@@ -27,5 +27,10 @@ class DistMultScorer(nn.Module):
 
 		return torch.mm(h_emb * r_emb, all_t_embs.t())
 
+	def score_po_(self, all_h_embs: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+		"""Return 1-vs-all DistMult head scores for each (relation, tail) query."""
+
+		return torch.mm(t_emb * r_emb, all_h_embs.t())
+
 	def build_query(self, h_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
 		return h_emb * r_emb

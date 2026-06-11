@@ -32,13 +32,20 @@ def _normalize_path(path: str) -> str:
 def import_module_from_path(path: str) -> ModuleType:
 	if not path:
 		raise ValueError('Empty module path')
+	module_name = _normalize_path(path)
+	if module_name in sys.modules:
+		return sys.modules[module_name]
 	if os.path.exists(path) and path.endswith('.py'):
-		spec = importlib.util.spec_from_file_location(os.path.splitext(os.path.basename(path))[0], path)
-		module = importlib.util.module_from_spec(spec)
-		sys.modules[spec.name] = module
-		spec.loader.exec_module(module)
-		return module
-	return import_module(_normalize_path(path))
+		try:
+			return import_module(module_name)
+		except ModuleNotFoundError:
+			abs_path = os.path.abspath(path)
+			spec = importlib.util.spec_from_file_location(module_name, abs_path)
+			module = importlib.util.module_from_spec(spec)
+			sys.modules[module_name] = module
+			spec.loader.exec_module(module)
+			return module
+	return import_module(module_name)
 
 
 def load_attr_from_path(path: str, attr: str) -> Any:
