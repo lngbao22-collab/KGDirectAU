@@ -837,11 +837,15 @@ class KGAUStrategy(Evaluator):
 
 		patience = getattr(self.args, 'early_stopping_patience', None)
 		patience = int(patience) if patience else None
+		min_epochs = int(getattr(self.args, 'early_stopping_min_epochs', 0) or 0)
+		min_metric = getattr(self.args, 'early_stopping_min_metric', None)
 		bad_counts = 0
 		if patience is not None and patience > 0:
 			logger.info(
-				'KGAU early stopping: stop after %d validation(s) without MRR improvement.',
+				'KGAU early stopping: stop after %d validation(s) without MRR improvement '
+				'(min_epochs=%d).',
 				patience,
+				min_epochs,
 			)
 		else:
 			patience = None
@@ -854,26 +858,26 @@ class KGAUStrategy(Evaluator):
 			self.memory_tracker.end_phase('train')
 			self.train_time += time.time() - epoch_train_start
 
-			if self._should_validate(epoch):
+			validated = self._should_validate(epoch)
+			metric_dict: dict = {}
+			if validated:
 				eval_start = time.time()
 				self.memory_tracker.begin_phase()
 				metric_dict = self.eval_epoch(epoch, train_loss=train_loss)
 				self.memory_tracker.end_phase('eval')
 				self.valid_time += time.time() - eval_start
-			else:
-				metric_dict = {'loss': round(train_loss, 4)}
 
-			if not metric_dict:
-				metric_dict = {'loss': round(train_loss, 4)}
-
-			monitor_value = self._extract_monitor_value(metric_dict)
-			is_best = monitor_value is not None and (self.best_metric is None or monitor_value > self.best_metric.get('score', float('-inf')))
-			if is_best:
-				self.best_metric = {'score': monitor_value, 'metrics': metric_dict, 'epoch': epoch}
-				if metric_dict and 'mrr' in metric_dict:
+			is_best = False
+			if validated and metric_dict and 'mrr' in metric_dict:
+				monitor_value = metric_dict['mrr']
+				is_best = self.best_metric is None or monitor_value > self.best_metric.get('score', float('-inf'))
+				if is_best:
+					self.best_metric = {'score': monitor_value, 'metrics': metric_dict, 'epoch': epoch}
 					bad_counts = 0
-			elif self._should_validate(epoch) and metric_dict and 'mrr' in metric_dict:
-				bad_counts += 1
+				else:
+					best_mrr = None if self.best_metric is None else self.best_metric.get('score')
+					if min_metric is None or (best_mrr is not None and best_mrr >= float(min_metric)):
+						bad_counts += 1
 
 			filename = checkpoint_path(self.args.output_dir, epoch)
 			saved_checkpoint_path = save_checkpoint({
@@ -889,7 +893,7 @@ class KGAUStrategy(Evaluator):
 				self.best_checkpoint_path = saved_checkpoint_path
 			delete_old_ckt(path_pattern='{}/checkpoint_*.mdl'.format(self.args.output_dir), keep=self.args.max_to_keep)
 
-			if patience is not None and bad_counts >= patience:
+			if patience is not None and bad_counts >= patience and (epoch + 1) >= min_epochs:
 				logger.info(
 					'[EARLY STOP] No validation MRR improvement for %d evaluations (epoch %s).',
 					patience, epoch + 1,

@@ -496,24 +496,26 @@ def run_index_kge_train_loop(trainer, dataloader=None) -> dict:
 		trainer.memory_tracker.end_phase('train')
 		trainer.train_time += time.time() - train_start
 
+		validated = _kge_should_validate(trainer.args, epoch)
 		metric_dict = {}
-		if _kge_should_validate(trainer.args, epoch):
+		if validated:
 			eval_start = time.time()
 			trainer.memory_tracker.begin_phase()
 			metric_dict = eval_index_kge_epoch(trainer, epoch)
 			trainer.memory_tracker.end_phase('eval')
 			trainer.valid_time += time.time() - eval_start
 
-		monitor_value = _kge_extract_monitor_value(metric_dict, train_loss)
-		is_best = trainer.best_metric is None or monitor_value > trainer.best_metric.get('score', float('-inf'))
-		if is_best:
-			trainer.best_metric = {'score': monitor_value, 'metrics': metric_dict, 'epoch': epoch}
-			if metric_dict and 'mrr' in metric_dict:
+		is_best = False
+		if validated and metric_dict and 'mrr' in metric_dict:
+			monitor_value = metric_dict['mrr']
+			is_best = trainer.best_metric is None or monitor_value > trainer.best_metric.get('score', float('-inf'))
+			if is_best:
+				trainer.best_metric = {'score': monitor_value, 'metrics': metric_dict, 'epoch': epoch}
 				bad_counts = 0
-		elif metric_dict and 'mrr' in metric_dict:
-			best_mrr = None if trainer.best_metric is None else trainer.best_metric.get('score')
-			if min_metric is None or (best_mrr is not None and best_mrr >= float(min_metric)):
-				bad_counts += 1
+			else:
+				best_mrr = None if trainer.best_metric is None else trainer.best_metric.get('score')
+				if min_metric is None or (best_mrr is not None and best_mrr >= float(min_metric)):
+					bad_counts += 1
 
 		_save_index_kge_checkpoint(trainer, epoch, is_best)
 
