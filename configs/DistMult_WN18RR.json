@@ -18,6 +18,7 @@
   "batch_size": 1024,
   "epochs": 400,
   "lr": 0.3312683797847912,
+  "optim": "adagrad",
   "weight_decay": 0.0,
   "label_smoothing": 0.07398311105554728,
   "loss_arg": 1.0,
