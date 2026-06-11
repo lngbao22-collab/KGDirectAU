@@ -57,8 +57,20 @@ def _config_path(args, name: str, legacy_name: str = '') -> str:
 	return ''
 
 
+_INDEX_KGE_MODELS = frozenset({
+	'distmult', 'distmult-au', 'distmult-adversarial', 'distmult-adversarial-au',
+	'complex', 'complex-au', 'dabr', 'dabr-au', 'rotate', 'rotate-au', 'protate', 'protate-au',
+})
+
+
+def is_index_kge_model(args) -> bool:
+	"""Return True for lookup-table KGE models (not SimKGC / text encoders)."""
+
+	return str(getattr(args, 'model', '') or '').lower() in _INDEX_KGE_MODELS
+
+
 def _is_text_model(args) -> bool:
-	return 'simkgc' in str(getattr(args, 'model', '') or '').lower()
+	return not is_index_kge_model(args) and 'simkgc' in str(getattr(args, 'model', '') or '').lower()
 
 
 def _strategy_paradigm(strategy_path: str) -> str:

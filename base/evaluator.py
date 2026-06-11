@@ -20,7 +20,7 @@ from metrics.classification import classification_metrics, find_global_threshold
 
 from configs.config import args as global_args
 from data.dict_hub import build_tokenizer
-from models.builder import import_module_from_path, load_attr_from_path
+from models.builder import import_module_from_path, is_index_kge_model, load_attr_from_path
 from utils.checkpoint import load_state_dict_clean, load_checkpoint, best_model_path, checkpoint_path
 from configs.config import apply_train_args
 import numpy as np
@@ -347,11 +347,36 @@ def _score_triple_classification_batch(
 	return scores
 
 
-def _supports_index_triple_classification(model) -> bool:
-	"""Return True when triple classification can run without text tokenization."""
+def _bert_encoder_configured(args) -> bool:
+	"""Return True when a HuggingFace encoder name is available for text triple classification."""
 
+	for key in ('bert_encoder', 'encoder', 'pretrained_model'):
+		if str(getattr(args, key, '') or '').strip():
+			return True
+	return False
+
+
+def _should_use_index_triple_classification(model, args) -> bool:
+	"""Return True when triple classification should use index KGE scoring (not BERT)."""
+
+	if is_index_kge_model(args):
+		return True
 	model_obj = get_model_obj(model)
-	return hasattr(model_obj, 'score_batch') or hasattr(model_obj, 'score_spo')
+	return (
+		isinstance(model_obj, KGEModel)
+		or hasattr(model_obj, 'score_batch')
+		or hasattr(model_obj, 'score_spo')
+	)
+
+
+def _eval_args_for_triple_classification(evaluator, args=None):
+	"""Prefer checkpoint training args when the evaluator loaded a model from disk."""
+
+	if getattr(evaluator, 'train_args', None) is not None:
+		return evaluator.train_args
+	if args is not None:
+		return args
+	return global_args
 
 
 def _score_by_embedding_adapter(model, examples: List[Example], entity_tensor: torch.Tensor) -> torch.Tensor:
@@ -569,7 +594,8 @@ class Evaluator:
         ]
         y_true = [int(ex.label) for ex in eval_exs]
         y_prob = []
-        if _supports_index_triple_classification(model):
+        tc_args = _eval_args_for_triple_classification(self)
+        if _should_use_index_triple_classification(model, tc_args):
             if not eval_exs:
                 logger.info(f"[EVAL] {label_file} has no labeled examples, skip evaluation.")
                 return
@@ -578,6 +604,11 @@ class Evaluator:
                 batch = eval_exs[i:i + batch_size]
                 scores = _score_triple_classification_batch(model, batch, entity_dict)
                 y_prob.extend(torch.sigmoid(scores).detach().cpu().numpy().reshape(-1).tolist())
+        elif not _bert_encoder_configured(tc_args):
+            raise ModelInterfaceError(
+                f'Model {getattr(tc_args, "model", "?")} cannot run text triple classification: '
+                'bert_encoder is empty and the loaded model has no score_spo/score_batch.'
+            )
         else:
             with torch.no_grad():
                 for i in range(0, len(eval_exs), batch_size):
@@ -804,13 +835,19 @@ class Evaluator:
             self.load(ckt_path)
         self.model.eval()
 
-        if _supports_index_triple_classification(self.model):
+        tc_args = _eval_args_for_triple_classification(self, args)
+        if _should_use_index_triple_classification(self.model, tc_args):
             entity_dict = get_entity_dict()
             for i in range(0, len(test_exs), batch_size):
                 batch = test_exs[i:i + batch_size]
                 scores = _score_triple_classification_batch(self.model, batch, entity_dict)
                 prob = torch.sigmoid(scores).detach().cpu().numpy().reshape(-1)
                 y_prob.extend(prob.tolist())
+        elif not _bert_encoder_configured(tc_args):
+            raise ModelInterfaceError(
+                f'Model {getattr(tc_args, "model", "?")} cannot run text triple classification: '
+                'bert_encoder is empty and the loaded model has no score_spo/score_batch.'
+            )
         else:
             for i in range(0, len(test_exs), batch_size):
                 batch = test_exs[i:i + batch_size]
