@@ -7,6 +7,8 @@ import math
 import torch
 
 from models.builder import (
+	apply_kge_regularization,
+	build_lr_scheduler,
 	build_optimizer,
 	init_index_kge_trainer,
 	load_loss_fn_for_paradigm,
@@ -37,6 +39,7 @@ class OneVsAllStrategy:
 		weight_decay = float(getattr(args, 'weight_decay', None) or 0.0)
 		self.weight_decay = weight_decay
 		self.optimizer = build_optimizer(args, self.model.parameters(), self.weight_decay)
+		self.lr_scheduler = build_lr_scheduler(args, self.optimizer)
 		self.bidirectional = bool(getattr(args, 'bidirectional_1vsall', True))
 
 	def _iter_batches(self, batch_size: int):
@@ -74,6 +77,7 @@ class OneVsAllStrategy:
 			else:
 				loss = loss_sp
 
+			loss = apply_kge_regularization(loss, self.model, self.args)
 			loss.backward()
 			self.optimizer.step()
 			epoch_loss += loss.item() * h_idx.size(0)

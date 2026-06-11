@@ -470,6 +470,11 @@ class Evaluator:
         self.train_args: SimpleNamespace | None = None
         self.use_cuda = False
 
+    def _eval_batch_size(self, batch_size: int | None = None) -> int:
+        if batch_size is not None:
+            return max(int(batch_size), 1)
+        return max(int(getattr(self.args, 'eval_batch_size', 128) or 128), 1)
+
     def load(self, ckt_path: str, use_data_parallel: bool = False) -> None:
         """Load checkpoint, apply training args, build tokenizer and model, and load weights."""
 
@@ -505,9 +510,10 @@ class Evaluator:
         logger.info('Load model from %s successfully', ckt_path)
 
     @torch.no_grad()
-    def evaluate_triple_classification_inplace(self, model, label_file, output_log_path, batch_size=128) -> dict:
+    def evaluate_triple_classification_inplace(self, model, label_file, output_log_path, batch_size=None) -> dict:
         """Evaluate triple classification using the model's forward pass."""
 
+        batch_size = self._eval_batch_size(batch_size)
         model = get_model_obj(model)
         model.eval()
         if not os.path.exists(label_file):
@@ -567,8 +573,9 @@ class Evaluator:
         return metrics_cls
 
     @torch.inference_mode()
-    def evaluate_link_prediction_inplace(self, model, eval_path, entity_dict, output_log_path, batch_size=128, eval_forward=True, examples=None) -> dict:
+    def evaluate_link_prediction_inplace(self, model, eval_path, entity_dict, output_log_path, batch_size=None, eval_forward=True, examples=None) -> dict:
         """Evaluate link prediction using the model's forward pass."""
+        batch_size = self._eval_batch_size(batch_size)
         model = get_model_obj(model)
         model.eval()
         if not os.path.exists(eval_path):
@@ -750,7 +757,7 @@ class Evaluator:
             return {}
         y_true = [int(ex.label) for ex in test_exs]
         y_prob = []
-        batch_size = 128
+        batch_size = self._eval_batch_size()
 
         if epoch is None:
             ckt_path = getattr(args, 'eval_model_path', '') or best_model_path(args.output_dir)

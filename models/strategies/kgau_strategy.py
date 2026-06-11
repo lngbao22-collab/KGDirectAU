@@ -54,31 +54,13 @@ def _is_dabr_encoder(args) -> bool:
 	return 'dabr' in scorer_path or 'dabr' in model_name
 
 
-def _add_inverse_relations(relation_to_idx: dict[str, int]) -> dict[str, int]:
-	"""Ensure every forward relation has its own distinct inverse-relation ID.
-
-	Backward triplets carry the relation string ``"inverse {relation}"`` (see
-	``data.dataset.reverse_triplet``). Assigning each inverse relation a fresh
-	index keeps forward and inverse relations distinct for uniformity dedup keys.
-	"""
-
-	updated = dict(relation_to_idx)
-	next_idx = max(updated.values(), default=-1) + 1
-	for relation in list(updated.keys()):
-		if relation.startswith('inverse '):
-			continue
-		inverse_relation = f'inverse {relation}'
-		if inverse_relation not in updated:
-			updated[inverse_relation] = next_idx
-			next_idx += 1
-	return updated
-
-
 def _build_relation_to_idx() -> dict[str, int]:
 	"""Build the relation->index map with distinct IDs for inverse relations."""
 
+	from base.embeddings import add_inverse_relations
+
 	base = {str(key): int(value) for key, value in get_relation_id_map().items()}
-	return _add_inverse_relations(base)
+	return add_inverse_relations(base)
 
 
 def _build_optimizer(args, parameters, weight_decay: float):

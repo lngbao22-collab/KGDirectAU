@@ -13,9 +13,11 @@ from typing import Any
 import torch
 import torch.nn as nn
 
+from base.embeddings import compute_kge_l3_regularization, use_reciprocal_relations
 from base.model import DaBRModel, KGEModel
 from data.dataset import PointwiseDataset, load_data
 from data.dict_hub import get_entity_dict, get_relation_id_map
+from utils.device import get_model_obj
 
 
 def _normalize_path(path: str) -> str:
@@ -197,6 +199,36 @@ def build_optimizer(args, parameters, weight_decay: float):
 	return Adam(parameters, lr=lr, weight_decay=weight_decay)
 
 
+def build_lr_scheduler(args, optimizer):
+	"""Build an optional LR scheduler for index-based KGE training (LibKGE-style)."""
+
+	from torch.optim.lr_scheduler import ReduceLROnPlateau
+
+	name = str(getattr(args, 'lr_scheduler', '') or '').lower()
+	if name in ('', 'none', 'constant'):
+		return None
+	if name == 'reducelronplateau':
+		return ReduceLROnPlateau(
+			optimizer,
+			mode=str(getattr(args, 'lr_scheduler_mode', 'max')),
+			factor=float(getattr(args, 'lr_scheduler_factor', 0.95)),
+			patience=int(getattr(args, 'lr_scheduler_patience', 7)),
+			threshold=float(getattr(args, 'lr_scheduler_threshold', 1e-4)),
+		)
+	return None
+
+
+def apply_kge_regularization(loss: torch.Tensor, model: nn.Module, args) -> torch.Tensor:
+	reg_term = compute_kge_l3_regularization(get_model_obj(model), args)
+	if reg_term is None:
+		return loss
+	return loss + reg_term
+
+
+def _eval_batch_size(args) -> int:
+	return max(int(getattr(args, 'eval_batch_size', 128) or 128), 1)
+
+
 def load_loss_fn_for_paradigm(args, paradigm: str):
 	"""Load a loss factory from ``model_loss_path`` for negsamp/1vsall fallbacks."""
 
@@ -365,13 +397,14 @@ def eval_index_kge_epoch(trainer, epoch: int) -> dict:
 
 	valid_exs, valid_backward_exs = _kge_get_valid_examples(trainer)
 	valid_output_path = os.path.join(trainer.args.output_dir, 'valid_link_prediction.log')
+	eval_batch_size = _eval_batch_size(trainer.args)
 	forward_metrics = trainer.evaluator.evaluate_link_prediction_inplace(
 		trainer.model, valid_eval_path, trainer.entity_dict, valid_output_path,
-		eval_forward=True, examples=valid_exs,
+		batch_size=eval_batch_size, eval_forward=True, examples=valid_exs,
 	)
 	backward_metrics = trainer.evaluator.evaluate_link_prediction_inplace(
 		trainer.model, valid_eval_path, trainer.entity_dict, valid_output_path,
-		eval_forward=False, examples=valid_backward_exs,
+		batch_size=eval_batch_size, eval_forward=False, examples=valid_backward_exs,
 	)
 	if forward_metrics and backward_metrics:
 		metric_dict.update(_kge_average_metric_dict(forward_metrics, backward_metrics))
@@ -421,6 +454,8 @@ def run_index_kge_train_loop(trainer, dataloader=None) -> dict:
 	total_start = time.time()
 	max_epochs = max(int(getattr(trainer.args, 'epochs', 1)), 1)
 	patience = config_int(trainer.args, 'early_stopping_patience', None)
+	min_epochs = config_int(trainer.args, 'early_stopping_min_epochs', None) or 0
+	min_metric = getattr(trainer.args, 'early_stopping_min_metric', None)
 	bad_counts = 0
 	if patience is not None and patience <= 0:
 		patience = None
@@ -447,11 +482,19 @@ def run_index_kge_train_loop(trainer, dataloader=None) -> dict:
 			if metric_dict and 'mrr' in metric_dict:
 				bad_counts = 0
 		elif metric_dict and 'mrr' in metric_dict:
-			bad_counts += 1
+			best_mrr = None if trainer.best_metric is None else trainer.best_metric.get('score')
+			if min_metric is None or (best_mrr is not None and best_mrr >= float(min_metric)):
+				bad_counts += 1
 
 		_save_index_kge_checkpoint(trainer, epoch, is_best)
 
-		if patience is not None and bad_counts >= patience:
+		lr_scheduler = getattr(trainer, 'lr_scheduler', None)
+		if lr_scheduler is not None and metric_dict and 'mrr' in metric_dict:
+			from torch.optim.lr_scheduler import ReduceLROnPlateau
+			if isinstance(lr_scheduler, ReduceLROnPlateau):
+				lr_scheduler.step(metric_dict['mrr'])
+
+		if patience is not None and bad_counts >= patience and (epoch + 1) >= min_epochs:
 			logger.info('[EARLY STOP] No validation MRR improvement for %d evaluations.', patience)
 			break
 
@@ -490,9 +533,25 @@ def _resolve_relation_index(relation: str, relation_to_idx: dict) -> int:
 		return relation_to_idx[normalized]
 	if relation.startswith('inverse '):
 		base_relation = relation[len('inverse '):]
+		inverse_relation = f'inverse {base_relation}'
+		if inverse_relation in relation_to_idx:
+			return relation_to_idx[inverse_relation]
 		if base_relation in relation_to_idx and f'inverse {base_relation}' not in relation_to_idx:
 			return relation_to_idx[base_relation]
 	raise KeyError(relation)
+
+
+def _relation_index_map(model: nn.Module | None) -> dict[str, int]:
+	if model is not None:
+		rel_map = getattr(model, 'rel_to_idx', None)
+		if rel_map:
+			return rel_map
+	return get_relation_id_map()
+
+
+def _load_train_examples(args, model: nn.Module | None = None):
+	add_backward = use_reciprocal_relations(args)
+	return load_data(args.train_path, add_forward_triplet=True, add_backward_triplet=add_backward)
 
 
 def _examples_to_tensors(examples, entity_dict, relation_to_idx):
@@ -507,8 +566,8 @@ def _examples_to_tensors(examples, entity_dict, relation_to_idx):
 
 def _prepare_train_triples(args, model: nn.Module) -> torch.Tensor:
 	entity_dict = get_entity_dict()
-	relation_to_idx = getattr(model, 'rel_to_idx', None) or get_relation_id_map()
-	train_examples = load_data(args.train_path, add_forward_triplet=True, add_backward_triplet=False)
+	relation_to_idx = _relation_index_map(model)
+	train_examples = _load_train_examples(args, model)
 	if not train_examples:
 		raise ValueError(f'No training examples loaded from {args.train_path}')
 	src, rel, dst = _examples_to_tensors(train_examples, entity_dict, relation_to_idx)
@@ -518,7 +577,7 @@ def _prepare_train_triples(args, model: nn.Module) -> torch.Tensor:
 def _prepare_pointwise_dataloader(args):
 	from data.dataloader import collate_pointwise
 
-	train_examples = load_data(args.train_path, add_forward_triplet=True, add_backward_triplet=False)
+	train_examples = _load_train_examples(args)
 	train_dataset = PointwiseDataset(train_examples)
 	n_batches = getattr(args, 'n_batches', None)
 	if n_batches:
@@ -548,10 +607,9 @@ def _strategy_init_kwargs(args, strategy_path: str, model: nn.Module, train_trip
 	elif paradigm == 'kvsall':
 		kwargs['train_triples'] = train_triples if train_triples is not None else _prepare_train_triples(args, model)
 	elif paradigm == '1vsall':
-		add_backward = getattr(args, 'add_reciprocal_relations', False)
 		entity_dict = get_entity_dict()
-		train_examples = load_data(args.train_path, add_forward_triplet=True, add_backward_triplet=add_backward)
-		rel_map = getattr(model, 'rel_to_idx', None) or get_relation_id_map()
+		train_examples = _load_train_examples(args, model)
+		rel_map = _relation_index_map(model)
 		kwargs['train_data'] = _examples_to_tensors(train_examples, entity_dict, rel_map)
 
 	return kwargs

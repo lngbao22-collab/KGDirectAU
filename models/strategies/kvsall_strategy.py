@@ -10,6 +10,8 @@ from torch.utils.data import DataLoader
 
 from models.builder import (
 	_resolve_nentity,
+	apply_kge_regularization,
+	build_lr_scheduler,
 	build_optimizer,
 	config_float,
 	init_index_kge_trainer,
@@ -79,6 +81,7 @@ class KvsAllStrategy:
 		self.loss_fn = loss_fn if loss_fn is not None else load_loss_fn_for_paradigm(args, 'kvsall')
 		weight_decay = config_float(args, 'weight_decay', 0.0)
 		self.optimizer = build_optimizer(args, self.model.parameters(), weight_decay)
+		self.lr_scheduler = build_lr_scheduler(args, self.optimizer)
 
 		batch_size = max(int(getattr(args, 'batch_size', 1)), 1)
 		self.train_loader = DataLoader(
@@ -123,6 +126,7 @@ class KvsAllStrategy:
 			scores_sp = self.model.score_sp_(head_ids, relations)
 			labels = self._build_labels(tail_ids_list, batch_size)
 			loss = self.loss_fn(scores_sp, labels)
+			loss = apply_kge_regularization(loss, self.model, self.args)
 			loss.backward()
 			self.optimizer.step()
 

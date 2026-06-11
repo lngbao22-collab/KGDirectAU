@@ -6,24 +6,42 @@ from typing import Any
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-from base.model import ParameterEmbedder, _scaled_init, load_relation_to_idx
+from base.embeddings import (
+	_lookup_dropout_rate,
+	_scaled_init,
+	init_lookup_embedding,
+	load_relation_to_idx,
+)
 from data.dict_hub import get_entity_dict
 
 
 class LookupEmbedder(nn.Module):
-	"""Lightweight embedding table with explicit initialization and retrieval helpers."""
+	"""Lightweight embedding table with LibKGE-style init and optional dropout."""
 
-	def __init__(self, num_items: int, dim: int, args: Any | None = None):
+	def __init__(
+		self,
+		num_items: int,
+		dim: int,
+		args: Any | None = None,
+		*,
+		role: str = 'entity',
+	):
 		super().__init__()
 		self.num_items = int(num_items)
 		self.dim = int(dim)
 		self.args = args
+		self.role = role
+		self.dropout_rate = _lookup_dropout_rate(args, role)
 		self.embedding = nn.Embedding(self.num_items, self.dim)
 		self._reset_parameters()
 
 	def _reset_parameters(self) -> None:
 		model_name = str(getattr(self.args, 'model', '')).lower()
+		if getattr(self.args, 'init_method', None):
+			init_lookup_embedding(self, self.args, self.dim, role=self.role)
+			return
 		if any(name in model_name for name in ('rotate', 'protate')):
 			margin = float(getattr(self.args, 'margin', 6.0))
 			epsilon = float(getattr(self.args, 'epsilon', 2.0))
@@ -33,10 +51,16 @@ class LookupEmbedder(nn.Module):
 			nn.init.xavier_uniform_(self.embedding.weight)
 
 	def forward(self, indices: torch.Tensor) -> torch.Tensor:
-		return self.embedding(indices.long())
+		vectors = self.embedding(indices.long())
+		if self.training and self.dropout_rate > 0.0:
+			vectors = F.dropout(vectors, p=self.dropout_rate, training=True)
+		return vectors
 
 	def get_all(self) -> torch.Tensor:
-		return self.embedding.weight
+		vectors = self.embedding.weight
+		if self.training and self.dropout_rate > 0.0:
+			vectors = F.dropout(vectors, p=self.dropout_rate, training=True)
+		return vectors
 
 	def embed(self, indices: torch.Tensor) -> torch.Tensor:
 		return self.forward(indices)
@@ -111,12 +135,14 @@ def _embedding_range(args, dim: int) -> float:
 	return (margin + 2.0) / max(1, dim)
 
 
-def _init_lookup_table(embedder: LookupEmbedder, args, dim: int) -> None:
+def _init_lookup_table(embedder: LookupEmbedder, args, dim: int, role: str) -> None:
 	if bool(getattr(args, 'adversarial_training', False)):
 		epsilon = 2.0
 		margin = float(getattr(args, 'margin', 200.0))
 		embedding_range = (margin + epsilon) / dim
 		nn.init.uniform_(embedder.embedding.weight, a=-embedding_range, b=embedding_range)
+	elif getattr(args, 'init_method', None):
+		init_lookup_embedding(embedder, args, dim, role=role)
 	elif _model_name(args) in {'distmult', 'distmult-au', 'complex', 'complex-au'}:
 		_scaled_init(embedder, dim)
 	else:
@@ -128,9 +154,9 @@ def build_entity_embedder(args) -> nn.Module:
 	dim = int(getattr(args, 'dim', 200))
 
 	if _is_complex(args):
-		ent_re = LookupEmbedder(n_ent, dim, args)
-		ent_im = LookupEmbedder(n_ent, dim, args)
-		if getattr(args, 'init_scaled', True):
+		ent_re = LookupEmbedder(n_ent, dim, args, role='entity')
+		ent_im = LookupEmbedder(n_ent, dim, args, role='entity')
+		if getattr(args, 'init_scaled', True) and not getattr(args, 'init_method', None):
 			for module in (ent_re, ent_im):
 				_scaled_init(module, dim)
 		return ComplExEntityEmbedder(ent_re, ent_im)
@@ -139,22 +165,24 @@ def build_entity_embedder(args) -> nn.Module:
 		hidden_dim = dim
 		weight = nn.Parameter(torch.zeros(n_ent, hidden_dim * 2))
 		nn.init.uniform_(weight, a=-_embedding_range(args, hidden_dim), b=_embedding_range(args, hidden_dim))
+		from base.embeddings import ParameterEmbedder
 		return ParameterEmbedder(weight)
 
 	if _is_protate(args):
 		hidden_dim = dim
 		weight = nn.Parameter(torch.zeros(n_ent, hidden_dim))
 		nn.init.uniform_(weight, a=-_embedding_range(args, hidden_dim), b=_embedding_range(args, hidden_dim))
+		from base.embeddings import ParameterEmbedder
 		return ParameterEmbedder(weight)
 
 	if _is_dabr(args):
 		emb_dim = 4 * dim
-		embedder = LookupEmbedder(n_ent, emb_dim, args)
+		embedder = LookupEmbedder(n_ent, emb_dim, args, role='entity')
 		nn.init.xavier_uniform_(embedder.embedding.weight)
 		return embedder
 
-	embedder = LookupEmbedder(n_ent, dim, args)
-	_init_lookup_table(embedder, args, dim)
+	embedder = LookupEmbedder(n_ent, dim, args, role='entity')
+	_init_lookup_table(embedder, args, dim, role='entity')
 	return embedder
 
 
@@ -163,9 +191,9 @@ def build_relation_embedder(args) -> nn.Module:
 	dim = int(getattr(args, 'dim', 200))
 
 	if _is_complex(args):
-		rel_re = LookupEmbedder(n_rel, dim, args)
-		rel_im = LookupEmbedder(n_rel, dim, args)
-		if getattr(args, 'init_scaled', True):
+		rel_re = LookupEmbedder(n_rel, dim, args, role='relation')
+		rel_im = LookupEmbedder(n_rel, dim, args, role='relation')
+		if getattr(args, 'init_scaled', True) and not getattr(args, 'init_method', None):
 			for module in (rel_re, rel_im):
 				_scaled_init(module, dim)
 		return ComplExRelationEmbedder(rel_re, rel_im)
@@ -174,16 +202,17 @@ def build_relation_embedder(args) -> nn.Module:
 		hidden_dim = dim
 		weight = nn.Parameter(torch.zeros(n_rel, hidden_dim))
 		nn.init.uniform_(weight, a=-_embedding_range(args, hidden_dim), b=_embedding_range(args, hidden_dim))
+		from base.embeddings import ParameterEmbedder
 		return ParameterEmbedder(weight)
 
 	if _is_dabr(args):
 		emb_dim = 4 * int(getattr(args, 'dim', getattr(args, 'hidden_size', 100)))
-		embedder = LookupEmbedder(n_rel, emb_dim, args)
+		embedder = LookupEmbedder(n_rel, emb_dim, args, role='relation')
 		nn.init.xavier_uniform_(embedder.embedding.weight)
 		return embedder
 
-	embedder = LookupEmbedder(n_rel, dim, args)
-	_init_lookup_table(embedder, args, dim)
+	embedder = LookupEmbedder(n_rel, dim, args, role='relation')
+	_init_lookup_table(embedder, args, dim, role='relation')
 	return embedder
 
 
@@ -192,6 +221,6 @@ def build_dr_embedder(args) -> LookupEmbedder:
 
 	_, n_rel = _counts(args)
 	emb_dim = 4 * int(getattr(args, 'dim', getattr(args, 'hidden_size', 100)))
-	embedder = LookupEmbedder(n_rel, emb_dim, args)
+	embedder = LookupEmbedder(n_rel, emb_dim, args, role='relation')
 	nn.init.xavier_uniform_(embedder.embedding.weight)
 	return embedder

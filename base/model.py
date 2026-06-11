@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import os
 from abc import ABC, abstractmethod
 from typing import Any, Sequence
 
@@ -11,6 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from base.embeddings import ParameterEmbedder, _scaled_init, load_relation_to_idx
 from data.dataset import Example, load_data
 from data.dict_hub import get_entity_dict
 from models.embedders.lookup_embedder import LookupEmbedder
@@ -52,6 +51,7 @@ class KGEModel(nn.Module):
 		self.rel_embedder = rel_embedder
 		self.scorer = scorer
 		self.args = args
+		self.rel_to_idx = load_relation_to_idx(args) if args is not None else {}
 
 	def get_s_embedder(self) -> nn.Module:
 		"""Return the subject (head) entity embedder."""
@@ -251,47 +251,10 @@ class KGEModel(nn.Module):
 		return self.score_spo(src, rel, dst)
 
 
-def _relation_path_candidates(args) -> list[str]:
-	paths = []
-	for source_path in [getattr(args, 'train_path', ''), getattr(args, 'valid_path', ''), getattr(args, 'test_path', '')]:
-		if not source_path:
-			continue
-		paths.append(os.path.join(os.path.dirname(source_path), 'relation2id.json'))
-		paths.append(os.path.join(os.path.dirname(source_path), 'relations.json'))
-		paths.append(os.path.join(os.path.dirname(source_path), 'relation2idx.json'))
-	paths.append(os.path.join('data', getattr(args, 'dataset', ''), 'relation2id.json'))
-	paths.append(os.path.join('data', getattr(args, 'dataset', ''), 'preprocessed', 'relation2id.json'))
-	return paths
-
-
-def load_relation_to_idx(args) -> dict[str, int]:
-	for path in _relation_path_candidates(args):
-		if not path or not os.path.exists(path):
-			continue
-		with open(path, 'r', encoding='utf-8') as handle:
-			mapping = json.load(handle)
-		if isinstance(mapping, dict):
-			return {str(key): int(value) for key, value in mapping.items()}
-
-	relations: list[str] = []
-	seen: set[str] = set()
-	for example in load_data(getattr(args, 'train_path', ''), add_forward_triplet=False, add_backward_triplet=False):
-		if example.relation not in seen:
-			seen.add(example.relation)
-			relations.append(example.relation)
-	return {relation: idx for idx, relation in enumerate(relations)}
-
-
 def as_index_tensor(values, lookup, device: torch.device) -> torch.Tensor:
 	if torch.is_tensor(values):
 		return values.to(device=device, dtype=torch.long)
 	return torch.tensor([lookup(value) for value in values], dtype=torch.long, device=device)
-
-
-def _scaled_init(module: nn.Module, dim: int, sigma: float = 0.2) -> None:
-	scale = (dim / sigma ** 2) ** (1 / 6)
-	for param in module.parameters():
-		param.data.div_(scale)
 
 
 def _normalize_lp_flag(args) -> bool:
@@ -299,26 +262,6 @@ def _normalize_lp_flag(args) -> bool:
 	if value is not None:
 		return bool(value)
 	return str(getattr(args, 'model', '')).endswith('-AU')
-
-
-class ParameterEmbedder(nn.Module):
-	"""Wrap a shared ``nn.Parameter`` matrix as a LibKGE-style embedder."""
-
-	def __init__(self, weight: nn.Parameter):
-		super().__init__()
-		self.register_parameter('weight', weight)
-
-	def forward(self, indices: torch.Tensor) -> torch.Tensor:
-		return self.weight.index_select(0, indices.long())
-
-	def embed(self, indices: torch.Tensor) -> torch.Tensor:
-		return self.forward(indices)
-
-	def get_all(self) -> torch.Tensor:
-		return self.weight
-
-	def embed_all(self) -> torch.Tensor:
-		return self.weight
 
 
 class _RelationLookupMixin:

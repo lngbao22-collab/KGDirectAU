@@ -157,6 +157,52 @@ def build_parser() -> argparse.ArgumentParser:
         help='disable normalized link-prediction scoring',
     )
 
+    # LibKGE-style index KGE training (DistMult, ComplEx, KvsAll, reciprocal relations).
+    parser.add_argument('--add-reciprocal-relations', '--add_reciprocal_relations',
+                        dest='add_reciprocal_relations', action='store_true',
+                        help='train with inverse relations (reciprocal_relations_model)')
+    parser.add_argument('--label-smoothing', '--label_smoothing', default=None, type=float,
+                        dest='label_smoothing', help='KvsAll label smoothing')
+    parser.add_argument('--loss-arg', '--loss_arg', default=None, type=float,
+                        dest='loss_arg', help='BCE loss offset (LibKGE train.loss_arg)')
+    parser.add_argument('--entity-dropout', '--entity_dropout', default=None, type=float,
+                        dest='entity_dropout', help='entity embedding dropout')
+    parser.add_argument('--relation-dropout', '--relation_dropout', default=None, type=float,
+                        dest='relation_dropout', help='relation embedding dropout')
+    parser.add_argument('--entity-regularize-weight', '--entity_regularize_weight',
+                        default=None, type=float, dest='entity_regularize_weight',
+                        help='L3 entity embedding regularization weight')
+    parser.add_argument('--relation-regularize-weight', '--relation_regularize_weight',
+                        default=None, type=float, dest='relation_regularize_weight',
+                        help='L3 relation embedding regularization weight')
+    parser.add_argument('--init-method', '--init_method', default='', type=str,
+                        dest='init_method', help='lookup init: uniform_, xavier_uniform_, scaled')
+    parser.add_argument('--init-uniform-a', '--init_uniform_a', default=None, type=float,
+                        dest='init_uniform_a', help='uniform_ lower bound (upper defaults to -a)')
+    parser.add_argument('--init-uniform-b', '--init_uniform_b', default=None, type=float,
+                        dest='init_uniform_b', help='uniform_ upper bound')
+    parser.add_argument('--init-xavier-gain', '--init_xavier_gain', default=1.0, type=float,
+                        dest='init_xavier_gain', help='xavier init gain')
+    parser.add_argument('--eval-batch-size', '--eval_batch_size', default=None, type=int,
+                        dest='eval_batch_size', help='link-prediction evaluation batch size')
+    parser.add_argument('--early-stopping-patience', '--early_stopping_patience',
+                        default=None, type=int, dest='early_stopping_patience',
+                        help='epochs without valid MRR improvement before early stop')
+    parser.add_argument('--early-stopping-min-epochs', '--early_stopping_min_epochs',
+                        default=None, type=int, dest='early_stopping_min_epochs',
+                        help='minimum epochs before early stopping can trigger')
+    parser.add_argument('--early-stopping-min-metric', '--early_stopping_min_metric',
+                        default=None, type=float, dest='early_stopping_min_metric',
+                        help='only count plateau epochs once best valid MRR reaches this value')
+    parser.add_argument('--lr-scheduler-mode', '--lr_scheduler_mode', default='max', type=str,
+                        dest='lr_scheduler_mode', help='ReduceLROnPlateau mode')
+    parser.add_argument('--lr-scheduler-factor', '--lr_scheduler_factor', default=0.95, type=float,
+                        dest='lr_scheduler_factor', help='ReduceLROnPlateau factor')
+    parser.add_argument('--lr-scheduler-patience', '--lr_scheduler_patience', default=7, type=int,
+                        dest='lr_scheduler_patience', help='ReduceLROnPlateau patience')
+    parser.add_argument('--lr-scheduler-threshold', '--lr_scheduler_threshold', default=1e-4, type=float,
+                        dest='lr_scheduler_threshold', help='ReduceLROnPlateau threshold')
+
     return parser
 
 
@@ -427,7 +473,17 @@ args.test_w_label_path = _resolve_data_path(
 )
 assert not args.train_path or os.path.exists(args.train_path)
 assert args.pooling in ['cls', 'mean', 'max']
-assert args.lr_scheduler in ['linear', 'cosine']
+_model_name_for_scheduler = (args.model or '').lower()
+_is_index_kge_model = _model_name_for_scheduler in {
+    'distmult', 'distmult-au', 'distmult-adversarial', 'distmult-adversarial-au',
+    'complex', 'complex-au', 'dabr', 'dabr-au', 'rotate', 'rotate-au', 'protate', 'protate-au',
+}
+if _is_index_kge_model:
+    assert args.lr_scheduler.lower() in {
+        'linear', 'cosine', 'none', 'constant', 'reducelronplateau',
+    }
+else:
+    assert args.lr_scheduler in ['linear', 'cosine']
 
 args.config_path = config_path
 

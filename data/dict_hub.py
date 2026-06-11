@@ -52,25 +52,9 @@ def _init_relation_id_map():
     if relation_id_map is not None:
         return
 
-    candidate_dir = _resolve_preprocessed_dir()
-    relation_path = os.path.join(candidate_dir, 'relation2id.json')
-    if os.path.exists(relation_path):
-        import json
-        with open(relation_path, 'r', encoding='utf-8') as reader:
-            relation_id_map = json.load(reader)
-            return
+    from base.embeddings import load_relation_to_idx
 
-    from data.dataset import TripletDict
-    fallback_paths = []
-    for source_path in [args.train_path, args.valid_path, args.test_path]:
-        if source_path:
-            fallback_paths.append(source_path)
-    if fallback_paths:
-        triplets = TripletDict(path_list=[fallback_paths[0]])
-        relation_id_map = {relation: idx for idx, relation in enumerate(sorted(triplets.relations))}
-        return
-
-    relation_id_map = {}
+    relation_id_map = load_relation_to_idx(args)
 
 
 def _init_train_triplet_dict() -> None:
