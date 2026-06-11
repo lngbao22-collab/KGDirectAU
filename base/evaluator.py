@@ -72,7 +72,7 @@ def _relation_lookup(model):
 def _build_filter_index_maps(all_triplet_dict, entity_dict, relation_lookup) -> tuple[dict, dict]:
 	"""Build filtered-evaluation maps over integer (h, r) and (r, t) keys."""
 
-	entity_to_idx = entity_dict.entity_to_idx
+	entity_to_idx = entity_dict.entity2idx
 	sp_to_tails: dict[tuple[int, int], list[int]] = {}
 	for (head_id, relation), tail_ids in all_triplet_dict.hr2tails.items():
 		try:
@@ -281,9 +281,7 @@ def _examples_to_query_index_tensors(examples: Sequence[Example], entity_dict, m
 
     head_indices = [entity_dict.entity_to_idx(ex.head_id) for ex in examples]
     tail_indices = [entity_dict.entity_to_idx(ex.tail_id) for ex in examples]
-    relation_lookup = getattr(model, '_relation_to_idx', getattr(model, 'rel_to_idx', None))
-    if relation_lookup is None:
-        raise RuntimeError('Model is missing a relation index lookup for fast evaluation')
+    relation_lookup = _relation_lookup(model)
     relation_indices = [relation_lookup(ex.relation) for ex in examples]
     return (
         torch.tensor(head_indices, dtype=torch.long),
