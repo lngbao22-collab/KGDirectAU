@@ -128,37 +128,123 @@ def _lookup_dropout_rate(args: Any | None, role: str) -> float:
 	return float(raw or 0.0)
 
 
-def _embedding_table_l3(embedder: nn.Module) -> torch.Tensor | None:
+def _regularize_p(args: Any | None) -> int:
+	raw = getattr(args, 'regularize_p', None)
+	if raw is not None:
+		return int(raw)
+	return 3
+
+
+def _regularize_weighted(args: Any | None, role: str) -> bool:
+	if role == 'entity':
+		raw = getattr(args, 'entity_regularize_weighted', None)
+	else:
+		raw = getattr(args, 'relation_regularize_weighted', None)
+	if raw is None:
+		return True
+	return bool(raw)
+
+
+def _lookup_embedding_rows(embedder: nn.Module, indexes: torch.Tensor) -> torch.Tensor | None:
 	if hasattr(embedder, 'embedding'):
-		return embedder.embedding.weight.norm(p=3) ** 3
+		return embedder.embedding(indexes.long())
 	if hasattr(embedder, 'ent_re') and hasattr(embedder, 'ent_im'):
-		return embedder.ent_re.embedding.weight.norm(p=3) ** 3 + embedder.ent_im.embedding.weight.norm(p=3) ** 3
+		return torch.cat([embedder.ent_re.embedding(indexes.long()), embedder.ent_im.embedding(indexes.long())], dim=-1)
 	if hasattr(embedder, 'rel_re') and hasattr(embedder, 'rel_im'):
-		return embedder.rel_re.embedding.weight.norm(p=3) ** 3 + embedder.rel_im.embedding.weight.norm(p=3) ** 3
+		return torch.cat([embedder.rel_re.embedding(indexes.long()), embedder.rel_im.embedding(indexes.long())], dim=-1)
 	if hasattr(embedder, 'weight'):
-		return embedder.weight.norm(p=3) ** 3
+		return embedder.weight.index_select(0, indexes.long())
 	return None
 
 
-def compute_kge_l3_regularization(model: nn.Module, args: Any | None) -> torch.Tensor | None:
-	"""LibKGE-style L3 embedding regularization with per-table weights."""
+def _embedding_table_l3(embedder: nn.Module, p: int = 3) -> torch.Tensor | None:
+	if hasattr(embedder, 'embedding'):
+		return embedder.embedding.weight.norm(p=p) ** p
+	if hasattr(embedder, 'ent_re') and hasattr(embedder, 'ent_im'):
+		return embedder.ent_re.embedding.weight.norm(p=p) ** p + embedder.ent_im.embedding.weight.norm(p=p) ** p
+	if hasattr(embedder, 'rel_re') and hasattr(embedder, 'rel_im'):
+		return embedder.rel_re.embedding.weight.norm(p=p) ** p + embedder.rel_im.embedding.weight.norm(p=p) ** p
+	if hasattr(embedder, 'weight'):
+		return embedder.weight.norm(p=p) ** p
+	return None
+
+
+def _weighted_lp_penalty(
+	embedder: nn.Module,
+	indexes: torch.Tensor,
+	*,
+	weight: float,
+	p: int,
+	num_indexes: int,
+) -> torch.Tensor | None:
+	if weight == 0.0 or indexes.numel() == 0:
+		return None
+	flat_indexes = indexes.reshape(-1).long()
+	unique_indexes, counts = torch.unique(flat_indexes, return_counts=True)
+	parameters = _lookup_embedding_rows(embedder, unique_indexes)
+	if parameters is None:
+		return None
+	if (p % 2 == 1):
+		parameters = torch.abs(parameters)
+	return (
+		weight
+		/ p
+		* (parameters ** p * counts.float().view(-1, 1)).sum()
+		/ max(int(num_indexes), 1)
+	)
+
+
+def compute_kge_l3_regularization(
+	model: nn.Module,
+	args: Any | None,
+	*,
+	batch_triples: torch.Tensor | None = None,
+) -> torch.Tensor | None:
+	"""LibKGE-style Lp embedding regularization with optional batch weighting."""
 
 	ent_weight = float(getattr(args, 'entity_regularize_weight', 0.0) or 0.0)
 	rel_weight = float(getattr(args, 'relation_regularize_weight', 0.0) or 0.0)
 	if ent_weight == 0.0 and rel_weight == 0.0:
 		return None
 
+	p = _regularize_p(args)
 	terms: list[torch.Tensor] = []
 	ent_embedder = getattr(model, 'ent_embedder', None)
 	rel_embedder = getattr(model, 'rel_embedder', None)
+
 	if ent_weight > 0.0 and ent_embedder is not None:
-		ent_term = _embedding_table_l3(ent_embedder)
+		if batch_triples is not None and _regularize_weighted(args, 'entity'):
+			entity_indexes = torch.cat((batch_triples[:, 0], batch_triples[:, 2]))
+			ent_term = _weighted_lp_penalty(
+				ent_embedder,
+				entity_indexes,
+				weight=ent_weight,
+				p=p,
+				num_indexes=batch_triples.size(0),
+			)
+		else:
+			ent_term = _embedding_table_l3(ent_embedder, p=p)
+			if ent_term is not None:
+				ent_term = ent_weight * ent_term / p
 		if ent_term is not None:
-			terms.append(ent_weight * ent_term)
+			terms.append(ent_term)
+
 	if rel_weight > 0.0 and rel_embedder is not None:
-		rel_term = _embedding_table_l3(rel_embedder)
+		if batch_triples is not None and _regularize_weighted(args, 'relation'):
+			rel_term = _weighted_lp_penalty(
+				rel_embedder,
+				batch_triples[:, 1],
+				weight=rel_weight,
+				p=p,
+				num_indexes=batch_triples.size(0),
+			)
+		else:
+			rel_term = _embedding_table_l3(rel_embedder, p=p)
+			if rel_term is not None:
+				rel_term = rel_weight * rel_term / p
 		if rel_term is not None:
-			terms.append(rel_weight * rel_term)
+			terms.append(rel_term)
+
 	if not terms:
 		return None
 	return sum(terms)

@@ -35,6 +35,39 @@ def accuracy(output: torch.Tensor, target: torch.Tensor, topk=(1,)) -> list:
     return topk_accuracy(output, target, topk=topk)
 
 
+def ranks_from_score_matrix(
+	score: torch.Tensor,
+	target_indices: torch.Tensor,
+	*,
+	tie_handling: str = 'rounded_mean_rank',
+	tie_rtol: float = 1e-4,
+	tie_atol: float = 1e-5,
+) -> list[int]:
+	"""Compute 1-based filtered ranks with LibKGE-style tie handling."""
+
+	scores = score.clone()
+	scores[torch.isnan(scores)] = float('-inf')
+	target_scores = scores.gather(1, target_indices.unsqueeze(1))
+	target_scores = target_scores.clone()
+	target_scores[torch.isnan(target_scores)] = float('-inf')
+
+	is_close = torch.isclose(scores, target_scores, rtol=tie_rtol, atol=tie_atol)
+	is_greater = scores > target_scores
+	num_ties = torch.sum(is_close, dim=1, dtype=torch.long)
+	rank_zero = torch.sum(is_greater & ~is_close, dim=1, dtype=torch.long)
+
+	if tie_handling == 'rounded_mean_rank':
+		ranks_zero = rank_zero + num_ties // 2
+	elif tie_handling == 'best_rank':
+		ranks_zero = rank_zero
+	elif tie_handling == 'worst_rank':
+		ranks_zero = rank_zero + num_ties - 1
+	else:
+		raise ValueError(f'Unsupported tie_handling={tie_handling!r}')
+
+	return ranks_zero.add(1).tolist()
+
+
 def ranking_metrics_from_ranks(ranks: Sequence[int]) -> dict:
     """Compute link-prediction metrics from 1-based ranks.
 
@@ -84,13 +117,7 @@ def ranking_metrics_from_scores(scores: torch.Tensor, targets: torch.Tensor, top
         if target_rank.size(0) != scores.size(0):
             raise RuntimeError('Unable to locate one target rank per example')
 
-        ranks: List[int] = []
-        for idx in range(target_rank.size(0)):
-            row = target_rank[idx].tolist()
-            if row[0] != idx:
-                raise RuntimeError('Target rank rows are misaligned')
-            ranks.append(row[1] + 1)
-
+        ranks = ranks_from_score_matrix(scores, targets.view(-1))
         metrics = ranking_metrics_from_ranks(ranks)
         topk_scores = sorted_scores[:, :maxk].tolist()
         topk_indices = sorted_indices[:, :maxk].tolist()

@@ -230,8 +230,18 @@ def build_lr_scheduler(args, optimizer):
 	return None
 
 
-def apply_kge_regularization(loss: torch.Tensor, model: nn.Module, args) -> torch.Tensor:
-	reg_term = compute_kge_l3_regularization(get_model_obj(model), args)
+def apply_kge_regularization(
+	loss: torch.Tensor,
+	model: nn.Module,
+	args,
+	*,
+	batch_triples: torch.Tensor | None = None,
+) -> torch.Tensor:
+	reg_term = compute_kge_l3_regularization(
+		get_model_obj(model),
+		args,
+		batch_triples=batch_triples,
+	)
 	if reg_term is None:
 		return loss
 	return loss + reg_term
@@ -562,7 +572,13 @@ def _relation_index_map(model: nn.Module | None) -> dict[str, int]:
 
 
 def _load_train_examples(args, model: nn.Module | None = None):
+	del model
 	add_backward = use_reciprocal_relations(args)
+	strategy_path = (getattr(args, 'model_strategy_path', '') or '').replace('\\', '/').lower()
+	if 'kvsall' in strategy_path:
+		from models.strategies.kvsall_strategy import kvsall_uses_po_training
+		if kvsall_uses_po_training(args):
+			add_backward = False
 	return load_data(args.train_path, add_forward_triplet=True, add_backward_triplet=add_backward)
 
 

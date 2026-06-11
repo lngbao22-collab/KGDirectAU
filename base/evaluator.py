@@ -15,7 +15,7 @@ from utils.device import get_model_obj, move_to_cuda
 from data.dict_hub import get_all_triplet_dict, get_entity_dict
 from data.dataset import Example, load_data
 from data.dataloader import collate
-from metrics.ranking import ranking_metrics_from_ranks
+from metrics.ranking import ranking_metrics_from_ranks, ranks_from_score_matrix
 from metrics.classification import classification_metrics, find_global_threshold
 
 from configs.config import args as global_args
@@ -306,11 +306,25 @@ def _infer_target_indices(examples: Sequence[Example], entity_dict, predict_head
     return torch.LongTensor(target_indices)
 
 
-def _ranks_from_score_matrix(score: torch.Tensor, target_indices: torch.Tensor) -> list[int]:
-    """Compute 1-based filtered ranks without sorting the full score matrix."""
+def _tie_handling_kwargs(args=None) -> dict:
+	"""Resolve LibKGE-style tie-handling options for ranking."""
 
-    target_scores = score.gather(1, target_indices.unsqueeze(1))
-    return (score > target_scores).sum(dim=1).add(1).tolist()
+	eval_args = args if args is not None else global_args
+	return {
+		'tie_handling': str(getattr(eval_args, 'tie_handling', 'rounded_mean_rank') or 'rounded_mean_rank'),
+		'tie_rtol': float(getattr(eval_args, 'tie_rtol', 1e-4) or 1e-4),
+		'tie_atol': float(getattr(eval_args, 'tie_atol', 1e-5) or 1e-5),
+	}
+
+
+def _ranks_from_score_matrix(
+	score: torch.Tensor,
+	target_indices: torch.Tensor,
+	args=None,
+) -> list[int]:
+	"""Compute 1-based filtered ranks with LibKGE tie handling."""
+
+	return ranks_from_score_matrix(score, target_indices, **_tie_handling_kwargs(args))
 
 
 def _score_triple_classification_batch(
