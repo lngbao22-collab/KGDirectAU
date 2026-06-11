@@ -313,6 +313,47 @@ def _ranks_from_score_matrix(score: torch.Tensor, target_indices: torch.Tensor) 
     return (score > target_scores).sum(dim=1).add(1).tolist()
 
 
+def _score_triple_classification_batch(
+	model,
+	batch: Sequence[Example],
+	entity_dict,
+) -> torch.Tensor:
+	"""Score labeled triples for classification (index KGE or legacy ``score_batch``)."""
+
+	model_obj = get_model_obj(model)
+	if hasattr(model_obj, 'score_batch'):
+		scores = model_obj.score_batch(
+			[ex.head_id for ex in batch],
+			[ex.relation for ex in batch],
+			[ex.tail_id for ex in batch],
+		)
+	elif hasattr(model_obj, 'score_spo'):
+		h_idx, r_idx, t_idx = _examples_to_query_index_tensors(batch, entity_dict, model_obj)
+		device = next(model_obj.parameters()).device
+		scores = model_obj.score_spo(
+			h_idx.to(device),
+			r_idx.to(device),
+			t_idx.to(device),
+		)
+	else:
+		raise ModelInterfaceError(
+			'Model must expose score_batch or score_spo for index-based triple classification.'
+		)
+
+	if not isinstance(scores, torch.Tensor):
+		scores = torch.tensor(scores)
+	if scores.dim() == 2 and scores.size(0) == scores.size(1):
+		scores = scores.diag()
+	return scores
+
+
+def _supports_index_triple_classification(model) -> bool:
+	"""Return True when triple classification can run without text tokenization."""
+
+	model_obj = get_model_obj(model)
+	return hasattr(model_obj, 'score_batch') or hasattr(model_obj, 'score_spo')
+
+
 def _score_by_embedding_adapter(model, examples: List[Example], entity_tensor: torch.Tensor) -> torch.Tensor:
     """Score examples using the model's embedding adapters."""
 
@@ -528,21 +569,14 @@ class Evaluator:
         ]
         y_true = [int(ex.label) for ex in eval_exs]
         y_prob = []
-        if hasattr(model, 'score_batch'):
+        if _supports_index_triple_classification(model):
             if not eval_exs:
                 logger.info(f"[EVAL] {label_file} has no labeled examples, skip evaluation.")
                 return
+            entity_dict = get_entity_dict()
             for i in range(0, len(eval_exs), batch_size):
                 batch = eval_exs[i:i + batch_size]
-                scores = model.score_batch(
-                    [ex.head_id for ex in batch],
-                    [ex.relation for ex in batch],
-                    [ex.tail_id for ex in batch],
-                )
-                if not isinstance(scores, torch.Tensor):
-                    scores = torch.tensor(scores)
-                if scores.dim() == 2 and scores.size(0) == scores.size(1):
-                    scores = scores.diag()
+                scores = _score_triple_classification_batch(model, batch, entity_dict)
                 y_prob.extend(torch.sigmoid(scores).detach().cpu().numpy().reshape(-1).tolist())
         else:
             with torch.no_grad():
@@ -770,18 +804,11 @@ class Evaluator:
             self.load(ckt_path)
         self.model.eval()
 
-        if hasattr(self.model, 'score_batch'):
+        if _supports_index_triple_classification(self.model):
+            entity_dict = get_entity_dict()
             for i in range(0, len(test_exs), batch_size):
                 batch = test_exs[i:i + batch_size]
-                scores = self.model.score_batch(
-                    [ex.head_id for ex in batch],
-                    [ex.relation for ex in batch],
-                    [ex.tail_id for ex in batch],
-                )
-                if not isinstance(scores, torch.Tensor):
-                    scores = torch.tensor(scores)
-                if scores.dim() == 2 and scores.size(0) == scores.size(1):
-                    scores = scores.diag()
+                scores = _score_triple_classification_batch(self.model, batch, entity_dict)
                 prob = torch.sigmoid(scores).detach().cpu().numpy().reshape(-1)
                 y_prob.extend(prob.tolist())
         else:
