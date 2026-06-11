@@ -63,6 +63,8 @@ def _strategy_paradigm(strategy_path: str) -> str:
 	path = strategy_path.replace('\\', '/').lower()
 	if 'negsamp' in path or 'adversarial' in path or 'pointwise' in path:
 		return 'negsamp'
+	if 'kvsall' in path:
+		return 'kvsall'
 	if '1vsall' in path or 'softmax' in path:
 		return '1vsall'
 	if 'kgau' in path:
@@ -470,7 +472,7 @@ def run_index_kge_train_loop(trainer, dataloader=None) -> dict:
 
 def load_strategy_class(args):
 	strategy_path = getattr(args, 'model_strategy_path', '') or ''
-	for attr in ('Strategy', 'NegSampStrategy', 'OneVsAllStrategy', 'KGAUStrategy', 'InBatchStrategy', 'SimKGCStrategy'):
+	for attr in ('Strategy', 'NegSampStrategy', 'OneVsAllStrategy', 'KvsAllStrategy', 'KGAUStrategy', 'InBatchStrategy', 'SimKGCStrategy'):
 		try:
 			cls = load_attr_from_path(strategy_path, attr)
 		except AttributeError:
@@ -543,6 +545,8 @@ def _strategy_init_kwargs(args, strategy_path: str, model: nn.Module, train_trip
 			kwargs['train_dataloader'] = _prepare_pointwise_dataloader(args)
 		else:
 			kwargs['train_triples'] = train_triples if train_triples is not None else _prepare_train_triples(args, model)
+	elif paradigm == 'kvsall':
+		kwargs['train_triples'] = train_triples if train_triples is not None else _prepare_train_triples(args, model)
 	elif paradigm == '1vsall':
 		add_backward = getattr(args, 'add_reciprocal_relations', False)
 		entity_dict = get_entity_dict()
@@ -573,7 +577,7 @@ def build_pipeline(args, ngpus_per_node: int = 1):
 		model.cuda()
 
 	loss_fn = load_loss_fn(args)
-	train_triples = _prepare_train_triples(args, model) if paradigm == 'negsamp' else None
+	train_triples = _prepare_train_triples(args, model) if paradigm in ('negsamp', 'kvsall') else None
 	sampler = load_sampler(args, model, train_triples)
 	strategy_kwargs = _strategy_init_kwargs(args, strategy_path, model, train_triples)
 
