@@ -245,10 +245,39 @@ class KGEModel(nn.Module):
 			return self.scorer.build_query(head, relation), tail, head
 		return head * relation, tail, head
 
+	def score_batch(self, head_ids, relations, tail_entity_ids) -> torch.Tensor:
+		"""Score a batch of (head, relation, tail) triples by entity/relation id."""
+
+		entity_dict = get_entity_dict()
+		device = self.device
+		rel_lookup = lambda relation: resolve_relation_index(relation, self.rel_to_idx)
+		head_indices = as_index_tensor(head_ids, entity_dict.entity_to_idx, device)
+		relation_indices = as_index_tensor(relations, rel_lookup, device)
+		tail_indices = as_index_tensor(tail_entity_ids, entity_dict.entity_to_idx, device)
+		return self.score_spo(head_indices, relation_indices, tail_indices)
+
 	def forward(self, src: torch.Tensor, rel: torch.Tensor, dst: torch.Tensor) -> torch.Tensor:
 		"""Default training forward: score a batch of triple indices."""
 
 		return self.score_spo(src, rel, dst)
+
+
+def resolve_relation_index(relation: str, relation_to_idx: dict[str, int]) -> int:
+	"""Map a relation string to its embedding index."""
+
+	if relation in relation_to_idx:
+		return relation_to_idx[relation]
+	normalized = ' '.join(relation.split())
+	if normalized in relation_to_idx:
+		return relation_to_idx[normalized]
+	if relation.startswith('inverse '):
+		base_relation = relation[len('inverse '):]
+		inverse_relation = f'inverse {base_relation}'
+		if inverse_relation in relation_to_idx:
+			return relation_to_idx[inverse_relation]
+		if base_relation in relation_to_idx:
+			return relation_to_idx[base_relation]
+	raise KeyError(relation)
 
 
 def as_index_tensor(values, lookup, device: torch.device) -> torch.Tensor:

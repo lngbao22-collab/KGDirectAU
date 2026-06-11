@@ -151,8 +151,13 @@ def build_tokenizer(args) -> None:
 
     global tokenizer
     if tokenizer is None:
-        tokenizer = AutoTokenizer.from_pretrained(args.bert_encoder)
-        logger.info('Build tokenizer from {}'.format(args.bert_encoder))
+        encoder = str(getattr(args, 'bert_encoder', '') or '').strip()
+        if not encoder:
+            raise RuntimeError(
+                'bert_encoder is not configured; text tokenization is only required for SimKGC-style models.'
+            )
+        tokenizer = AutoTokenizer.from_pretrained(encoder)
+        logger.info('Build tokenizer from %s', encoder)
 
 
 def get_tokenizer() -> AutoTokenizer:
