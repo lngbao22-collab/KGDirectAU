@@ -12,6 +12,7 @@ import torch
 from torch import optim
 from torch.optim import Adam
 
+from base.embeddings import use_reciprocal_relations
 from base.evaluator import Evaluator
 from data.dataloader import collate
 from data.dataset import Dataset, load_data
@@ -120,7 +121,10 @@ class KGAUStrategy(Evaluator):
 		super().__init__(args)
 		self.ngpus_per_node = ngpus_per_node
 		self.uses_text_inputs = _uses_text_inputs(args)
-		add_backward_triplet = self.uses_text_inputs
+		# Text encoders (SimKGC) already encode both directions in one forward triplet.
+		# Index KGE with reciprocal relations needs explicit inverse triplets so
+		# inverse-relation embeddings are trained (backward LP eval uses them).
+		add_backward_triplet = self.uses_text_inputs or use_reciprocal_relations(args)
 		self.train_examples = load_data(
 			args.train_path, add_forward_triplet=True, add_backward_triplet=add_backward_triplet)
 		logger.info(
