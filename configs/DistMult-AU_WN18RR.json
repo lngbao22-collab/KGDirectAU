@@ -33,5 +33,9 @@
   "gamma_t": 1.0,
   "gamma_h": 1.0,
   "gamma_ent": 1.0,
-  "tuni": 2.0
+  "tuni": 2.0,
+  "epoch_per_eval": 5,
+  "tie_handling": "rounded_mean_rank",
+  "tie_rtol": 0.0001,
+  "tie_atol": 0.00001
 }
