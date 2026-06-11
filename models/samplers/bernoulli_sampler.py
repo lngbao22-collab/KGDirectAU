@@ -56,3 +56,45 @@ class BernoulliListwiseSampler(object):
 			dst_out[~selection, :] = ent_random[~selection]
 
 		return torch.from_numpy(src_out).long(), rel_out.long(), torch.from_numpy(dst_out).long()
+
+
+def _resolve_nentity(args, model) -> int:
+	for attr in ('nentity', 'ent_total'):
+		value = getattr(args, attr, None)
+		if value is not None:
+			return int(value)
+	if model is not None:
+		if hasattr(model, 'ent_embedder') and hasattr(model.ent_embedder, 'embedding'):
+			return int(model.ent_embedder.embedding.num_embeddings)
+		if hasattr(model, 'entity_embedding'):
+			return int(model.entity_embedding.size(0))
+	from data.dict_hub import get_entity_dict
+	return len(get_entity_dict())
+
+
+def _resolve_nrelation(args, model) -> int:
+	for attr in ('nrelation', 'rel_total'):
+		value = getattr(args, attr, None)
+		if value is not None:
+			return int(value)
+	if model is not None and hasattr(model, 'rel_embedder'):
+		rel_emb = model.rel_embedder
+		if hasattr(rel_emb, 'embedding'):
+			return int(rel_emb.embedding.num_embeddings)
+		if hasattr(rel_emb, 'rel_re'):
+			return int(rel_emb.rel_re.num_items)
+	from base.embeddings import load_relation_to_idx
+	return max(len(load_relation_to_idx(args)), 1)
+
+
+def build_sampler(args, train_triples, model):
+	"""Construct a Bernoulli listwise sampler for DistMult/ComplEx training."""
+
+	if train_triples is None:
+		raise ValueError('train_triples is required for BernoulliListwiseSampler')
+	src, rel, dst = train_triples[:, 0], train_triples[:, 1], train_triples[:, 2]
+	n_ent = _resolve_nentity(args, model)
+	n_rel = _resolve_nrelation(args, model)
+	n_sample = getattr(args, 'n_sample', None)
+	n_sample = 100 if n_sample is None else int(n_sample)
+	return BernoulliListwiseSampler((src, rel, dst), n_ent, n_rel, n_sample)

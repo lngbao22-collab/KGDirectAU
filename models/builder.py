@@ -636,7 +636,10 @@ def build_pipeline(args, ngpus_per_node: int = 1):
 
 	loss_fn = load_loss_fn(args)
 	train_triples = _prepare_train_triples(args, model) if paradigm in ('negsamp', 'kvsall') else None
-	sampler = load_sampler(args, model, train_triples)
+	if paradigm in ('kvsall', '1vsall', 'kgau'):
+		sampler = None
+	else:
+		sampler = load_sampler(args, model, train_triples)
 	strategy_kwargs = _strategy_init_kwargs(args, strategy_path, model, train_triples)
 
 	if paradigm == 'kgau':
