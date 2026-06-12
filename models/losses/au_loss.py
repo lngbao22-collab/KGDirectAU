@@ -207,33 +207,33 @@ class KGAULoss(nn.Module):
 		active_frac = float((scaled_dist_sq < geom_margin).float().mean().item())
 		return spread + buffer, active_frac
 
-	def forward(
+	def forward_alignment(
 		self,
 		q: torch.Tensor,
 		t: torch.Tensor,
-		h: torch.Tensor | None = None,
-		ent: torch.Tensor | None = None,
-		q_uni: torch.Tensor | None = None,
-		t_uni: torch.Tensor | None = None,
-		h_uni: torch.Tensor | None = None,
 		external_align: torch.Tensor | None = None,
-		return_stats: bool = False,
-	):
-		"""Return the total AU loss together with alignment and uniformity terms.
-
-		Each uniformity term is computed exactly once. When ``return_stats`` is
-		True, also return the gamma-weighted fraction of query/target pairs that
-		fall inside the margin buffer (only meaningful when ``additive_margin`` > 0).
-		"""
+	) -> torch.Tensor:
+		"""Alignment term only (mean over rows of ``q`` and ``t``)."""
 
 		if external_align is not None:
-			l_align = external_align
-		elif self.alignment_mode == 'sin_phase':
-			l_align = self.sin_phase_alignment_loss(q, t)
-		elif self.alignment_mode == 'phase_residual':
-			l_align = (q - t).pow(2).sum(dim=-1).mean()
-		else:
-			l_align = self.alignment_loss(q, t)
+			return external_align
+		if self.alignment_mode == 'sin_phase':
+			return self.sin_phase_alignment_loss(q, t)
+		if self.alignment_mode == 'phase_residual':
+			return (q - t).pow(2).sum(dim=-1).mean()
+		return self.alignment_loss(q, t)
+
+	def forward_uniformity(
+		self,
+		q: torch.Tensor,
+		t: torch.Tensor,
+		q_uni: torch.Tensor | None = None,
+		t_uni: torch.Tensor | None = None,
+		h: torch.Tensor | None = None,
+		h_uni: torch.Tensor | None = None,
+		ent: torch.Tensor | None = None,
+	) -> tuple[torch.Tensor, float]:
+		"""Uniformity terms only; returns (loss, margin-active fraction for logging)."""
 
 		l_unif = q.new_zeros(())
 		active_sum = 0.0
@@ -261,12 +261,38 @@ class KGAULoss(nn.Module):
 				term, _ = self.uniformity_loss_with_stats(ent_rows)
 				l_unif = l_unif + self.gamma_ent * term
 
+		if float(self.additive_margin) > 0.0 and active_weight > 0:
+			margin_active_frac = active_sum / active_weight
+		else:
+			margin_active_frac = 0.0
+		return l_unif, margin_active_frac
+
+	def forward(
+		self,
+		q: torch.Tensor,
+		t: torch.Tensor,
+		h: torch.Tensor | None = None,
+		ent: torch.Tensor | None = None,
+		q_uni: torch.Tensor | None = None,
+		t_uni: torch.Tensor | None = None,
+		h_uni: torch.Tensor | None = None,
+		external_align: torch.Tensor | None = None,
+		return_stats: bool = False,
+	):
+		"""Return the total AU loss together with alignment and uniformity terms.
+
+		Each uniformity term is computed exactly once. When ``return_stats`` is
+		True, also return the gamma-weighted fraction of query/target pairs that
+		fall inside the margin buffer (only meaningful when ``additive_margin`` > 0).
+		"""
+
+		l_align = self.forward_alignment(q, t, external_align=external_align)
+		l_unif, margin_active_frac = self.forward_uniformity(
+			q, t, q_uni=q_uni, t_uni=t_uni, h=h, h_uni=h_uni, ent=ent,
+		)
+
 		total_loss = l_align + l_unif
 		if return_stats:
-			if float(self.additive_margin) > 0.0 and active_weight > 0:
-				margin_active_frac = active_sum / active_weight
-			else:
-				margin_active_frac = 0.0
 			return total_loss, l_align, l_unif, margin_active_frac
 		return total_loss, l_align, l_unif
 

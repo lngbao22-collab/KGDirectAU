@@ -17,7 +17,7 @@ from base.evaluator import Evaluator
 from data.dataloader import collate
 from data.dataset import Dataset, load_data
 from data.dict_hub import get_entity_dict, get_relation_id_map
-from models.builder import load_attr_from_path
+from models.builder import config_bool, load_attr_from_path
 from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, save_checkpoint
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
 from utils.logger import AverageMeter, ProgressMeter, logger
@@ -157,7 +157,20 @@ class KGAUStrategy(Evaluator):
 			weight_decay = 0.0
 		batch_size = max(getattr(args, 'batch_size', 1), 1)
 		num_batches = max(math.ceil(len(self.train_examples) / batch_size), 1)
-		self.weight_decay = float(weight_decay) / num_batches
+		self.au_per_epoch = config_bool(args, 'au_per_epoch', False)
+		if self.au_per_epoch and self.uses_text_inputs:
+			logger.warning('au_per_epoch is not supported for text encoders; using per-batch AU.')
+			self.au_per_epoch = False
+		if self.au_per_epoch:
+			self.weight_decay = float(weight_decay)
+			self._build_epoch_uniformity_representatives()
+			logger.info(
+				'KGAU au_per_epoch: one optimizer step per epoch; '
+				'alignment/uniformity use the full training set (batch_size=%d is forward chunk size only).',
+				batch_size,
+			)
+		else:
+			self.weight_decay = float(weight_decay) / num_batches
 		self.optimizer = _build_optimizer(args, self.model.parameters(), self.weight_decay)
 
 		tuni_val = _config_float(args, 'tuni', _config_float(args, 'temperature', _config_float(args, 't', 2.0)))
@@ -260,6 +273,16 @@ class KGAUStrategy(Evaluator):
 		interval = self._validation_interval()
 		epoch_number = epoch + 1
 		return epoch_number % interval == 0 or epoch_number >= int(self.args.epochs)
+
+	def _build_epoch_uniformity_representatives(self) -> None:
+		"""Precompute one training-row index per unique query/tail/head key for epoch AU."""
+
+		q_keys, t_keys, h_keys = self._uniformity_keys(
+			self.train_src, self.train_rel, self.train_dst,
+		)
+		self.epoch_q_rep_idx = distinct_first_indices(q_keys)
+		self.epoch_t_rep_idx = distinct_first_indices(t_keys)
+		self.epoch_h_rep_idx = distinct_first_indices(h_keys)
 
 	def _uniformity_keys(
 		self,
@@ -440,6 +463,120 @@ class KGAUStrategy(Evaluator):
 			self.scaler.scale(scaled_loss).backward()
 		else:
 			scaled_loss.backward()
+
+	def _au_vectors_at_indices(
+		self,
+		model,
+		indices: torch.Tensor,
+		chunk_size: int,
+		vector: str,
+	) -> torch.Tensor:
+		"""Fetch query, tail, or head AU vectors for training rows (chunked for memory)."""
+
+		parts: list[torch.Tensor] = []
+		for start in range(0, indices.numel(), chunk_size):
+			chunk_idx = indices[start:start + chunk_size]
+			ss = self.train_src.index_select(0, chunk_idx)
+			rs = self.train_rel.index_select(0, chunk_idx)
+			ts = self.train_dst.index_select(0, chunk_idx)
+			q_raw, t_raw, h_raw = self._au_representation_batch(model, ss, rs, ts)
+			if vector == 'q':
+				parts.append(q_raw)
+			elif vector == 't':
+				parts.append(t_raw)
+			else:
+				parts.append(h_raw)
+		return torch.cat(parts, dim=0)
+
+	def _append_l3_regularization(self, loss: torch.Tensor) -> torch.Tensor:
+		reg_coef = _config_float(self.args, 'regularization', 0.0)
+		if reg_coef <= 0.0:
+			return loss
+		l3_term = self._embedding_l3_regularization(self.model)
+		if l3_term is None:
+			return loss
+		return loss + reg_coef * l3_term
+
+	def _optimizer_step(self, use_amp: bool) -> None:
+		grad_clip = getattr(self.args, 'grad_clip', None)
+		if use_amp:
+			self.scaler.unscale_(self.optimizer)
+			if grad_clip is not None:
+				torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
+			self.scaler.step(self.optimizer)
+			self.scaler.update()
+		else:
+			if grad_clip is not None:
+				torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
+			self.optimizer.step()
+
+	def _train_au_epoch(
+		self,
+		model,
+		epoch: int,
+		chunk_size: int,
+		use_amp: bool,
+	) -> tuple[float, float, float, int, int, float]:
+		"""One optimizer step per epoch: global alignment mean + full-set uniformity."""
+
+		del epoch
+		num_examples = self.train_src.size(0)
+		perm = torch.randperm(num_examples, device=self.train_src.device)
+		src = self.train_src.index_select(0, perm)
+		rel = self.train_rel.index_select(0, perm)
+		dst = self.train_dst.index_select(0, perm)
+
+		self.optimizer.zero_grad()
+		align_loss_sum = 0.0
+
+		for start in range(0, num_examples, chunk_size):
+			end = min(start + chunk_size, num_examples)
+			ss, rs, ts = src[start:end], rel[start:end], dst[start:end]
+			chunk = end - start
+			fraction = chunk / num_examples
+			if use_amp:
+				with torch.amp.autocast(device_type='cuda'):
+					q_raw, t_raw, _ = self._au_representation_batch(model, ss, rs, ts)
+					l_align = self.criterion.forward_alignment(q_raw, t_raw)
+				self._backward_au_loss(l_align, fraction, use_amp=True)
+			else:
+				q_raw, t_raw, _ = self._au_representation_batch(model, ss, rs, ts)
+				l_align = self.criterion.forward_alignment(q_raw, t_raw)
+				self._backward_au_loss(l_align, fraction, use_amp=False)
+			align_loss_sum += l_align.item() * chunk
+
+		q_uni = self._au_vectors_at_indices(model, self.epoch_q_rep_idx, chunk_size, 'q') if self.criterion.gamma_q > 0 else None
+		t_uni = self._au_vectors_at_indices(model, self.epoch_t_rep_idx, chunk_size, 't') if self.criterion.gamma_t > 0 else None
+		h_uni = self._au_vectors_at_indices(model, self.epoch_h_rep_idx, chunk_size, 'h') if self.criterion.gamma_h > 0 else None
+		ent_raw = self._catalog_entity_uniformity_vectors(model)
+
+		dummy_q = q_uni if q_uni is not None else t_uni if t_uni is not None else h_uni
+		if dummy_q is None:
+			dummy_q = ent_raw if ent_raw is not None else next(model.parameters())
+		dummy_t = t_uni if t_uni is not None else dummy_q
+
+		if use_amp:
+			with torch.amp.autocast(device_type='cuda'):
+				l_unif, margin_active = self.criterion.forward_uniformity(
+					dummy_q, dummy_t, q_uni=q_uni, t_uni=t_uni, h=h_uni, h_uni=h_uni, ent=ent_raw,
+				)
+				loss = self._append_l3_regularization(l_unif)
+			self.scaler.scale(loss).backward()
+		else:
+			l_unif, margin_active = self.criterion.forward_uniformity(
+				dummy_q, dummy_t, q_uni=q_uni, t_uni=t_uni, h=h_uni, h_uni=h_uni, ent=ent_raw,
+			)
+			loss = self._append_l3_regularization(l_unif)
+			loss.backward()
+
+		self._optimizer_step(use_amp)
+
+		n_unique_q = int(self.epoch_q_rep_idx.numel()) if self.criterion.gamma_q > 0 else 0
+		n_unique_t = int(self.epoch_t_rep_idx.numel()) if self.criterion.gamma_t > 0 else 0
+		avg_align = align_loss_sum / max(num_examples, 1)
+		avg_unif = l_unif.item()
+		avg_loss = avg_align + avg_unif
+		return avg_loss, avg_align, avg_unif, n_unique_q, n_unique_t, margin_active
 
 	def _train_au_tensor_batch(
 		self,
@@ -741,6 +878,18 @@ class KGAUStrategy(Evaluator):
 				epoch_batches += 1
 				if i % self.args.print_freq == 0:
 					progress.display(i)
+		elif self.au_per_epoch:
+			loss, l_align, l_unif, n_uq, n_ut, margin_active = self._train_au_epoch(
+				model, epoch, batch_size, use_amp,
+			)
+			n_train = len(self.train_examples)
+			epoch_loss = loss * n_train
+			epoch_align_loss = l_align * n_train
+			epoch_unif_loss = l_unif * n_train
+			epoch_unique_q = float(n_uq)
+			epoch_unique_t = float(n_ut)
+			epoch_margin_active = margin_active
+			epoch_batches = 1
 		else:
 			for batch_idx, (ss, rs, ts) in enumerate(
 				self._iter_batches(self.train_src, self.train_rel, self.train_dst, batch_size, shuffle=True),
@@ -767,19 +916,23 @@ class KGAUStrategy(Evaluator):
 			avg_margin_active = epoch_margin_active / epoch_batches
 		else:
 			avg_unique_q = avg_unique_t = avg_margin_active = 0.0
+		unique_scope = 'epoch' if self.au_per_epoch else 'batch'
 		if float(self.criterion.additive_margin) > 0.0:
 			logger.info(
 				'[EPOCH %s] train loss: %.6f | align: %.6f | uniformity: %.6f | '
-				'avg unique q/t per batch: %.0f/%.0f (of %d) | margin-buffer pairs: %.2f%%',
+				'unique q/t per %s: %.0f/%.0f%s | margin-buffer pairs: %.2f%%',
 				display_epoch, avg_loss, avg_align_loss, avg_unif_loss,
-				avg_unique_q, avg_unique_t, batch_size, 100.0 * avg_margin_active,
+				unique_scope, avg_unique_q, avg_unique_t,
+				'' if self.au_per_epoch else f' (of {batch_size})',
+				100.0 * avg_margin_active,
 			)
 		else:
 			logger.info(
 				'[EPOCH %s] train loss: %.6f | align: %.6f | uniformity: %.6f | '
-				'avg unique q/t per batch: %.0f/%.0f (of %d)',
+				'unique q/t per %s: %.0f/%.0f%s',
 				display_epoch, avg_loss, avg_align_loss, avg_unif_loss,
-				avg_unique_q, avg_unique_t, batch_size,
+				unique_scope, avg_unique_q, avg_unique_t,
+				'' if self.au_per_epoch else f' (of {batch_size})',
 			)
 		self.train_component_losses = {
 			'loss': avg_loss,

@@ -142,6 +142,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help='uniformity weight for all entity embeddings')
     parser.add_argument('--tuni', default=None, type=float,
                         help='AU uniformity temperature (Gaussian potential scale)')
+    parser.add_argument('--au-per-epoch', '--au_per_epoch', dest='au_per_epoch',
+                        action='store_true', default=None,
+                        help='KGAU: one optimizer step per epoch with alignment/uniformity over full train set')
     normalize_group = parser.add_mutually_exclusive_group()
     normalize_group.add_argument(
         '--normalize-lp-scores', '--normalize_lp_scores',
