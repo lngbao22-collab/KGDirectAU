@@ -180,6 +180,10 @@ def load_sampler(args, model: nn.Module | None = None, train_triples: torch.Tens
 	sampler_cls = getattr(module, 'FilteredSubsampler', None)
 	if sampler_cls is not None and train_triples is not None:
 		nentity = _resolve_nentity(args, model)
+		num_neg_o = int(getattr(args, 'n_sample_o', None) or getattr(args, 'n_sample', 1))
+		num_neg_s = int(getattr(args, 'n_sample_s', None) or getattr(args, 'n_sample', 1))
+		if getattr(args, 'n_sample_o', None) is not None or getattr(args, 'n_sample_s', None) is not None:
+			return sampler_cls(train_triples, nentity, num_neg_o, num_negatives_s=num_neg_s)
 		num_neg = int(getattr(args, 'n_sample', 1))
 		return sampler_cls(train_triples, nentity, num_neg)
 

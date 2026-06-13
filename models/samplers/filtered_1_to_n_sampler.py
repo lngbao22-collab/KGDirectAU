@@ -9,9 +9,10 @@ import torch
 class FilteredSubsampler:
     """Filtered 1-N negative sampler for RotatE-style training."""
 
-    def __init__(self, triples, nentity: int, num_negatives: int):
+    def __init__(self, triples, nentity: int, num_negatives: int, num_negatives_s: int | None = None):
         self.nentity = int(nentity)
-        self.num_negatives = int(num_negatives)
+        self.num_negatives_tail = int(num_negatives)
+        self.num_negatives_head = int(num_negatives if num_negatives_s is None else num_negatives_s)
         self.count = self._count_frequency(triples)
         self.true_head, self.true_tail = self._build_filter_dicts(triples)
 
@@ -90,12 +91,19 @@ class FilteredSubsampler:
             weights[idx] = self.count.get((int(h), int(r)), 4) + self.count.get((int(t), -int(r) - 1), 4)
         return torch.from_numpy(np.sqrt(1.0 / weights)).float()
 
-    def _sample_filtered_negatives_row(self, key: tuple[int, int], filter_dict: dict, oversample: int) -> np.ndarray:
+    def _sample_filtered_negatives_row(
+        self,
+        key: tuple[int, int],
+        filter_dict: dict,
+        oversample: int,
+        *,
+        num_negatives: int,
+    ) -> np.ndarray:
         """Draw filtered negatives for one row, resampling only when the first pass is short."""
 
         blocked = filter_dict.get(key, np.array([], dtype=np.int64))
         collected = []
-        remaining = self.num_negatives
+        remaining = num_negatives
         attempts = 0
         while remaining > 0 and attempts < 4:
             candidate = np.random.randint(self.nentity, size=max(oversample, remaining * 2))
@@ -105,8 +113,8 @@ class FilteredSubsampler:
                 remaining -= valid.size
             attempts += 1
         if not collected:
-            return np.random.randint(self.nentity, size=self.num_negatives)
-        return np.concatenate(collected)[: self.num_negatives]
+            return np.random.randint(self.nentity, size=num_negatives)
+        return np.concatenate(collected)[:num_negatives]
 
     def sample(self, batch_triples, mode: str) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, str]:
         """Sample filtered negatives and subsampling weights for a batch.
@@ -122,14 +130,28 @@ class FilteredSubsampler:
         tail = positive_sample[:, 2].cpu().numpy()
 
         subsampling_weight = self._subsampling_weights(head, relation, tail)
-        oversample = max(self.num_negatives * 2, 64)
+        if mode == "head-batch":
+            num_negatives = self.num_negatives_head
+        elif mode == "tail-batch":
+            num_negatives = self.num_negatives_tail
+        else:
+            raise ValueError(f"Training batch mode {mode} not supported")
+        oversample = max(num_negatives * 2, 64)
         negative_rows = []
         if mode == "head-batch":
             for r, t in zip(relation, tail):
-                negative_rows.append(self._sample_filtered_negatives_row((int(r), int(t)), self.true_head, oversample))
+                negative_rows.append(
+                    self._sample_filtered_negatives_row(
+                        (int(r), int(t)), self.true_head, oversample, num_negatives=num_negatives
+                    )
+                )
         elif mode == "tail-batch":
             for h, r in zip(head, relation):
-                negative_rows.append(self._sample_filtered_negatives_row((int(h), int(r)), self.true_tail, oversample))
+                negative_rows.append(
+                    self._sample_filtered_negatives_row(
+                        (int(h), int(r)), self.true_tail, oversample, num_negatives=num_negatives
+                    )
+                )
         else:
             raise ValueError(f"Training batch mode {mode} not supported")
 
@@ -145,5 +167,12 @@ def build_sampler(args, train_triples, model):
         nentity = model.entity_embedding.size(0)
     if nentity is None:
         raise ValueError('`nentity` or `ent_total` is required for FilteredSubsampler')
-    num_neg = int(getattr(args, 'n_sample', 1))
+    n_sample_o = getattr(args, 'n_sample_o', None)
+    n_sample_s = getattr(args, 'n_sample_s', None)
+    n_sample = getattr(args, 'n_sample', None)
+    if n_sample_o is not None or n_sample_s is not None:
+        num_neg_o = int(n_sample_o if n_sample_o is not None else (n_sample or 1))
+        num_neg_s = int(n_sample_s if n_sample_s is not None else (n_sample or 1))
+        return FilteredSubsampler(train_triples, int(nentity), num_neg_o, num_negatives_s=num_neg_s)
+    num_neg = int(n_sample or 1)
     return FilteredSubsampler(train_triples, int(nentity), num_neg)

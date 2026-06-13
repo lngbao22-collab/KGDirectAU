@@ -7,6 +7,8 @@ from typing import Iterable
 import torch
 
 from models.builder import (
+	apply_kge_regularization,
+	build_lr_scheduler,
 	build_optimizer,
 	config_bool,
 	config_float,
@@ -43,6 +45,7 @@ class NegSampStrategy:
 		self.base_lr = config_float(args, 'lr', config_float(args, 'learning_rate', 5e-5))
 		weight_decay = config_float(args, 'weight_decay', 0.0)
 		self.optimizer = build_optimizer(args, self.model.parameters(), weight_decay)
+		self.lr_scheduler = build_lr_scheduler(args, self.optimizer)
 		self.global_step = 0
 		self.next_lr_decay_step = config_int(args, 'warm_up_steps', None)
 		self.lr_decay_factor = config_float(args, 'lr_decay_factor', 0.1)
@@ -190,6 +193,12 @@ class NegSampStrategy:
 				else:
 					pos_scores, neg_scores = self._score_filtered_negatives(pos_batch, neg_batch, mode)
 					loss = self.loss_fn(pos_scores, neg_scores, weights)
+					loss = apply_kge_regularization(
+						loss,
+						self.model,
+						self.args,
+						batch_triples=pos_batch,
+					)
 					reg_term = self._regularization_term()
 					if reg_term is not None:
 						loss = loss + reg_term

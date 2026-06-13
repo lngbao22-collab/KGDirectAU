@@ -149,6 +149,19 @@ def _init_lookup_table(embedder: LookupEmbedder, args, dim: int, role: str) -> N
 		embedder._reset_parameters()
 
 
+def _init_rotate_weight(weight: nn.Parameter, args, *, role: str, hidden_dim: int) -> None:
+	"""Initialize RotatE/pRotatE parameter tables (LibKGE ``lookup_embedder.initialize``)."""
+
+	full_dim = hidden_dim * 2 if role == 'entity' else hidden_dim
+	if getattr(args, 'init_method', None):
+		temp = LookupEmbedder(weight.size(0), full_dim, args, role=role)
+		init_lookup_embedding(temp, args, full_dim, role=role)
+		weight.data.copy_(temp.embedding.weight.data)
+		return
+	bound = _embedding_range(args, hidden_dim)
+	nn.init.uniform_(weight, a=-bound, b=bound)
+
+
 def build_entity_embedder(args) -> nn.Module:
 	n_ent, n_rel = _counts(args)
 	dim = int(getattr(args, 'dim', 200))
@@ -164,14 +177,14 @@ def build_entity_embedder(args) -> nn.Module:
 	if _is_rotate(args):
 		hidden_dim = dim
 		weight = nn.Parameter(torch.zeros(n_ent, hidden_dim * 2))
-		nn.init.uniform_(weight, a=-_embedding_range(args, hidden_dim), b=_embedding_range(args, hidden_dim))
+		_init_rotate_weight(weight, args, role='entity', hidden_dim=hidden_dim)
 		from base.embeddings import ParameterEmbedder
 		return ParameterEmbedder(weight)
 
 	if _is_protate(args):
 		hidden_dim = dim
 		weight = nn.Parameter(torch.zeros(n_ent, hidden_dim))
-		nn.init.uniform_(weight, a=-_embedding_range(args, hidden_dim), b=_embedding_range(args, hidden_dim))
+		_init_rotate_weight(weight, args, role='entity', hidden_dim=hidden_dim)
 		from base.embeddings import ParameterEmbedder
 		return ParameterEmbedder(weight)
 
@@ -201,7 +214,7 @@ def build_relation_embedder(args) -> nn.Module:
 	if _is_rotate(args) or _is_protate(args):
 		hidden_dim = dim
 		weight = nn.Parameter(torch.zeros(n_rel, hidden_dim))
-		nn.init.uniform_(weight, a=-_embedding_range(args, hidden_dim), b=_embedding_range(args, hidden_dim))
+		_init_rotate_weight(weight, args, role='relation', hidden_dim=hidden_dim)
 		from base.embeddings import ParameterEmbedder
 		return ParameterEmbedder(weight)
 

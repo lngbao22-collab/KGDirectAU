@@ -59,5 +59,32 @@ build_kvsall_loss_fn = build_bce_loss_fn
 build_loss_fn = build_bce_loss_fn
 
 
+def build_negsamp_loss_fn(args):
+	"""Factory for LibKGE triple negative-sampling BCE (``train.loss: bce``)."""
+
+	offset = getattr(args, 'bce_offset', None)
+	if offset is None:
+		raw = getattr(args, 'loss_arg', None)
+		offset = 0.0 if raw is None or (isinstance(raw, float) and math.isnan(raw)) else float(raw)
+
+	def loss_fn(pos_scores: torch.Tensor, neg_scores: torch.Tensor, weights=None, **_kwargs) -> torch.Tensor:
+		pos_scores = pos_scores.reshape(-1)
+		if neg_scores.dim() == 3:
+			neg_scores = neg_scores.squeeze(-1)
+		batch_size = max(pos_scores.size(0), 1)
+		scores = torch.cat([pos_scores.unsqueeze(1), neg_scores], dim=1)
+		labels = torch.zeros_like(scores)
+		labels[:, 0] = 1.0
+		if offset != 0.0:
+			scores = scores + offset
+		per_row = F.binary_cross_entropy_with_logits(scores, labels, reduction='none').sum(dim=1)
+		if weights is not None:
+			weights = weights.to(scores.device).reshape(-1)
+			return (per_row * weights).sum() / weights.sum().clamp_min(1e-12)
+		return per_row.sum() / batch_size
+
+	return loss_fn
+
+
 def compute_loss(args):
 	return build_bce_loss_fn(args)
