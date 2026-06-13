@@ -17,7 +17,6 @@
   "dim": 128,
   "batch_size": 512,
   "epochs": 400,
-  "epoch_per_eval": 5,
   "lr": 0.5255808623927111,
   "optim": "adagrad",
   "weight_decay": 0.0,
@@ -45,7 +44,8 @@
   "gamma_h": 0,
   "gamma_ent": 0,
   "tuni": 2,
+  "epoch_per_eval": 5,
   "tie_handling": "rounded_mean_rank",
   "tie_rtol": 0.0001,
-  "tie_atol": 1e-05
+  "tie_atol": 0.00001
 }
