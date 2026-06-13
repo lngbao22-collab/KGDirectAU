@@ -162,11 +162,9 @@ class FilteredSubsampler:
 def build_sampler(args, train_triples, model):
     """Construct a filtered 1-N subsampler for adversarial RotatE-style training."""
 
-    nentity = getattr(args, 'nentity', getattr(args, 'ent_total', None))
-    if nentity is None and hasattr(model, 'entity_embedding'):
-        nentity = model.entity_embedding.size(0)
-    if nentity is None:
-        raise ValueError('`nentity` or `ent_total` is required for FilteredSubsampler')
+    from models.builder import _resolve_nentity
+
+    nentity = _resolve_nentity(args, model)
     n_sample_o = getattr(args, 'n_sample_o', None)
     n_sample_s = getattr(args, 'n_sample_s', None)
     n_sample = getattr(args, 'n_sample', None)

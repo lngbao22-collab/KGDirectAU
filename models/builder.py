@@ -288,21 +288,29 @@ def load_loss_fn_for_paradigm(args, paradigm: str):
 	)
 
 
-def _resolve_nentity(args, model: nn.Module) -> int:
+def _resolve_nentity(args, model: nn.Module | None) -> int:
+	from data.dict_hub import get_entity_dict
 	from utils.device import get_model_obj
 
 	for attr in ('nentity', 'ent_total'):
 		value = getattr(args, attr, None)
 		if value is not None:
 			return int(value)
-	model_obj = get_model_obj(model)
-	if hasattr(model_obj, 'entity_embedding'):
-		return int(model_obj.entity_embedding.size(0))
-	if hasattr(model_obj, 'ent_embedder') and hasattr(model_obj.ent_embedder, 'embedding'):
-		return int(model_obj.ent_embedder.embedding.num_embeddings)
-	if hasattr(model_obj, 'ent_embeddings') and hasattr(model_obj.ent_embeddings, 'embedding'):
-		return int(model_obj.ent_embeddings.embedding.num_embeddings)
-	raise ValueError('Could not resolve entity count for sampler construction')
+
+	model_obj = get_model_obj(model) if model is not None else None
+	if model_obj is not None:
+		if hasattr(model_obj, 'entity_embedding'):
+			return int(model_obj.entity_embedding.size(0))
+		ent_embedder = getattr(model_obj, 'ent_embedder', None)
+		if ent_embedder is not None:
+			if hasattr(ent_embedder, 'embedding'):
+				return int(ent_embedder.embedding.num_embeddings)
+			if hasattr(ent_embedder, 'weight'):
+				return int(ent_embedder.weight.size(0))
+		if hasattr(model_obj, 'ent_embeddings') and hasattr(model_obj.ent_embeddings, 'embedding'):
+			return int(model_obj.ent_embeddings.embedding.num_embeddings)
+
+	return len(get_entity_dict())
 
 
 def init_index_kge_trainer(trainer, model: nn.Module, args) -> None:
