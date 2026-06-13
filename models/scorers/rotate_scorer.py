@@ -45,6 +45,11 @@ class RotatEScorer(nn.Module):
 
 		return self._distance_score(h_emb, r_emb, t_emb, predict_head=True)
 
+	def _entity_chunk_size(self) -> int:
+		"""Candidate chunk size for 1-vs-all scoring (controls peak GPU memory)."""
+
+		return int(getattr(self.args, 'eval_entity_chunk_size', 1024) or 1024)
+
 	def _margin_distance_1vsall(
 		self,
 		q_re: torch.Tensor,
@@ -52,13 +57,27 @@ class RotatEScorer(nn.Module):
 		cand_re: torch.Tensor,
 		cand_im: torch.Tensor,
 	) -> torch.Tensor:
-		"""1-vs-all RotatE distance without materializing ``[batch, num_candidates, dim]`` tensors."""
+		"""1-vs-all RotatE distance with chunked broadcasting.
 
-		query_sq = (q_re ** 2 + q_im ** 2).sum(dim=-1, keepdim=True)
-		candidate_sq = (cand_re ** 2 + cand_im ** 2).sum(dim=-1)
-		cross = torch.mm(q_re, cand_re.t()) + torch.mm(q_im, cand_im.t())
-		dist_sq = query_sq + candidate_sq.unsqueeze(0) - 2.0 * cross
-		return self.margin - torch.sqrt(dist_sq.clamp_min(0.0))
+		RotatE uses ``sum_i sqrt(re_i^2 + im_i^2)``, which cannot be reduced to a
+		single entity matrix multiply, so candidates are processed in chunks to avoid
+		materializing ``[batch, num_candidates, dim]`` for the full entity vocabulary.
+		"""
+
+		num_candidates = cand_re.size(0)
+		chunk_size = self._entity_chunk_size()
+		if num_candidates <= chunk_size:
+			re_score = q_re.unsqueeze(1) - cand_re.unsqueeze(0)
+			im_score = q_im.unsqueeze(1) - cand_im.unsqueeze(0)
+			return self.margin - torch.sqrt(re_score ** 2 + im_score ** 2).sum(dim=-1)
+
+		scores = q_re.new_empty(q_re.size(0), num_candidates)
+		for start in range(0, num_candidates, chunk_size):
+			end = min(start + chunk_size, num_candidates)
+			re_score = q_re.unsqueeze(1) - cand_re[start:end].unsqueeze(0)
+			im_score = q_im.unsqueeze(1) - cand_im[start:end].unsqueeze(0)
+			scores[:, start:end] = self.margin - torch.sqrt(re_score ** 2 + im_score ** 2).sum(dim=-1)
+		return scores
 
 	def score_sp_(self, h_emb: torch.Tensor, r_emb: torch.Tensor, all_t_embs: torch.Tensor) -> torch.Tensor:
 		"""Return 1-vs-all RotatE tail scores using LibKGE-style sp_ broadcasting."""

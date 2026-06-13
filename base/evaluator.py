@@ -138,6 +138,7 @@ def _evaluate_kge_1vsall_batch(
 	*,
 	predict_head: bool,
 	filter_known: bool,
+	all_entity_embs: torch.Tensor | None = None,
 ) -> list[int]:
 	"""Score and rank one batch with full-matrix ``sp_`` or ``_po`` broadcasting."""
 
@@ -147,12 +148,12 @@ def _evaluate_kge_1vsall_batch(
 	t_idx = t_idx.to(device)
 
 	if predict_head:
-		scores = model.predict_head_po_(r_idx, t_idx)
+		scores = model.predict_head_po_(r_idx, t_idx, all_s_embs=all_entity_embs)
 		if filter_known:
 			scores = _apply_filter_mask(scores, h_idx, r_idx, t_idx, po_filter, predict_head=True)
 		target_indices = h_idx
 	else:
-		scores = model.predict_tail_sp_(h_idx, r_idx)
+		scores = model.predict_tail_sp_(h_idx, r_idx, all_o_embs=all_entity_embs)
 		if filter_known:
 			scores = _apply_filter_mask(scores, h_idx, r_idx, t_idx, sp_filter, predict_head=False)
 		target_indices = t_idx
@@ -176,6 +177,7 @@ def _evaluate_kge_link_prediction(
 	predict_head = (not eval_forward) and bool(getattr(model, 'bidirectional_score_batch', False))
 	scoring_examples = _coerce_forward_examples(examples) if predict_head else list(examples)
 	h_all, r_all, t_all = _examples_to_query_index_tensors(scoring_examples, entity_dict, model)
+	all_entity_embs = model.embed_all_entities()
 
 	ranks: list[int] = []
 	iterator = range(0, len(scoring_examples), batch_size)
@@ -190,6 +192,7 @@ def _evaluate_kge_link_prediction(
 			po_filter,
 			predict_head=predict_head,
 			filter_known=filter_known,
+			all_entity_embs=all_entity_embs,
 		)
 		ranks.extend(batch_ranks)
 	return ranks
