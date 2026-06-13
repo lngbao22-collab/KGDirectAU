@@ -23,7 +23,7 @@
   "weight_decay": 0.0,
   "entity_dropout": 0,
   "relation_dropout": 0,
-  "init_method": "uniform_",
+  "init_method": "scaled",
   "init_uniform_a": -0.28148249060722197,
   "eval_batch_size": 256,
   "early_stopping_patience": 10,
