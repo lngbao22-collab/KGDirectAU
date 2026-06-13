@@ -47,5 +47,5 @@
   "tuni": 2,
   "tie_handling": "rounded_mean_rank",
   "tie_rtol": 0.0001,
-  "tie_atol": 0.00001
+  "tie_atol": 1e-05
 }
