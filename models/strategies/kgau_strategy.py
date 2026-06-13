@@ -704,6 +704,7 @@ class KGAUStrategy(Evaluator):
 			end = min(start + micro_batch, total)
 			fraction = (end - start) / total
 			q_keys, t_keys, h_keys = self._uniformity_keys(ss[start:end], rs[start:end], ts[start:end])
+			batch_triples = torch.stack([ss[start:end], rs[start:end], ts[start:end]], dim=1)
 			if use_amp:
 				with torch.amp.autocast(device_type='cuda'):
 					q_raw, t_raw, h_raw = self._au_representation_batch(
@@ -711,7 +712,7 @@ class KGAUStrategy(Evaluator):
 					ent_raw = self._entity_uniformity_vectors_for_loss(
 						model, h_raw, t_raw, h_keys, t_keys)
 					loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
-						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
+						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 				self._backward_au_loss(loss, fraction, use_amp=True)
 			else:
 				q_raw, t_raw, h_raw = self._au_representation_batch(
@@ -719,7 +720,7 @@ class KGAUStrategy(Evaluator):
 				ent_raw = self._entity_uniformity_vectors_for_loss(
 					model, h_raw, t_raw, h_keys, t_keys)
 				loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
-					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
+					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 				self._backward_au_loss(loss, fraction, use_amp=False)
 			chunk = end - start
 			loss_sum += loss.item() * chunk
