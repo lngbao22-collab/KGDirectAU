@@ -19,7 +19,7 @@
   "epochs": 400,
   "epoch_per_eval": 5,
   "lr": 0.5255808623927111,
-  "optim": "adam",
+  "optim": "adagrad",
   "weight_decay": 0.0,
   "entity_dropout": 0,
   "relation_dropout": 0,
