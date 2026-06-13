@@ -81,7 +81,9 @@ class RotatEScorer(nn.Module):
 
 	@staticmethod
 	def _abs_complex(x_re: torch.Tensor, x_im: torch.Tensor) -> torch.Tensor:
-		return torch.sqrt(x_re ** 2 + x_im ** 2)
+		# Match LibKGE ``abs_complex``: norm avoids NaN grads at zero vs sqrt(x^2+y^2).
+		x_re_im = torch.stack((x_re, x_im), dim=0)
+		return torch.norm(x_re_im, dim=0)
 
 	def _norm_nonnegative(self, values: torch.Tensor, dim: int) -> torch.Tensor:
 		"""Lp norm along ``dim`` for non-negative inputs (LibKGE ``norm_nonnegative``)."""
