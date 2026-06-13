@@ -683,7 +683,10 @@ def build_pipeline(args, ngpus_per_node: int = 1):
 	if torch.cuda.is_available():
 		model.cuda()
 
-	loss_fn = load_loss_fn(args)
+	if paradigm in ('negsamp', 'kvsall', '1vsall'):
+		loss_fn = load_loss_fn_for_paradigm(args, paradigm)
+	else:
+		loss_fn = load_loss_fn(args)
 	train_triples = _prepare_train_triples(args, model) if paradigm in ('negsamp', 'kvsall') else None
 	if paradigm in ('kvsall', '1vsall', 'kgau'):
 		sampler = None
