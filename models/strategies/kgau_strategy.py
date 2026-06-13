@@ -443,10 +443,14 @@ class KGAUStrategy(Evaluator):
 		kwargs = _entity_embeddings_call_kwargs(model, self.device, self.criterion)
 		# Optional encoder hook (pRotatE-AU only); all other encoders use ``entity_embeddings``.
 		if hasattr(model, 'au_entity_embeddings'):
-			return model.au_entity_embeddings(**kwargs)
-		if not hasattr(model, 'entity_embeddings'):
+			ent = model.au_entity_embeddings(**kwargs)
+		elif hasattr(model, 'entity_embeddings'):
+			ent = model.entity_embeddings(**kwargs)
+		else:
 			return None
-		return model.entity_embeddings(**kwargs)
+		if ent is not None and hasattr(model, '_normalize_lp_vector'):
+			ent = model._normalize_lp_vector(ent)
+		return ent
 
 	def _entity_uniformity_vectors_for_loss(
 		self,
@@ -629,6 +633,9 @@ class KGAUStrategy(Evaluator):
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 		"""Fetch AU vectors via decoupled embedders and optional scorer query builder."""
 
+		if hasattr(model, 'get_queries_targets'):
+			return model.get_queries_targets(ss, rs, ts)
+
 		h_emb = model.embed_s(ss)
 		r_emb = model.embed_p(rs)
 		t_emb = model.embed_o(ts)
@@ -639,7 +646,7 @@ class KGAUStrategy(Evaluator):
 				return q_emb, t_emb, h_emb
 			except NotImplementedError:
 				pass
-		return model.get_queries_targets(ss, rs, ts)
+		return h_emb * r_emb, t_emb, h_emb
 
 	def _train_au_tensor_batch_single(
 		self,

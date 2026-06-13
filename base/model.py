@@ -52,6 +52,7 @@ class KGEModel(nn.Module):
 		self.scorer = scorer
 		self.args = args
 		self.rel_to_idx = load_relation_to_idx(args) if args is not None else {}
+		self.normalize_lp_scores = _normalize_lp_flag(args) if args is not None else False
 
 	def get_s_embedder(self) -> nn.Module:
 		"""Return the subject (head) entity embedder."""
@@ -112,6 +113,40 @@ class KGEModel(nn.Module):
 
 		return {}
 
+	def _normalize_lp_vector(self, vectors: torch.Tensor) -> torch.Tensor:
+		"""L2-normalize vectors when ``normalize_lp_scores`` is enabled."""
+
+		if not self.normalize_lp_scores:
+			return vectors
+		return F.normalize(vectors, p=2, dim=-1)
+
+	def _link_prediction_scores(
+		self,
+		query_vectors: torch.Tensor,
+		candidate_vectors: torch.Tensor,
+	) -> torch.Tensor:
+		"""Dot-product link-prediction scores with optional L2 normalization."""
+
+		query_vectors = self._normalize_lp_vector(query_vectors)
+		candidate_vectors = self._normalize_lp_vector(candidate_vectors)
+		return torch.mm(query_vectors, candidate_vectors.t())
+
+	def _lp_query_vectors(self, s: torch.Tensor, p: torch.Tensor) -> torch.Tensor:
+		"""Build tail-prediction query vectors (ComplEx ``build_query`` or DistMult ``h * r``)."""
+
+		head = self.embed_s(s)
+		relation = self.embed_p(p)
+		if hasattr(self.scorer, 'build_query'):
+			return self.scorer.build_query(head, relation)
+		return head * relation
+
+	def _lp_po_query_vectors(self, p: torch.Tensor, o: torch.Tensor) -> torch.Tensor:
+		"""Build head-prediction query vectors (DistMult-style ``t * r``)."""
+
+		tail = self.embed_o(o)
+		relation = self.embed_p(p)
+		return tail * relation
+
 	def score_spo(
 		self,
 		s: torch.Tensor,
@@ -121,6 +156,10 @@ class KGEModel(nn.Module):
 	) -> torch.Tensor:
 		"""Score aligned (subject, predicate, object) triples by index."""
 
+		if self.normalize_lp_scores:
+			query = self._lp_query_vectors(s, p)
+			tail = self.embed_o(o)
+			return self._link_prediction_scores(query, tail).diag()
 		scorer_kwargs = {**self._scorer_kwargs(), **kwargs}
 		return self.scorer.score_spo(
 			self.embed_s(s),
@@ -140,6 +179,8 @@ class KGEModel(nn.Module):
 
 		if all_o_embs is None:
 			all_o_embs = self.embed_all_entities()
+		if self.normalize_lp_scores:
+			return self._link_prediction_scores(self._lp_query_vectors(s, p), all_o_embs)
 		scorer_kwargs = {**self._scorer_kwargs(), **kwargs}
 		return self.scorer.score_sp_(
 			self.embed_s(s),
@@ -179,6 +220,8 @@ class KGEModel(nn.Module):
 			raise NotImplementedError(f'{type(self.scorer).__name__} does not implement score_po_')
 		if all_s_embs is None:
 			all_s_embs = self.embed_all_entities()
+		if self.normalize_lp_scores:
+			return self._link_prediction_scores(self._lp_po_query_vectors(p, o), all_s_embs)
 		scorer_kwargs = {**self._scorer_kwargs(), **kwargs}
 		return self.scorer.score_po_(
 			all_s_embs,
@@ -238,12 +281,14 @@ class KGEModel(nn.Module):
 	def get_queries_targets(self, s: torch.Tensor, p: torch.Tensor, o: torch.Tensor):
 		"""Default AU query/target/head vectors using embedders and optional scorer query builder."""
 
+		query = self._lp_query_vectors(s, p)
 		head = self.embed_s(s)
-		relation = self.embed_p(p)
 		tail = self.embed_o(o)
-		if hasattr(self.scorer, 'build_query'):
-			return self.scorer.build_query(head, relation), tail, head
-		return head * relation, tail, head
+		if self.normalize_lp_scores:
+			query = self._normalize_lp_vector(query)
+			tail = self._normalize_lp_vector(tail)
+			head = self._normalize_lp_vector(head)
+		return query, tail, head
 
 	def score_batch(self, head_ids, relations, tail_entity_ids) -> torch.Tensor:
 		"""Score a batch of (head, relation, tail) triples by entity/relation id."""
