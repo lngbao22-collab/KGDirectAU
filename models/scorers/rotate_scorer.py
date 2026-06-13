@@ -45,10 +45,14 @@ class RotatEScorer(nn.Module):
 
 		return self._distance_score(h_emb, r_emb, t_emb, predict_head=True)
 
-	def _entity_chunk_size(self) -> int:
+	def _entity_chunk_size(self, batch_size: int, half_dim: int) -> int:
 		"""Candidate chunk size for 1-vs-all scoring (controls peak GPU memory)."""
 
-		return int(getattr(self.args, 'eval_entity_chunk_size', 1024) or 1024)
+		configured = int(getattr(self.args, 'eval_entity_chunk_size', 256) or 256)
+		bytes_budget = int(getattr(self.args, 'eval_entity_chunk_bytes', 128 * 1024 * 1024) or 128 * 1024 * 1024)
+		per_candidate = max(1, batch_size * half_dim * 4 * 3)
+		memory_limit = max(1, bytes_budget // per_candidate)
+		return max(1, min(configured, memory_limit))
 
 	def _margin_distance_1vsall(
 		self,
@@ -65,13 +69,10 @@ class RotatEScorer(nn.Module):
 		"""
 
 		num_candidates = cand_re.size(0)
-		chunk_size = self._entity_chunk_size()
-		if num_candidates <= chunk_size:
-			re_score = q_re.unsqueeze(1) - cand_re.unsqueeze(0)
-			im_score = q_im.unsqueeze(1) - cand_im.unsqueeze(0)
-			return self.margin - torch.sqrt(re_score ** 2 + im_score ** 2).sum(dim=-1)
-
-		scores = q_re.new_empty(q_re.size(0), num_candidates)
+		batch_size = q_re.size(0)
+		half_dim = q_re.size(-1)
+		chunk_size = self._entity_chunk_size(batch_size, half_dim)
+		scores = q_re.new_empty(batch_size, num_candidates)
 		for start in range(0, num_candidates, chunk_size):
 			end = min(start + chunk_size, num_candidates)
 			re_score = q_re.unsqueeze(1) - cand_re[start:end].unsqueeze(0)

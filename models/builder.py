@@ -427,6 +427,8 @@ def eval_index_kge_epoch(trainer, epoch: int) -> dict:
 	from utils.logger import logger
 
 	trainer.model.eval()
+	if hasattr(trainer, 'optimizer') and trainer.optimizer is not None:
+		trainer.optimizer.zero_grad(set_to_none=True)
 	if torch.cuda.is_available():
 		torch.cuda.empty_cache()
 

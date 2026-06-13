@@ -195,6 +195,8 @@ def _evaluate_kge_link_prediction(
 			all_entity_embs=all_entity_embs,
 		)
 		ranks.extend(batch_ranks)
+		if torch.cuda.is_available():
+			torch.cuda.empty_cache()
 	return ranks
 
 

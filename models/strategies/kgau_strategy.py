@@ -17,7 +17,7 @@ from base.evaluator import Evaluator
 from data.dataloader import collate
 from data.dataset import Dataset, load_data
 from data.dict_hub import get_entity_dict, get_relation_id_map
-from models.builder import config_bool, load_attr_from_path
+from models.builder import apply_kge_regularization, config_bool, load_attr_from_path
 from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, save_checkpoint
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
 from utils.logger import AverageMeter, ProgressMeter, logger
@@ -355,6 +355,32 @@ class KGAUStrategy(Evaluator):
 			return model_obj.entity_embedding.norm(p=3) ** 3 + model_obj.relation_embedding.norm(p=3) ** 3
 		return None
 
+	def _apply_embedding_regularization(
+		self,
+		loss: torch.Tensor,
+		*,
+		batch_triples: torch.Tensor | None = None,
+	) -> torch.Tensor:
+		"""Add L3 embedding penalty (LibKGE weights or legacy ``regularization`` scalar)."""
+
+		ent_weight = float(getattr(self.args, 'entity_regularize_weight', 0.0) or 0.0)
+		rel_weight = float(getattr(self.args, 'relation_regularize_weight', 0.0) or 0.0)
+		if ent_weight > 0.0 or rel_weight > 0.0:
+			return apply_kge_regularization(
+				loss,
+				self.model,
+				self.args,
+				batch_triples=batch_triples,
+			)
+
+		reg_coef = _config_float(self.args, 'regularization', 0.0)
+		if reg_coef <= 0.0:
+			return loss
+		l3_term = self._embedding_l3_regularization(self.model)
+		if l3_term is None:
+			return loss
+		return loss + reg_coef * l3_term
+
 	def _au_loss_with_distinct_keys(
 		self,
 		q_raw: torch.Tensor,
@@ -364,6 +390,8 @@ class KGAUStrategy(Evaluator):
 		q_keys: torch.Tensor,
 		t_keys: torch.Tensor,
 		h_keys: torch.Tensor,
+		*,
+		batch_triples: torch.Tensor | None = None,
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, int, float]:
 		"""KGAU loss with deduplicated uniformity inputs (by entity/relation id keys)."""
 
@@ -371,11 +399,7 @@ class KGAUStrategy(Evaluator):
 			q_raw, t_raw, h_raw, q_keys, t_keys, h_keys)
 		loss, l_align, l_unif, margin_active_frac = self.criterion(
 			q_raw, t_raw, h_raw, ent_raw, q_uni=q_uni, t_uni=t_uni, h_uni=h_uni, return_stats=True)
-		reg_coef = _config_float(self.args, 'regularization', 0.0)
-		if reg_coef > 0.0:
-			l3_term = self._embedding_l3_regularization(self.model)
-			if l3_term is not None:
-				loss = loss + reg_coef * l3_term
+		loss = self._apply_embedding_regularization(loss, batch_triples=batch_triples)
 		return loss, l_align, l_unif, n_unique_q, n_unique_t, margin_active_frac
 
 	def _batch_entity_uniformity_vectors(
@@ -488,15 +512,6 @@ class KGAUStrategy(Evaluator):
 				parts.append(h_raw)
 		return torch.cat(parts, dim=0)
 
-	def _append_l3_regularization(self, loss: torch.Tensor) -> torch.Tensor:
-		reg_coef = _config_float(self.args, 'regularization', 0.0)
-		if reg_coef <= 0.0:
-			return loss
-		l3_term = self._embedding_l3_regularization(self.model)
-		if l3_term is None:
-			return loss
-		return loss + reg_coef * l3_term
-
 	def _optimizer_step(self, use_amp: bool) -> None:
 		grad_clip = getattr(self.args, 'grad_clip', None)
 		if use_amp:
@@ -560,13 +575,13 @@ class KGAUStrategy(Evaluator):
 				l_unif, margin_active = self.criterion.forward_uniformity(
 					dummy_q, dummy_t, q_uni=q_uni, t_uni=t_uni, h=h_uni, h_uni=h_uni, ent=ent_raw,
 				)
-				loss = self._append_l3_regularization(l_unif)
+				loss = self._apply_embedding_regularization(l_unif)
 			self.scaler.scale(loss).backward()
 		else:
 			l_unif, margin_active = self.criterion.forward_uniformity(
 				dummy_q, dummy_t, q_uni=q_uni, t_uni=t_uni, h=h_uni, h_uni=h_uni, ent=ent_raw,
 			)
-			loss = self._append_l3_regularization(l_unif)
+			loss = self._apply_embedding_regularization(l_unif)
 			loss.backward()
 
 		self._optimizer_step(use_amp)
@@ -640,13 +655,14 @@ class KGAUStrategy(Evaluator):
 
 		self.optimizer.zero_grad()
 		q_keys, t_keys, h_keys = self._uniformity_keys(ss, rs, ts)
+		batch_triples = torch.stack([ss, rs, ts], dim=1)
 		if use_amp:
 			with torch.amp.autocast(device_type='cuda'):
 				q_raw, t_raw, h_raw = self._au_representation_batch(model, ss, rs, ts)
 				ent_raw = self._entity_uniformity_vectors_for_loss(
 					model, h_raw, t_raw, h_keys, t_keys)
 				loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
-					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
+					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 			self.scaler.scale(loss).backward()
 			self.scaler.unscale_(self.optimizer)
 			torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
@@ -657,7 +673,7 @@ class KGAUStrategy(Evaluator):
 			ent_raw = self._entity_uniformity_vectors_for_loss(
 				model, h_raw, t_raw, h_keys, t_keys)
 			loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
-				q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
+				q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 			loss.backward()
 			torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
 			self.optimizer.step()
