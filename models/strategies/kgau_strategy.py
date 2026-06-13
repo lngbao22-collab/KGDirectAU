@@ -17,7 +17,7 @@ from base.evaluator import Evaluator
 from data.dataloader import collate
 from data.dataset import Dataset, load_data
 from data.dict_hub import get_entity_dict, get_relation_id_map
-from models.builder import apply_kge_regularization, config_bool, load_attr_from_path
+from models.builder import apply_kge_regularization, build_lr_scheduler, config_bool, load_attr_from_path
 from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, save_checkpoint
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
 from utils.logger import AverageMeter, ProgressMeter, logger
@@ -172,6 +172,7 @@ class KGAUStrategy(Evaluator):
 		else:
 			self.weight_decay = float(weight_decay) / num_batches
 		self.optimizer = _build_optimizer(args, self.model.parameters(), self.weight_decay)
+		self.lr_scheduler = build_lr_scheduler(args, self.optimizer)
 
 		tuni_val = _config_float(args, 'tuni', _config_float(args, 'temperature', _config_float(args, 't', 2.0)))
 
@@ -1062,6 +1063,11 @@ class KGAUStrategy(Evaluator):
 			elif self.best_checkpoint_path is None:
 				self.best_checkpoint_path = saved_checkpoint_path
 			delete_old_ckt(path_pattern='{}/checkpoint_*.mdl'.format(self.args.output_dir), keep=self.args.max_to_keep)
+
+			if self.lr_scheduler is not None and metric_dict and 'mrr' in metric_dict:
+				from torch.optim.lr_scheduler import ReduceLROnPlateau
+				if isinstance(self.lr_scheduler, ReduceLROnPlateau):
+					self.lr_scheduler.step(metric_dict['mrr'])
 
 			if patience is not None and bad_counts >= patience and (epoch + 1) >= min_epochs:
 				logger.info(
