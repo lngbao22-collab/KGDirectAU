@@ -12,21 +12,50 @@ def build_scorer(args) -> RotatEScorer:
 	return RotatEScorer(args)
 
 
+def _is_libkge_rotate(args) -> bool:
+	"""Return True for plain RotatE (LibKGE ``rotate``), not RotatE-AU variants."""
+
+	return str(getattr(args, 'model', '') or '').lower() == 'rotate'
+
+
+@torch.no_grad()
+def normalize_rotate_phases(model) -> None:
+	"""Keep relation phases in [-pi, pi] (LibKGE ``RotatE.normalize_phases``)."""
+
+	from utils.device import get_model_obj
+
+	model_obj = get_model_obj(model)
+	rel_embedder = getattr(model_obj, 'rel_embedder', None)
+	if rel_embedder is None or not hasattr(rel_embedder, 'weight'):
+		return
+	phases = rel_embedder.weight.data
+	phases = phases + math.pi
+	phases = torch.remainder(phases, 2.0 * math.pi)
+	phases = phases - math.pi
+	rel_embedder.weight.data[:] = phases[:]
+
+
 class RotatEScorer(nn.Module):
 	"""RotatE score function with explicit 1-to-1 and 1-vs-All tensor paths."""
 
 	def __init__(self, args=None):
 		super().__init__()
 		self.args = args
-		self.dim = int(getattr(args, "dim", 0) or 0)
-		margin_value = getattr(args, "margin", None)
-		self.margin = float(6.0 if margin_value is None else margin_value)
-		epsilon = float(getattr(args, "epsilon", 2.0))
-		self.embedding_range = float((self.margin + epsilon) / max(self.dim, 1))
+		self._libkge = _is_libkge_rotate(args)
+		if self._libkge:
+			self.l_norm = float(getattr(args, 'l_norm', 1.0))
+		else:
+			self.dim = int(getattr(args, 'dim', 0) or 0)
+			margin_value = getattr(args, 'margin', None)
+			self.margin = float(6.0 if margin_value is None else margin_value)
+			epsilon = float(getattr(args, 'epsilon', 2.0))
+			self.embedding_range = float((self.margin + epsilon) / max(self.dim, 1))
 
 	def _phase(self, relation_emb: torch.Tensor) -> torch.Tensor:
 		"""Map raw relation tensors to the RotatE phase space."""
 
+		if self._libkge:
+			return relation_emb
 		return relation_emb / (self.embedding_range / math.pi)
 
 	@staticmethod
@@ -35,15 +64,53 @@ class RotatEScorer(nn.Module):
 
 		return torch.chunk(embeddings, 2, dim=-1)
 
-	def score_spo(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-		"""Return standard RotatE tail scores for matching batches of triples."""
+	@staticmethod
+	def _rotation(relation_emb: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+		"""Convert relation radians to points on the complex unit circle."""
 
-		return self._distance_score(h_emb, r_emb, t_emb, predict_head=False)
+		return torch.cos(relation_emb), torch.sin(relation_emb)
 
-	def score_po(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-		"""Return standard RotatE head scores for matching batches of triples."""
+	@staticmethod
+	def _hadamard_complex(
+		x_re: torch.Tensor,
+		x_im: torch.Tensor,
+		y_re: torch.Tensor,
+		y_im: torch.Tensor,
+	) -> tuple[torch.Tensor, torch.Tensor]:
+		return x_re * y_re - x_im * y_im, x_re * y_im + x_im * y_re
 
-		return self._distance_score(h_emb, r_emb, t_emb, predict_head=True)
+	@staticmethod
+	def _abs_complex(x_re: torch.Tensor, x_im: torch.Tensor) -> torch.Tensor:
+		return torch.sqrt(x_re ** 2 + x_im ** 2)
+
+	def _norm_nonnegative(self, values: torch.Tensor, dim: int) -> torch.Tensor:
+		"""Lp norm along ``dim`` for non-negative inputs (LibKGE ``norm_nonnegative``)."""
+
+		if self.l_norm == 1.0:
+			return values.sum(dim=dim)
+		return torch.norm(values, dim=dim, p=self.l_norm)
+
+	def _libkge_distance(
+		self,
+		q_re: torch.Tensor,
+		q_im: torch.Tensor,
+		cand_re: torch.Tensor,
+		cand_im: torch.Tensor,
+		*,
+		pairwise: bool,
+	) -> torch.Tensor:
+		"""Return negative RotatE distance scores (higher is better)."""
+
+		if pairwise:
+			diff_re = q_re.unsqueeze(1) - cand_re.unsqueeze(0)
+			diff_im = q_im.unsqueeze(1) - cand_im.unsqueeze(0)
+			norm_dim = 2
+		else:
+			diff_re = q_re - cand_re
+			diff_im = q_im - cand_im
+			norm_dim = 1
+		diff_abs = self._abs_complex(diff_re, diff_im)
+		return -self._norm_nonnegative(diff_abs, dim=norm_dim)
 
 	def _entity_chunk_size(self, batch_size: int, half_dim: int) -> int:
 		"""Candidate chunk size for 1-vs-all scoring (controls peak GPU memory)."""
@@ -54,6 +121,29 @@ class RotatEScorer(nn.Module):
 		memory_limit = max(1, bytes_budget // per_candidate)
 		return max(1, min(configured, memory_limit))
 
+	def _libkge_distance_1vsall(
+		self,
+		q_re: torch.Tensor,
+		q_im: torch.Tensor,
+		cand_re: torch.Tensor,
+		cand_im: torch.Tensor,
+	) -> torch.Tensor:
+		num_candidates = cand_re.size(0)
+		batch_size = q_re.size(0)
+		half_dim = q_re.size(-1)
+		chunk_size = self._entity_chunk_size(batch_size, half_dim)
+		scores = q_re.new_empty(batch_size, num_candidates)
+		for start in range(0, num_candidates, chunk_size):
+			end = min(start + chunk_size, num_candidates)
+			scores[:, start:end] = self._libkge_distance(
+				q_re,
+				q_im,
+				cand_re[start:end],
+				cand_im[start:end],
+				pairwise=True,
+			)
+		return scores
+
 	def _margin_distance_1vsall(
 		self,
 		q_re: torch.Tensor,
@@ -61,13 +151,6 @@ class RotatEScorer(nn.Module):
 		cand_re: torch.Tensor,
 		cand_im: torch.Tensor,
 	) -> torch.Tensor:
-		"""1-vs-all RotatE distance with chunked broadcasting.
-
-		RotatE uses ``sum_i sqrt(re_i^2 + im_i^2)``, which cannot be reduced to a
-		single entity matrix multiply, so candidates are processed in chunks to avoid
-		materializing ``[batch, num_candidates, dim]`` for the full entity vocabulary.
-		"""
-
 		num_candidates = cand_re.size(0)
 		batch_size = q_re.size(0)
 		half_dim = q_re.size(-1)
@@ -80,16 +163,38 @@ class RotatEScorer(nn.Module):
 			scores[:, start:end] = self.margin - torch.sqrt(re_score ** 2 + im_score ** 2).sum(dim=-1)
 		return scores
 
+	def _rotate_query(
+		self,
+		h_re: torch.Tensor,
+		h_im: torch.Tensor,
+		r_emb: torch.Tensor,
+		*,
+		inverse: bool,
+	) -> tuple[torch.Tensor, torch.Tensor]:
+		r_re, r_im = self._rotation(self._phase(r_emb))
+		if inverse:
+			r_im = -r_im
+			return self._hadamard_complex(r_re, r_im, h_re, h_im)
+		return self._hadamard_complex(h_re, h_im, r_re, r_im)
+
+	def score_spo(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+		"""Return standard RotatE tail scores for matching batches of triples."""
+
+		return self._distance_score(h_emb, r_emb, t_emb, predict_head=False)
+
+	def score_po(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+		"""Return standard RotatE head scores for matching batches of triples."""
+
+		return self._distance_score(h_emb, r_emb, t_emb, predict_head=True)
+
 	def score_sp_(self, h_emb: torch.Tensor, r_emb: torch.Tensor, all_t_embs: torch.Tensor) -> torch.Tensor:
 		"""Return 1-vs-all RotatE tail scores using LibKGE-style sp_ broadcasting."""
 
 		h_re, h_im = self._split_complex(h_emb)
 		t_re, t_im = self._split_complex(all_t_embs)
-		phase = self._phase(r_emb)
-		r_re = torch.cos(phase)
-		r_im = torch.sin(phase)
-		q_re = h_re * r_re - h_im * r_im
-		q_im = h_re * r_im + h_im * r_re
+		q_re, q_im = self._rotate_query(h_re, h_im, r_emb, inverse=False)
+		if self._libkge:
+			return self._libkge_distance_1vsall(q_re, q_im, t_re, t_im)
 		return self._margin_distance_1vsall(q_re, q_im, t_re, t_im)
 
 	def score_po_(self, all_h_embs: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
@@ -97,11 +202,9 @@ class RotatEScorer(nn.Module):
 
 		h_re, h_im = self._split_complex(all_h_embs)
 		t_re, t_im = self._split_complex(t_emb)
-		phase = self._phase(r_emb)
-		r_re = torch.cos(phase)
-		r_im = torch.sin(phase)
-		q_re = r_re * t_re + r_im * t_im
-		q_im = r_re * t_im - r_im * t_re
+		q_re, q_im = self._rotate_query(t_re, t_im, r_emb, inverse=True)
+		if self._libkge:
+			return self._libkge_distance_1vsall(q_re, q_im, h_re, h_im)
 		return self._margin_distance_1vsall(q_re, q_im, h_re, h_im)
 
 	def _distance_score(
@@ -116,6 +219,13 @@ class RotatEScorer(nn.Module):
 
 		h_re, h_im = self._split_complex(h_emb)
 		t_re, t_im = self._split_complex(t_emb)
+		if self._libkge:
+			if predict_head:
+				q_re, q_im = self._rotate_query(t_re, t_im, r_emb, inverse=True)
+				return self._libkge_distance(q_re, q_im, h_re, h_im, pairwise=False)
+			q_re, q_im = self._rotate_query(h_re, h_im, r_emb, inverse=False)
+			return self._libkge_distance(q_re, q_im, t_re, t_im, pairwise=False)
+
 		phase = self._phase(r_emb)
 		r_re = torch.cos(phase)
 		r_im = torch.sin(phase)

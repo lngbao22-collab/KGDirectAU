@@ -18,6 +18,7 @@ from models.builder import (
 	load_sampler,
 	run_index_kge_train_loop,
 )
+from models.scorers.rotate_scorer import normalize_rotate_phases
 from utils.device import get_model_obj
 from utils.logger import logger
 
@@ -56,6 +57,12 @@ class NegSampStrategy:
 		self._slot_modes = ['head-batch', 'tail-batch']
 		self._slot_step = 0
 		self._pointwise_mode = hasattr(self.sampler, 'num_entities') or type(self.sampler).__name__ == 'PointwiseNegSampler'
+		self._normalize_rotate_phases = (
+			config_bool(args, 'normalize_phases', False)
+			and str(getattr(args, 'model', '') or '').lower() == 'rotate'
+		)
+		if self._normalize_rotate_phases:
+			normalize_rotate_phases(self.model)
 
 	def _maybe_decay_learning_rate(self) -> None:
 		if self.next_lr_decay_step is None or self.global_step < self.next_lr_decay_step:
@@ -82,6 +89,18 @@ class NegSampStrategy:
 		for start in range(0, len(triples), batch_size):
 			yield triples[start:start + batch_size]
 
+	def _score_triple(
+		self,
+		h: torch.Tensor,
+		r: torch.Tensor,
+		t: torch.Tensor,
+		*,
+		predict_head: bool,
+	) -> torch.Tensor:
+		if predict_head and hasattr(get_model_obj(self.model).scorer, 'score_po'):
+			return self.model.score_po(r, t, s=h)
+		return self.model.score_spo(h, r, t)
+
 	def _score_filtered_negatives(
 		self,
 		pos_triples: torch.Tensor,
@@ -91,7 +110,8 @@ class NegSampStrategy:
 		h = pos_triples[:, 0]
 		r = pos_triples[:, 1]
 		t = pos_triples[:, 2]
-		pos_scores = self.model.score_spo(h, r, t)
+		predict_head = mode == 'head-batch'
+		pos_scores = self._score_triple(h, r, t, predict_head=predict_head)
 
 		batch_size, num_neg = neg_entity_ids.shape
 		if mode == 'tail-batch':
@@ -103,7 +123,7 @@ class NegSampStrategy:
 			h_neg = neg_entity_ids.reshape(-1)
 			r_exp = r.unsqueeze(1).expand(-1, num_neg).reshape(-1)
 			t_exp = t.unsqueeze(1).expand(-1, num_neg).reshape(-1)
-			neg_scores = self.model.score_spo(h_neg, r_exp, t_exp).view(batch_size, num_neg)
+			neg_scores = self.model.score_po(r_exp, t_exp, s=h_neg).view(batch_size, num_neg)
 		else:
 			raise ValueError(f'Unsupported negative-sampling mode: {mode}')
 
@@ -215,6 +235,9 @@ class NegSampStrategy:
 				if self._pointwise_mode:
 					torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
 				self.optimizer.step()
+
+			if self._normalize_rotate_phases:
+				normalize_rotate_phases(self.model)
 
 			self.global_step += 1
 			self._maybe_decay_learning_rate()

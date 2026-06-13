@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import torch
@@ -153,6 +154,11 @@ def _init_rotate_weight(weight: nn.Parameter, args, *, role: str, hidden_dim: in
 	"""Initialize RotatE/pRotatE parameter tables (LibKGE ``lookup_embedder.initialize``)."""
 
 	full_dim = hidden_dim * 2 if role == 'entity' else hidden_dim
+	if role == 'relation' and _is_rotate(args):
+		low = float(getattr(args, 'init_relation_uniform_a', -math.pi))
+		high = float(getattr(args, 'init_relation_uniform_b', math.pi))
+		nn.init.uniform_(weight, a=low, b=high)
+		return
 	if getattr(args, 'init_method', None):
 		temp = LookupEmbedder(weight.size(0), full_dim, args, role=role)
 		init_lookup_embedding(temp, args, full_dim, role=role)
