@@ -28,7 +28,7 @@
   "entity_regularize_weighted": true,
   "relation_regularize_weighted": true,
   "regularize_p": 3,
-  "init_method": "scaled",
+  "init_method": "uniform_",
   "init_uniform_a": -0.28148249060722197,
   "eval_batch_size": 256,
   "early_stopping_patience": 10,
