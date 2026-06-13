@@ -140,6 +140,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help='uniformity weight for head embeddings (default 0 when omitted)')
     parser.add_argument('--gamma-ent', '--gamma_ent', default=None, type=float,
                         help='uniformity weight for all entity embeddings')
+    parser.add_argument('--gamma-cross', '--gamma_cross', default=None, type=float,
+                        help='uniformity weight on pooled query+tail vectors (joint LP space)')
     parser.add_argument('--tuni', default=None, type=float,
                         help='AU uniformity temperature (Gaussian potential scale)')
     parser.add_argument('--au-per-epoch', '--au_per_epoch', dest='au_per_epoch',
@@ -459,7 +461,7 @@ if config_defaults:
 args.unparsed_args = unknown_args
 
 # JSON null or omitted optional AU weights must not propagate as None.
-for _name, _default in (('gamma_h', 0.0), ('gamma_ent', 0.0)):
+for _name, _default in (('gamma_h', 0.0), ('gamma_ent', 0.0), ('gamma_cross', 0.0)):
     if getattr(args, _name, None) is None:
         setattr(args, _name, _default)
 

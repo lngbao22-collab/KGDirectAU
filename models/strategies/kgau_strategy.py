@@ -191,6 +191,7 @@ class KGAUStrategy(Evaluator):
 			gamma_t=_config_float(args, 'gamma_t', 1.0),
 			gamma_h=_config_float(args, 'gamma_h', 0.0),
 			gamma_ent=_config_float(args, 'gamma_ent', 0.0),
+			gamma_cross=_config_float(args, 'gamma_cross', 0.0),
 			tuni=tuni_val,
 			max_uniformity_samples=int(_config_float(args, 'max_uniformity_samples', 1024)),
 			additive_margin=_config_float(args, 'additive_margin', 0.0),
@@ -333,6 +334,34 @@ class KGAUStrategy(Evaluator):
 		n_unique_t = t_uni.size(0) if t_uni is not None else 0
 		return q_uni, t_uni, h_uni, n_unique_q, n_unique_t
 
+	@staticmethod
+	def _merge_cross_uniformity_vectors(
+		q_uni: torch.Tensor | None,
+		t_uni: torch.Tensor | None,
+	) -> torch.Tensor | None:
+		"""Pool deduplicated query and tail rows for cross uniformity (shared LP space)."""
+
+		parts = [x for x in (q_uni, t_uni) if x is not None and x.size(0) > 0]
+		if not parts:
+			return None
+		cross = parts[0] if len(parts) == 1 else torch.cat(parts, dim=0)
+		return cross if cross.size(0) >= 2 else None
+
+	def _cross_uniformity_vectors(
+		self,
+		q_raw: torch.Tensor,
+		t_raw: torch.Tensor,
+		q_keys: torch.Tensor,
+		t_keys: torch.Tensor,
+	) -> torch.Tensor | None:
+		"""Build pooled query+tail vectors for ``gamma_cross`` uniformity."""
+
+		if self.criterion.gamma_cross <= 0:
+			return None
+		q_uni = select_distinct_rows(q_raw, q_keys)
+		t_uni = select_distinct_rows(t_raw, t_keys)
+		return self._merge_cross_uniformity_vectors(q_uni, t_uni)
+
 	def _count_unique_uniformity_keys(
 		self,
 		head_indices: torch.Tensor,
@@ -398,8 +427,10 @@ class KGAUStrategy(Evaluator):
 
 		q_uni, t_uni, h_uni, n_unique_q, n_unique_t = self._distinct_uniformity_inputs(
 			q_raw, t_raw, h_raw, q_keys, t_keys, h_keys)
+		cross_uni = self._cross_uniformity_vectors(q_raw, t_raw, q_keys, t_keys)
 		loss, l_align, l_unif, margin_active_frac = self.criterion(
-			q_raw, t_raw, h_raw, ent_raw, q_uni=q_uni, t_uni=t_uni, h_uni=h_uni, return_stats=True)
+			q_raw, t_raw, h_raw, ent_raw, q_uni=q_uni, t_uni=t_uni, h_uni=h_uni,
+			cross_uni=cross_uni, return_stats=True)
 		loss = self._apply_embedding_regularization(loss, batch_triples=batch_triples)
 		return loss, l_align, l_unif, n_unique_q, n_unique_t, margin_active_frac
 
@@ -565,10 +596,15 @@ class KGAUStrategy(Evaluator):
 				self._backward_au_loss(l_align, fraction, use_amp=False)
 			align_loss_sum += l_align.item() * chunk
 
-		q_uni = self._au_vectors_at_indices(model, self.epoch_q_rep_idx, chunk_size, 'q') if self.criterion.gamma_q > 0 else None
-		t_uni = self._au_vectors_at_indices(model, self.epoch_t_rep_idx, chunk_size, 't') if self.criterion.gamma_t > 0 else None
+		q_uni = self._au_vectors_at_indices(model, self.epoch_q_rep_idx, chunk_size, 'q') if (
+			self.criterion.gamma_q > 0 or self.criterion.gamma_cross > 0
+		) else None
+		t_uni = self._au_vectors_at_indices(model, self.epoch_t_rep_idx, chunk_size, 't') if (
+			self.criterion.gamma_t > 0 or self.criterion.gamma_cross > 0
+		) else None
 		h_uni = self._au_vectors_at_indices(model, self.epoch_h_rep_idx, chunk_size, 'h') if self.criterion.gamma_h > 0 else None
 		ent_raw = self._catalog_entity_uniformity_vectors(model)
+		cross_uni = self._merge_cross_uniformity_vectors(q_uni, t_uni)
 
 		dummy_q = q_uni if q_uni is not None else t_uni if t_uni is not None else h_uni
 		if dummy_q is None:
@@ -579,12 +615,14 @@ class KGAUStrategy(Evaluator):
 			with torch.amp.autocast(device_type='cuda'):
 				l_unif, margin_active = self.criterion.forward_uniformity(
 					dummy_q, dummy_t, q_uni=q_uni, t_uni=t_uni, h=h_uni, h_uni=h_uni, ent=ent_raw,
+					cross_uni=cross_uni,
 				)
 				loss = self._apply_embedding_regularization(l_unif)
 			self.scaler.scale(loss).backward()
 		else:
 			l_unif, margin_active = self.criterion.forward_uniformity(
 				dummy_q, dummy_t, q_uni=q_uni, t_uni=t_uni, h=h_uni, h_uni=h_uni, ent=ent_raw,
+				cross_uni=cross_uni,
 			)
 			loss = self._apply_embedding_regularization(l_unif)
 			loss.backward()

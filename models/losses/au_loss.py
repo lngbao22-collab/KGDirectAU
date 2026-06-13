@@ -48,6 +48,7 @@ class KGAULoss(nn.Module):
 		gamma_t=1.0,
 		gamma_h=0.0,
 		gamma_ent=0.0,
+		gamma_cross=0.0,
 		tuni=2.0,
 		max_uniformity_samples: int = 1024,
 		additive_margin: float = 0.0,
@@ -59,6 +60,7 @@ class KGAULoss(nn.Module):
 		self.gamma_t = _coalesce_float(gamma_t, 1.0)
 		self.gamma_h = _coalesce_float(gamma_h, 0.0)
 		self.gamma_ent = _coalesce_float(gamma_ent, 0.0)
+		self.gamma_cross = _coalesce_float(gamma_cross, 0.0)
 		# `tuni` is the uniformity temperature/scaling factor
 		self.tuni = _coalesce_float(tuni, 2.0)
 		self.max_uniformity_samples = max_uniformity_samples
@@ -232,6 +234,7 @@ class KGAULoss(nn.Module):
 		h: torch.Tensor | None = None,
 		h_uni: torch.Tensor | None = None,
 		ent: torch.Tensor | None = None,
+		cross_uni: torch.Tensor | None = None,
 	) -> tuple[torch.Tensor, float]:
 		"""Uniformity terms only; returns (loss, margin-active fraction for logging)."""
 
@@ -260,6 +263,9 @@ class KGAULoss(nn.Module):
 			if ent_rows is not None:
 				term, _ = self.uniformity_loss_with_stats(ent_rows)
 				l_unif = l_unif + self.gamma_ent * term
+		if cross_uni is not None and self.gamma_cross > 0:
+			term, _ = self.uniformity_loss_with_stats(cross_uni)
+			l_unif = l_unif + self.gamma_cross * term
 
 		if float(self.additive_margin) > 0.0 and active_weight > 0:
 			margin_active_frac = active_sum / active_weight
@@ -276,6 +282,7 @@ class KGAULoss(nn.Module):
 		q_uni: torch.Tensor | None = None,
 		t_uni: torch.Tensor | None = None,
 		h_uni: torch.Tensor | None = None,
+		cross_uni: torch.Tensor | None = None,
 		external_align: torch.Tensor | None = None,
 		return_stats: bool = False,
 	):
@@ -288,7 +295,7 @@ class KGAULoss(nn.Module):
 
 		l_align = self.forward_alignment(q, t, external_align=external_align)
 		l_unif, margin_active_frac = self.forward_uniformity(
-			q, t, q_uni=q_uni, t_uni=t_uni, h=h, h_uni=h_uni, ent=ent,
+			q, t, q_uni=q_uni, t_uni=t_uni, h=h, h_uni=h_uni, ent=ent, cross_uni=cross_uni,
 		)
 
 		total_loss = l_align + l_unif
