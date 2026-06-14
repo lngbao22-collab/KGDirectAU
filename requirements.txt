@@ -20,3 +20,7 @@ typing-extensions>=3.10
 
 # Optional: specify a compatible protobuf if environment needs it
 protobuf>=3.19
+
+# Hyperparameter search (scripts/hpo/)
+optuna>=3.0
+pandas>=1.3
