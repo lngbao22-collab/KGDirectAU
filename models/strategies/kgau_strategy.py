@@ -76,6 +76,49 @@ def _build_optimizer(args, parameters, weight_decay: float):
 	return Adam(parameters, lr=lr, weight_decay=weight_decay)
 
 
+def _build_kgau_optimizer(args, model, criterion: KGAULoss, weight_decay: float):
+	"""Build optimizer over model + KGAU loss params (optional learnable ``tuni`` group)."""
+
+	lr = float(getattr(args, 'lr', getattr(args, 'learning_rate', 2e-5)))
+	base_params = [p for p in model.parameters() if p.requires_grad]
+	log_tuni_param = None
+	aux_other_params = []
+	for name, param in criterion.named_parameters():
+		if not param.requires_grad:
+			continue
+		if name == 'log_tuni' or name.endswith('.log_tuni'):
+			log_tuni_param = param
+		else:
+			aux_other_params.append(param)
+
+	param_groups = []
+	base_group_params = base_params + aux_other_params
+	if base_group_params:
+		param_groups.append({'params': base_group_params, 'lr': lr, 'weight_decay': weight_decay})
+	if log_tuni_param is not None:
+		log_tuni_lr = float(getattr(args, 'log_uniformity_lr', lr))
+		param_groups.append({'params': [log_tuni_param], 'lr': log_tuni_lr, 'weight_decay': 0.0})
+
+	if not param_groups:
+		return _build_optimizer(args, model.parameters(), weight_decay)
+
+	optim_name = str(getattr(args, 'optim', 'adam')).lower()
+	if optim_name == 'adagrad':
+		return optim.Adagrad(param_groups)
+	if optim_name == 'sgd':
+		return optim.SGD(param_groups)
+	return Adam(param_groups)
+
+
+def _tuni_scalar(criterion: KGAULoss) -> float:
+	"""Return the current uniformity scale as a Python float for logging."""
+
+	value = criterion.tuni
+	if torch.is_tensor(value):
+		return float(value.detach().cpu().item())
+	return float(value)
+
+
 def _build_text_train_loader(args, train_examples) -> torch.utils.data.DataLoader:
 	"""Build the tokenized training loader (SimKGC/BERT only)."""
 
@@ -171,10 +214,9 @@ class KGAUStrategy(Evaluator):
 			)
 		else:
 			self.weight_decay = float(weight_decay) / num_batches
-		self.optimizer = _build_optimizer(args, self.model.parameters(), self.weight_decay)
-		self.lr_scheduler = build_lr_scheduler(args, self.optimizer)
 
 		tuni_val = _config_float(args, 'tuni', _config_float(args, 'temperature', _config_float(args, 't', 2.0)))
+		learnable_tuni = config_bool(args, 'learnable_uniformity_scale', False)
 
 		# Alignment mode is opt-in: cosine by default for all encoders; only pRotatE-AU sets
 		# ``sin_phase`` (via config and/or encoder ``kga_u_alignment_mode``).
@@ -193,11 +235,20 @@ class KGAUStrategy(Evaluator):
 			gamma_ent=_config_float(args, 'gamma_ent', 0.0),
 			gamma_cross=_config_float(args, 'gamma_cross', 0.0),
 			tuni=tuni_val,
+			learnable_tuni=learnable_tuni,
 			max_uniformity_samples=int(_config_float(args, 'max_uniformity_samples', 1024)),
 			additive_margin=_config_float(args, 'additive_margin', 0.0),
 			alignment_mode=alignment_mode,
 			normalize_uniformity=bool(normalize_uniformity),
 		).to(self.device)
+		if learnable_tuni:
+			logger.info(
+				'Learnable uniformity scale (tuni): initial=%.4f, log_uniformity_lr=%.2e',
+				tuni_val,
+				float(getattr(args, 'log_uniformity_lr', getattr(args, 'lr', 2e-5))),
+			)
+		self.optimizer = _build_kgau_optimizer(args, self.model, self.criterion, self.weight_decay)
+		self.lr_scheduler = build_lr_scheduler(args, self.optimizer)
 		if self.criterion.gamma_ent > 0 and self.uses_text_inputs:
 			logger.info(
 				'Entity uniformity (text encoder): gamma_ent uses deduplicated batch head+tail vectors '
@@ -980,22 +1031,27 @@ class KGAUStrategy(Evaluator):
 		else:
 			avg_unique_q = avg_unique_t = avg_margin_active = 0.0
 		unique_scope = 'epoch' if self.au_per_epoch else 'batch'
+		tuni_suffix = ''
+		if hasattr(self.criterion, 'log_tuni'):
+			tuni_suffix = f' | tuni: {_tuni_scalar(self.criterion):.4f}'
 		if float(self.criterion.additive_margin) > 0.0:
 			logger.info(
 				'[EPOCH %s] train loss: %.6f | align: %.6f | uniformity: %.6f | '
-				'unique q/t per %s: %.0f/%.0f%s | margin-buffer pairs: %.2f%%',
+				'unique q/t per %s: %.0f/%.0f%s | margin-buffer pairs: %.2f%%%s',
 				display_epoch, avg_loss, avg_align_loss, avg_unif_loss,
 				unique_scope, avg_unique_q, avg_unique_t,
 				'' if self.au_per_epoch else f' (of {batch_size})',
 				100.0 * avg_margin_active,
+				tuni_suffix,
 			)
 		else:
 			logger.info(
 				'[EPOCH %s] train loss: %.6f | align: %.6f | uniformity: %.6f | '
-				'unique q/t per %s: %.0f/%.0f%s',
+				'unique q/t per %s: %.0f/%.0f%s%s',
 				display_epoch, avg_loss, avg_align_loss, avg_unif_loss,
 				unique_scope, avg_unique_q, avg_unique_t,
 				'' if self.au_per_epoch else f' (of {batch_size})',
+				tuni_suffix,
 			)
 		self.train_component_losses = {
 			'loss': avg_loss,
@@ -1006,6 +1062,8 @@ class KGAUStrategy(Evaluator):
 		}
 		if float(self.criterion.additive_margin) > 0.0:
 			self.train_component_losses['margin_buffer_pair_frac'] = avg_margin_active
+		if hasattr(self.criterion, 'log_tuni'):
+			self.train_component_losses['tuni'] = _tuni_scalar(self.criterion)
 		return avg_loss
 
 	@torch.no_grad()

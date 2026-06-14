@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -50,6 +52,7 @@ class KGAULoss(nn.Module):
 		gamma_ent=0.0,
 		gamma_cross=0.0,
 		tuni=2.0,
+		learnable_tuni: bool = False,
 		max_uniformity_samples: int = 1024,
 		additive_margin: float = 0.0,
 		alignment_mode: str = 'cosine',
@@ -61,8 +64,12 @@ class KGAULoss(nn.Module):
 		self.gamma_h = _coalesce_float(gamma_h, 0.0)
 		self.gamma_ent = _coalesce_float(gamma_ent, 0.0)
 		self.gamma_cross = _coalesce_float(gamma_cross, 0.0)
-		# `tuni` is the uniformity temperature/scaling factor
-		self.tuni = _coalesce_float(tuni, 2.0)
+		# `tuni` is the uniformity temperature/scaling factor; optionally learnable via log-scale.
+		tuni_val = _coalesce_float(tuni, 2.0)
+		if learnable_tuni:
+			self.log_tuni = nn.Parameter(torch.tensor(math.log(tuni_val)))
+		else:
+			self._tuni = tuni_val
 		self.max_uniformity_samples = max_uniformity_samples
 		# InfoNCE additive margin gamma; geometric threshold m = 2 * gamma on squared L2.
 		self.additive_margin = _coalesce_float(additive_margin, 0.0)
@@ -71,6 +78,20 @@ class KGAULoss(nn.Module):
 		# `sin_phase`: pRotatE link-pred term sum_i |sin(theta_q,i - theta_t,i)| (no global normalize).
 		self.alignment_mode = alignment_mode or 'cosine'
 		self.normalize_uniformity = normalize_uniformity
+
+	@property
+	def tuni(self):
+		if hasattr(self, 'log_tuni'):
+			return torch.exp(self.log_tuni)
+		return self._tuni
+
+	@tuni.setter
+	def tuni(self, value):
+		if hasattr(self, 'log_tuni'):
+			with torch.no_grad():
+				self.log_tuni.data.fill_(math.log(float(value)))
+		else:
+			self._tuni = float(value)
 
 	def alignment_loss(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
 		"""Expected squared L2 distance between paired positive query and target embeddings."""

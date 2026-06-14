@@ -144,6 +144,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help='uniformity weight on pooled query+tail vectors (joint LP space)')
     parser.add_argument('--tuni', default=None, type=float,
                         help='AU uniformity temperature (Gaussian potential scale)')
+    parser.add_argument('--learnable-uniformity-scale', '--learnable_uniformity_scale',
+                        dest='learnable_uniformity_scale', action='store_true', default=False,
+                        help='make AU uniformity scale tuni learnable (log re-parameterization)')
+    parser.add_argument('--log-uniformity-lr', '--log_uniformity_lr', default=1e-2, type=float,
+                        dest='log_uniformity_lr',
+                        help='learning rate for learnable log-uniformity-scale (tuni)')
     parser.add_argument('--au-per-epoch', '--au_per_epoch', dest='au_per_epoch',
                         action='store_true', default=None,
                         help='KGAU: one optimizer step per epoch with alignment/uniformity over full train set')
@@ -449,16 +455,52 @@ def _resolve_data_path(path: str) -> str:
     return path
 
 
+def _apply_cli_token_overrides(tokens, args) -> list:
+    """Apply known CLI tokens left in ``unparsed_args`` (e.g. copied from a saved run)."""
+
+    remaining = []
+    idx = 0
+    while idx < len(tokens):
+        token = tokens[idx]
+        if token in ('--learnable-uniformity-scale', '--learnable_uniformity_scale'):
+            args.learnable_uniformity_scale = True
+            idx += 1
+            continue
+        if token in ('--log-uniformity-lr', '--log_uniformity_lr'):
+            if idx + 1 < len(tokens):
+                args.log_uniformity_lr = float(tokens[idx + 1])
+                idx += 2
+                continue
+        remaining.append(token)
+        idx += 1
+    return remaining
+
+
+def _filter_json_defaults(config_defaults: Dict[str, Any]) -> tuple[Dict[str, Any], list]:
+    """Drop non-hyperparameter keys from JSON configs (saved arg dumps, etc.)."""
+
+    if not config_defaults:
+        return {}, []
+    filtered = dict(config_defaults)
+    json_cli_tokens = filtered.pop('unparsed_args', None) or []
+    if not isinstance(json_cli_tokens, list):
+        json_cli_tokens = []
+    return filtered, json_cli_tokens
+
+
 parser = build_parser()
 args, unknown_args = parser.parse_known_args()
 
 config_path = _resolve_config_path()
 config_defaults = _load_json_defaults(config_path)
+json_cli_tokens: list = []
 if config_defaults:
+    config_defaults, json_cli_tokens = _filter_json_defaults(config_defaults)
     parser.set_defaults(**config_defaults)
     args, unknown_args = parser.parse_known_args()
 
-args.unparsed_args = unknown_args
+extra_cli_tokens = list(unknown_args) + list(json_cli_tokens)
+args.unparsed_args = _apply_cli_token_overrides(extra_cli_tokens, args)
 
 # JSON null or omitted optional AU weights must not propagate as None.
 for _name, _default in (('gamma_h', 0.0), ('gamma_ent', 0.0), ('gamma_cross', 0.0)):
