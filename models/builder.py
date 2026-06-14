@@ -225,7 +225,7 @@ def build_optimizer(args, parameters, weight_decay: float):
 def build_lr_scheduler(args, optimizer):
 	"""Build an optional LR scheduler for index-based KGE training (LibKGE-style)."""
 
-	from torch.optim.lr_scheduler import ReduceLROnPlateau
+	from torch.optim.lr_scheduler import ReduceLROnPlateau, StepLR
 
 	name = str(getattr(args, 'lr_scheduler', '') or '').lower()
 	if name in ('', 'none', 'constant'):
@@ -238,7 +238,34 @@ def build_lr_scheduler(args, optimizer):
 			patience=int(getattr(args, 'lr_scheduler_patience', 7)),
 			threshold=float(getattr(args, 'lr_scheduler_threshold', 1e-4)),
 		)
+	if name in ('step', 'steplr', 'stepdecay'):
+		step_size = max(int(getattr(args, 'lr_scheduler_step_size', 50) or 50), 1)
+		return StepLR(
+			optimizer,
+			step_size=step_size,
+			gamma=float(getattr(args, 'lr_scheduler_factor', 0.95)),
+		)
 	return None
+
+
+def step_lr_scheduler(lr_scheduler, metric_dict: dict | None = None) -> None:
+	"""Advance the LR scheduler after an epoch (metric-driven or fixed step decay)."""
+
+	if lr_scheduler is None:
+		return
+	from torch.optim.lr_scheduler import ReduceLROnPlateau, StepLR
+
+	if isinstance(lr_scheduler, ReduceLROnPlateau):
+		if metric_dict and 'mrr' in metric_dict:
+			lr_scheduler.step(metric_dict['mrr'])
+		return
+	if isinstance(lr_scheduler, StepLR):
+		before = lr_scheduler.get_last_lr()
+		lr_scheduler.step()
+		after = lr_scheduler.get_last_lr()
+		if after != before:
+			from utils.logger import logger
+			logger.info('StepLR decay: %s -> %s', before, after)
 
 
 def apply_kge_regularization(
@@ -534,10 +561,7 @@ def run_index_kge_train_loop(trainer, dataloader=None) -> dict:
 		_save_index_kge_checkpoint(trainer, epoch, is_best)
 
 		lr_scheduler = getattr(trainer, 'lr_scheduler', None)
-		if lr_scheduler is not None and metric_dict and 'mrr' in metric_dict:
-			from torch.optim.lr_scheduler import ReduceLROnPlateau
-			if isinstance(lr_scheduler, ReduceLROnPlateau):
-				lr_scheduler.step(metric_dict['mrr'])
+		step_lr_scheduler(lr_scheduler, metric_dict)
 
 		if patience is not None and bad_counts >= patience and (epoch + 1) >= min_epochs:
 			logger.info('[EARLY STOP] No validation MRR improvement for %d evaluations.', patience)

@@ -17,7 +17,7 @@
   "dim": 128,
   "batch_size": 512,
   "epochs": 400,
-  "lr": 0.1,
+  "lr": 0.5,
   "optim": "adagrad",
   "weight_decay": 0.0,
   "entity_dropout": 0.0,

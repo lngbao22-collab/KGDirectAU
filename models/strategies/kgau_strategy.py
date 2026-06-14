@@ -17,7 +17,7 @@ from base.evaluator import Evaluator
 from data.dataloader import collate
 from data.dataset import Dataset, load_data
 from data.dict_hub import get_entity_dict, get_relation_id_map
-from models.builder import apply_kge_regularization, build_lr_scheduler, config_bool, load_attr_from_path
+from models.builder import apply_kge_regularization, build_lr_scheduler, config_bool, load_attr_from_path, step_lr_scheduler
 from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, save_checkpoint
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
 from utils.logger import AverageMeter, ProgressMeter, logger
@@ -117,6 +117,28 @@ def _tuni_scalar(criterion: KGAULoss) -> float:
 	if torch.is_tensor(value):
 		return float(value.detach().cpu().item())
 	return float(value)
+
+
+def _scheduled_tuni_value(args, epoch: int) -> float:
+	"""Linear tuni schedule: ``start`` at ``start_epoch``, ``end`` at the last scheduled epoch."""
+
+	start_epoch = int(getattr(args, 'tuni_schedule_start_epoch', 0) or 0)
+	tuni_default = _config_float(args, 'tuni', _config_float(args, 'temperature', _config_float(args, 't', 2.0)))
+	start_raw = getattr(args, 'tuni_schedule_start', None)
+	end_raw = getattr(args, 'tuni_schedule_end', None)
+	start_scale = tuni_default if start_raw is None else float(start_raw)
+	end_scale = tuni_default if end_raw is None else float(end_raw)
+
+	schedule_epochs = int(getattr(args, 'tuni_schedule_epochs', 0) or 0)
+	if schedule_epochs <= 0:
+		schedule_span = max(1, int(getattr(args, 'epochs', 1)) - 1 - start_epoch)
+	else:
+		schedule_span = max(1, schedule_epochs - 1)
+
+	if epoch < start_epoch:
+		return start_scale
+	progress = min(1.0, max(0.0, (epoch - start_epoch) / float(schedule_span)))
+	return start_scale + (end_scale - start_scale) * progress
 
 
 def _build_text_train_loader(args, train_examples) -> torch.utils.data.DataLoader:
@@ -247,6 +269,17 @@ class KGAUStrategy(Evaluator):
 				tuni_val,
 				float(getattr(args, 'log_uniformity_lr', getattr(args, 'lr', 2e-5))),
 			)
+		elif config_bool(args, 'tuni_linear_schedule', False):
+			start_scale = _scheduled_tuni_value(args, 0)
+			end_scale = _scheduled_tuni_value(args, max(int(getattr(args, 'epochs', 1)) - 1, 0))
+			logger.info(
+				'Linear tuni schedule: epoch 0=%.4f -> last epoch=%.4f (start_epoch=%d)',
+				start_scale,
+				end_scale,
+				int(getattr(args, 'tuni_schedule_start_epoch', 0) or 0),
+			)
+		if learnable_tuni and config_bool(args, 'tuni_linear_schedule', False):
+			logger.warning('tuni_linear_schedule is ignored when learnable_uniformity_scale is enabled')
 		self.optimizer = _build_kgau_optimizer(args, self.model, self.criterion, self.weight_decay)
 		self.lr_scheduler = build_lr_scheduler(args, self.optimizer)
 		if self.criterion.gamma_ent > 0 and self.uses_text_inputs:
@@ -1032,7 +1065,7 @@ class KGAUStrategy(Evaluator):
 			avg_unique_q = avg_unique_t = avg_margin_active = 0.0
 		unique_scope = 'epoch' if self.au_per_epoch else 'batch'
 		tuni_suffix = ''
-		if hasattr(self.criterion, 'log_tuni'):
+		if self._should_log_tuni():
 			tuni_suffix = f' | tuni: {_tuni_scalar(self.criterion):.4f}'
 		if float(self.criterion.additive_margin) > 0.0:
 			logger.info(
@@ -1062,9 +1095,29 @@ class KGAUStrategy(Evaluator):
 		}
 		if float(self.criterion.additive_margin) > 0.0:
 			self.train_component_losses['margin_buffer_pair_frac'] = avg_margin_active
-		if hasattr(self.criterion, 'log_tuni'):
+		if hasattr(self.criterion, 'log_tuni') or config_bool(self.args, 'tuni_linear_schedule', False):
 			self.train_component_losses['tuni'] = _tuni_scalar(self.criterion)
 		return avg_loss
+
+	def _maybe_update_tuni_schedule(self, epoch: int) -> None:
+		"""Apply linear tuni schedule before each training epoch (fixed scale only)."""
+
+		if not config_bool(self.args, 'tuni_linear_schedule', False):
+			return
+		if hasattr(self.criterion, 'log_tuni'):
+			return
+
+		scale_value = _scheduled_tuni_value(self.args, epoch)
+		if scale_value <= 0.0:
+			logger.warning('Scheduled tuni <= 0 (%.6f) at epoch %d; skip update', scale_value, epoch)
+			return
+
+		self.criterion.tuni = float(scale_value)
+		self.args.tuni = float(scale_value)
+		logger.info('Linear tuni schedule at epoch %d: %.6f', epoch + 1, scale_value)
+
+	def _should_log_tuni(self) -> bool:
+		return hasattr(self.criterion, 'log_tuni') or config_bool(self.args, 'tuni_linear_schedule', False)
 
 	@torch.no_grad()
 	def eval_epoch(self, epoch, train_loss=None) -> dict:
@@ -1126,6 +1179,7 @@ class KGAUStrategy(Evaluator):
 
 		total_start_time = time.time()
 		for epoch in range(self.args.epochs):
+			self._maybe_update_tuni_schedule(epoch)
 			epoch_train_start = time.time()
 			self.memory_tracker.begin_phase()
 			train_loss = self.train_epoch(epoch)
@@ -1167,10 +1221,7 @@ class KGAUStrategy(Evaluator):
 				self.best_checkpoint_path = saved_checkpoint_path
 			delete_old_ckt(path_pattern='{}/checkpoint_*.mdl'.format(self.args.output_dir), keep=self.args.max_to_keep)
 
-			if self.lr_scheduler is not None and metric_dict and 'mrr' in metric_dict:
-				from torch.optim.lr_scheduler import ReduceLROnPlateau
-				if isinstance(self.lr_scheduler, ReduceLROnPlateau):
-					self.lr_scheduler.step(metric_dict['mrr'])
+			step_lr_scheduler(self.lr_scheduler, metric_dict)
 
 			if patience is not None and bad_counts >= patience and (epoch + 1) >= min_epochs:
 				logger.info(

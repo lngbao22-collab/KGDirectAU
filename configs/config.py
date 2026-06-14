@@ -150,6 +150,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--log-uniformity-lr', '--log_uniformity_lr', default=1e-2, type=float,
                         dest='log_uniformity_lr',
                         help='learning rate for learnable log-uniformity-scale (tuni)')
+    parser.add_argument('--tuni-linear-schedule', '--tuni_linear_schedule',
+                        dest='tuni_linear_schedule', action='store_true', default=False,
+                        help='linearly increase tuni from start to end across training epochs')
+    parser.add_argument('--tuni-schedule-start', '--tuni_schedule_start', default=None, type=float,
+                        dest='tuni_schedule_start',
+                        help='starting tuni for linear schedule (default: --tuni)')
+    parser.add_argument('--tuni-schedule-end', '--tuni_schedule_end', default=None, type=float,
+                        dest='tuni_schedule_end',
+                        help='ending tuni for linear schedule (default: --tuni)')
+    parser.add_argument('--tuni-schedule-start-epoch', '--tuni_schedule_start_epoch', default=0, type=int,
+                        dest='tuni_schedule_start_epoch',
+                        help='epoch index (0-based) to begin tuni linear schedule')
+    parser.add_argument('--tuni-schedule-epochs', '--tuni_schedule_epochs', default=0, type=int,
+                        dest='tuni_schedule_epochs',
+                        help='epochs over which to schedule tuni (0: use --epochs through last epoch)')
     parser.add_argument('--au-per-epoch', '--au_per_epoch', dest='au_per_epoch',
                         action='store_true', default=None,
                         help='KGAU: one optimizer step per epoch with alignment/uniformity over full train set')
@@ -208,11 +223,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--lr-scheduler-mode', '--lr_scheduler_mode', default='max', type=str,
                         dest='lr_scheduler_mode', help='ReduceLROnPlateau mode')
     parser.add_argument('--lr-scheduler-factor', '--lr_scheduler_factor', default=0.95, type=float,
-                        dest='lr_scheduler_factor', help='ReduceLROnPlateau factor')
+                        dest='lr_scheduler_factor',
+                        help='LR decay factor (ReduceLROnPlateau factor / StepLR gamma)')
     parser.add_argument('--lr-scheduler-patience', '--lr_scheduler_patience', default=7, type=int,
                         dest='lr_scheduler_patience', help='ReduceLROnPlateau patience')
     parser.add_argument('--lr-scheduler-threshold', '--lr_scheduler_threshold', default=1e-4, type=float,
                         dest='lr_scheduler_threshold', help='ReduceLROnPlateau threshold')
+    parser.add_argument('--lr-scheduler-step-size', '--lr_scheduler_step_size', default=50, type=int,
+                        dest='lr_scheduler_step_size',
+                        help='StepLR: multiply LR by factor every this many epochs')
 
     return parser
 
@@ -455,27 +474,6 @@ def _resolve_data_path(path: str) -> str:
     return path
 
 
-def _apply_cli_token_overrides(tokens, args) -> list:
-    """Apply known CLI tokens left in ``unparsed_args`` (e.g. copied from a saved run)."""
-
-    remaining = []
-    idx = 0
-    while idx < len(tokens):
-        token = tokens[idx]
-        if token in ('--learnable-uniformity-scale', '--learnable_uniformity_scale'):
-            args.learnable_uniformity_scale = True
-            idx += 1
-            continue
-        if token in ('--log-uniformity-lr', '--log_uniformity_lr'):
-            if idx + 1 < len(tokens):
-                args.log_uniformity_lr = float(tokens[idx + 1])
-                idx += 2
-                continue
-        remaining.append(token)
-        idx += 1
-    return remaining
-
-
 def _filter_json_defaults(config_defaults: Dict[str, Any]) -> tuple[Dict[str, Any], list]:
     """Drop non-hyperparameter keys from JSON configs (saved arg dumps, etc.)."""
 
@@ -486,6 +484,14 @@ def _filter_json_defaults(config_defaults: Dict[str, Any]) -> tuple[Dict[str, An
     if not isinstance(json_cli_tokens, list):
         json_cli_tokens = []
     return filtered, json_cli_tokens
+
+
+def _apply_extra_cli_tokens(parser, args, tokens) -> list:
+    """Re-parse leftover CLI tokens (e.g. copied into JSON ``unparsed_args``) against the full parser."""
+
+    if not tokens:
+        return []
+    return parser.parse_known_args(list(tokens), namespace=args)[1]
 
 
 parser = build_parser()
@@ -500,7 +506,7 @@ if config_defaults:
     args, unknown_args = parser.parse_known_args()
 
 extra_cli_tokens = list(unknown_args) + list(json_cli_tokens)
-args.unparsed_args = _apply_cli_token_overrides(extra_cli_tokens, args)
+args.unparsed_args = _apply_extra_cli_tokens(parser, args, extra_cli_tokens)
 
 # JSON null or omitted optional AU weights must not propagate as None.
 for _name, _default in (('gamma_h', 0.0), ('gamma_ent', 0.0), ('gamma_cross', 0.0)):
@@ -528,6 +534,7 @@ _is_index_kge_model = _model_name_for_scheduler in {
 if _is_index_kge_model:
     assert args.lr_scheduler.lower() in {
         'linear', 'cosine', 'none', 'constant', 'reducelronplateau',
+        'step', 'steplr', 'stepdecay',
     }
 else:
     assert args.lr_scheduler in ['linear', 'cosine']
