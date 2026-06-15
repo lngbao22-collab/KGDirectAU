@@ -14,7 +14,6 @@ from torch.optim import Adam
 
 from base.embeddings import use_reciprocal_relations
 from base.evaluator import Evaluator
-from data.dataloader import collate
 from data.dataset import Dataset, load_data
 from data.dict_hub import get_entity_dict, get_relation_id_map
 from models.builder import apply_kge_regularization, build_lr_scheduler, config_bool, load_attr_from_path, step_lr_scheduler
@@ -304,6 +303,7 @@ def _build_text_train_loader(args, train_examples) -> torch.utils.data.DataLoade
 	"""Build the tokenized training loader (SimKGC/BERT only)."""
 
 	from data.dict_hub import build_tokenizer, init_dataloader_worker, warmup_data_structures
+	from data.dataloader import collate
 
 	build_tokenizer(args)
 	warmup_data_structures()

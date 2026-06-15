@@ -14,7 +14,6 @@ from utils.device import get_model_obj, move_to_cuda
 
 from data.dict_hub import get_all_triplet_dict, get_entity_dict
 from data.dataset import Example, load_data
-from data.dataloader import collate
 from metrics.ranking import ranking_metrics_from_ranks, ranks_from_score_matrix
 from metrics.classification import classification_metrics, find_global_threshold
 from models.losses.bce_loss import bce_logit_offset
@@ -703,6 +702,7 @@ class Evaluator:
                 for i in range(0, len(eval_exs), batch_size):
                     batch = eval_exs[i:i + batch_size]
                     batch_vec = [ex.vectorize() for ex in batch]
+                    from data.dataloader import collate
                     batch_dict = collate(batch_vec)
                     if torch.cuda.is_available():
                         batch_dict = move_to_cuda(batch_dict)
@@ -915,6 +915,7 @@ class Evaluator:
             for i in range(0, len(test_exs), batch_size):
                 batch = test_exs[i:i + batch_size]
                 batch_vec = [ex.vectorize() for ex in batch]
+                from data.dataloader import collate
                 batch_dict = collate(batch_vec)
                 if torch.cuda.is_available():
                     batch_dict = move_to_cuda(batch_dict)
@@ -944,6 +945,7 @@ class Evaluator:
                     for i in range(0, len(valid_exs), batch_size):
                         batch = valid_exs[i:i + batch_size]
                         batch_vec = [ex.vectorize() for ex in batch]
+                        from data.dataloader import collate
                         batch_dict = collate(batch_vec)
                         if torch.cuda.is_available():
                             batch_dict = move_to_cuda(batch_dict)
