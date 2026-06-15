@@ -89,7 +89,7 @@ def _build_kgau_optimizer(args, model, criterion: KGAULoss, weight_decay: float)
 			continue
 		if name == 'log_tuni' or name.endswith('.log_tuni'):
 			log_tuni_param = param
-		elif name.startswith('log_gamma_'):
+		elif name.startswith('log_gamma_adj_'):
 			log_gamma_params.append(param)
 		else:
 			aux_other_params.append(param)
@@ -172,6 +172,8 @@ def _scheduled_gamma_mult(args, epoch: int) -> float:
 
 def _gamma_log_suffix(criterion: KGAULoss) -> str:
 	parts = []
+	if criterion.learnable_au_gammas or criterion.gamma_schedule_mult_value() != 1.0:
+		parts.append(f'mult={criterion.gamma_schedule_mult_value():.4f}')
 	for name in _GAMMA_NAMES:
 		if criterion.gamma_active(name):
 			parts.append(f'{name}={criterion.gamma_value(name):.4f}')
@@ -323,12 +325,14 @@ class KGAUStrategy(Evaluator):
 			logger.warning('tuni_linear_schedule is ignored when learnable_uniformity_scale is enabled')
 		if learnable_au_gammas:
 			logger.info(
-				'Learnable AU gammas: initial q/t/h/ent/cross=%.4f/%.4f/%.4f/%.4f/%.4f, log_au_gamma_lr=%.2e',
+				'Learnable AU gammas: init q/t/h/ent/cross=%.4f/%.4f/%.4f/%.4f/%.4f, '
+				'schedule mult 1.0 -> %.4f, log_au_gamma_lr=%.2e',
 				self.criterion._gamma_init_value('q'),
 				self.criterion._gamma_init_value('t'),
 				self.criterion._gamma_init_value('h'),
 				self.criterion._gamma_init_value('ent'),
 				self.criterion._gamma_init_value('cross'),
+				float(getattr(args, 'gamma_schedule_end', 0.1)),
 				float(getattr(args, 'log_au_gamma_lr', getattr(args, 'lr', 2e-5))),
 			)
 		if _gamma_schedule_enabled(args):
@@ -702,6 +706,7 @@ class KGAUStrategy(Evaluator):
 			if grad_clip is not None:
 				torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
 			self.optimizer.step()
+		self.criterion.clamp_learnable_gamma_adj()
 
 	def _train_au_epoch(
 		self,
@@ -856,6 +861,7 @@ class KGAUStrategy(Evaluator):
 			torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
 			self.scaler.step(self.optimizer)
 			self.scaler.update()
+			self.criterion.clamp_learnable_gamma_adj()
 		else:
 			q_raw, t_raw, h_raw = self._au_representation_batch(model, ss, rs, ts)
 			ent_raw = self._entity_uniformity_vectors_for_loss(
@@ -865,6 +871,7 @@ class KGAUStrategy(Evaluator):
 			loss.backward()
 			torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
 			self.optimizer.step()
+			self.criterion.clamp_learnable_gamma_adj()
 		return loss.item(), l_align.item(), l_unif.item(), n_uq_log, n_ut_log, margin_active, total
 
 	def _train_au_tensor_batch_micro(
@@ -922,9 +929,11 @@ class KGAUStrategy(Evaluator):
 			torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
 			self.scaler.step(self.optimizer)
 			self.scaler.update()
+			self.criterion.clamp_learnable_gamma_adj()
 		else:
 			torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
 			self.optimizer.step()
+			self.criterion.clamp_learnable_gamma_adj()
 
 		avg_margin = (margin_acc / margin_batches) if margin_batches > 0 else 0.0
 		return loss_sum / total, align_sum / total, unif_sum / total, n_uq_log, n_ut_log, avg_margin, total
@@ -1060,6 +1069,7 @@ class KGAUStrategy(Evaluator):
 					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
 					self.scaler.step(self.optimizer)
 					self.scaler.update()
+					self.criterion.clamp_learnable_gamma_adj()
 				else:
 					outputs = self.model(**batch_dict)
 					q_raw = outputs['hr_vector']
@@ -1072,6 +1082,7 @@ class KGAUStrategy(Evaluator):
 					loss.backward()
 					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
 					self.optimizer.step()
+					self.criterion.clamp_learnable_gamma_adj()
 				batch_examples = len(batch_dict['batch_data'])
 				losses.update(loss.item(), batch_examples)
 				epoch_align_loss += l_align.item() * batch_examples

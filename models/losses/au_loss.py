@@ -71,13 +71,17 @@ class KGAULoss(nn.Module):
 			'ent': _coalesce_float(gamma_ent, 0.0),
 			'cross': _coalesce_float(gamma_cross, 0.0),
 		}
-		if self.learnable_au_gammas:
-			for name, value in gamma_inits.items():
-				init = float(value) if value > 0.0 else 1.0
-				setattr(self, f'log_gamma_{name}', nn.Parameter(torch.tensor(math.log(init))))
-		else:
-			for name, value in gamma_inits.items():
-				setattr(self, f'_gamma_{name}', float(value))
+		for name, value in gamma_inits.items():
+			init = float(value)
+			if self.learnable_au_gammas and init <= 0.0:
+				init = 1.0
+			self.register_buffer(f'gamma_init_{name}', torch.tensor(init))
+			if not self.learnable_au_gammas:
+				setattr(self, f'_gamma_{name}', init)
+			else:
+				# Bounded downward adjustment only: exp(adj) in (0, 1], init at 0.
+				# Unconstrained log-scale gammas rise under AU loss because uniformity is negative.
+				setattr(self, f'log_gamma_adj_{name}', nn.Parameter(torch.zeros(())))
 		self.register_buffer('gamma_schedule_mult', torch.tensor(1.0))
 		# `tuni` is the uniformity temperature/scaling factor; optionally learnable via log-scale.
 		tuni_val = _coalesce_float(tuni, 2.0)
@@ -96,18 +100,33 @@ class KGAULoss(nn.Module):
 
 	def _gamma_init_value(self, name: str) -> float:
 		if self.learnable_au_gammas:
-			param = getattr(self, f'log_gamma_{name}')
-			return float(torch.exp(param.detach()).cpu().item())
+			return float(getattr(self, f'gamma_init_{name}').detach().cpu().item())
 		return float(getattr(self, f'_gamma_{name}'))
+
+	def gamma_schedule_mult_value(self) -> float:
+		return float(self.gamma_schedule_mult.detach().cpu().item())
+
+	def _learnable_gamma_factor(self, name: str) -> torch.Tensor:
+		adj = getattr(self, f'log_gamma_adj_{name}')
+		return torch.exp(torch.clamp(adj, max=0.0))
 
 	def set_gamma_schedule_mult(self, mult: float) -> None:
 		self.gamma_schedule_mult.fill_(float(mult))
 
+	def clamp_learnable_gamma_adj(self) -> None:
+		"""Keep learnable gamma adjustments at or below 0 (effective factor in (0, 1])."""
+
+		if not self.learnable_au_gammas:
+			return
+		for name in ('q', 't', 'h', 'ent', 'cross'):
+			with torch.no_grad():
+				getattr(self, f'log_gamma_adj_{name}').clamp_(max=0.0)
+
 	def _effective_gamma(self, name: str) -> torch.Tensor | float:
 		mult = self.gamma_schedule_mult
 		if self.learnable_au_gammas:
-			log_gamma = getattr(self, f'log_gamma_{name}')
-			return torch.exp(log_gamma) * mult
+			init = getattr(self, f'gamma_init_{name}')
+			return init * mult * self._learnable_gamma_factor(name)
 		return float(getattr(self, f'_gamma_{name}')) * float(mult)
 
 	def gamma_value(self, name: str) -> float:
