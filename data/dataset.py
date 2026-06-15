@@ -57,6 +57,57 @@ class EntityExample:
 	entity_desc: str = ''
 
 
+def _collect_entity_ids_from_split(path: str, entity_ids: set[str]) -> None:
+	if not path or not os.path.exists(path):
+		return
+	if path.endswith('.json'):
+		with open(path, 'r', encoding='utf-8') as reader:
+			for obj in json.load(reader):
+				entity_ids.add(obj['head_id'])
+				entity_ids.add(obj['tail_id'])
+	elif path.endswith('.txt'):
+		with open(path, 'r', encoding='utf-8') as reader:
+			for line in reader:
+				fields = line.strip().split('\t')
+				if len(fields) not in (3, 4):
+					continue
+				entity_ids.add(fields[0])
+				entity_ids.add(fields[2])
+
+
+def _bootstrap_entities_json(entity_dict_dir: str, output_path: str) -> None:
+	"""Create a minimal ``entities.json`` from configured split files when preprocessing was skipped."""
+
+	from configs.config import args as current_args
+
+	entity_ids: set[str] = set()
+	split_paths = [
+		getattr(current_args, 'train_path', None),
+		getattr(current_args, 'valid_path', None),
+		getattr(current_args, 'test_path', None),
+	]
+	for split_path in split_paths:
+		_collect_entity_ids_from_split(split_path, entity_ids)
+
+	for name in ('train.txt.json', 'valid.txt.json', 'test.txt.json', 'train.txt', 'valid.txt', 'test.txt'):
+		_collect_entity_ids_from_split(os.path.join(entity_dict_dir, name), entity_ids)
+
+	if not entity_ids:
+		raise FileNotFoundError(
+			f'entities.json is missing under {entity_dict_dir!r} and no split files were found to rebuild it. '
+			'Run data/preprocess.py or place entities.json next to your train/valid/test splits.'
+		)
+
+	os.makedirs(entity_dict_dir, exist_ok=True)
+	payload = [
+		{'entity_id': entity_id, 'entity': entity_id, 'entity_desc': ''}
+		for entity_id in sorted(entity_ids)
+	]
+	with open(output_path, 'w', encoding='utf-8') as writer:
+		json.dump(payload, writer, indent=2, ensure_ascii=False)
+	logger.info('Bootstrapped %d entities into %s', len(payload), output_path)
+
+
 class TripletDict:
 	"""Data structure for storing triplets and providing neighbor information for entities."""
 
@@ -126,7 +177,13 @@ class EntityDict:
 
 	def __init__(self, entity_dict_dir: str, inductive_test_path: str = None):
 		path = os.path.join(entity_dict_dir, 'entities.json')
-		assert os.path.exists(path)
+		if not os.path.exists(path):
+			_bootstrap_entities_json(entity_dict_dir, path)
+		if not os.path.exists(path):
+			raise FileNotFoundError(
+				f'entities.json not found under {entity_dict_dir!r}. '
+				'Expected preprocessed data (entities.json) or runnable split files to rebuild it.'
+			)
 		self.entity_exs = [EntityExample(**obj) for obj in json.load(open(path, 'r', encoding='utf-8'))]
 		self._ensure_entity_coverage(entity_dict_dir)
 

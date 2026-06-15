@@ -35,14 +35,78 @@ def _resolve_preprocessed_dir() -> str:
     return os.getcwd()
 
 
-def _init_entity_dict() -> None:
-    """Initialize the entity dictionary if it hasn't been loaded yet."""
+def _resolve_entity_dict_dir() -> str:
+	"""Resolve the directory containing ``entities.json`` for the configured dataset."""
 
-    global entity_dict
-    if not entity_dict:
-        from data.dataset import EntityDict
-        entity_dict_dir = os.path.dirname(args.valid_path) or os.path.dirname(args.train_path) or os.getcwd()
-        entity_dict = EntityDict(entity_dict_dir=entity_dict_dir)
+	repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+	candidate_dirs: list[str] = []
+
+	def _add_dir(path: str | None) -> None:
+		if not path:
+			return
+		abs_path = path
+		if not os.path.isabs(abs_path):
+			for base in (os.getcwd(), repo_root):
+				candidate = os.path.join(base, path)
+				if os.path.exists(candidate):
+					abs_path = os.path.abspath(candidate)
+					break
+			else:
+				abs_path = os.path.abspath(os.path.join(os.getcwd(), path))
+		if os.path.isfile(abs_path):
+			candidate_dirs.append(os.path.dirname(abs_path))
+			parent = os.path.dirname(os.path.dirname(abs_path))
+			if parent:
+				candidate_dirs.append(parent)
+		elif os.path.isdir(abs_path):
+			candidate_dirs.append(abs_path)
+
+	for split_path in (
+		getattr(args, 'train_path', None),
+		getattr(args, 'valid_path', None),
+		getattr(args, 'test_path', None),
+	):
+		_add_dir(split_path)
+
+	dataset = str(getattr(args, 'dataset', '') or '').strip()
+	if dataset:
+		for layout in (
+			os.path.join('data', dataset, 'preprocessed'),
+			os.path.join('data', dataset.upper(), 'preprocessed'),
+			os.path.join('data', dataset),
+			os.path.join('data', dataset.upper()),
+		):
+			for base in (os.getcwd(), repo_root):
+				candidate_dirs.append(os.path.join(base, layout))
+
+	seen: set[str] = set()
+	unique_dirs: list[str] = []
+	for candidate_dir in candidate_dirs:
+		norm = os.path.normpath(candidate_dir)
+		if not norm or norm in seen:
+			continue
+		seen.add(norm)
+		unique_dirs.append(norm)
+
+	for candidate_dir in unique_dirs:
+		if os.path.exists(os.path.join(candidate_dir, 'entities.json')):
+			return candidate_dir
+
+	for candidate_dir in unique_dirs:
+		for name in ('train.txt.json', 'valid.txt.json', 'test.txt.json', 'train.txt', 'valid.txt'):
+			if os.path.exists(os.path.join(candidate_dir, name)):
+				return candidate_dir
+
+	return unique_dirs[0] if unique_dirs else os.getcwd()
+
+
+def _init_entity_dict() -> None:
+	"""Initialize the entity dictionary if it hasn't been loaded yet."""
+
+	global entity_dict
+	if not entity_dict:
+		from data.dataset import EntityDict
+		entity_dict = EntityDict(entity_dict_dir=_resolve_entity_dict_dir())
 
 
 def _init_relation_id_map():
