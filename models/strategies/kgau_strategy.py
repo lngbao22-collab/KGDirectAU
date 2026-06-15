@@ -857,11 +857,7 @@ class KGAUStrategy(Evaluator):
 				loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
 					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 			self.scaler.scale(loss).backward()
-			self.scaler.unscale_(self.optimizer)
-			torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
-			self.scaler.step(self.optimizer)
-			self.scaler.update()
-			self.criterion.clamp_learnable_gamma_adj()
+			self._optimizer_step(use_amp)
 		else:
 			q_raw, t_raw, h_raw = self._au_representation_batch(model, ss, rs, ts)
 			ent_raw = self._entity_uniformity_vectors_for_loss(
@@ -869,9 +865,7 @@ class KGAUStrategy(Evaluator):
 			loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
 				q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 			loss.backward()
-			torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
-			self.optimizer.step()
-			self.criterion.clamp_learnable_gamma_adj()
+			self._optimizer_step(use_amp)
 		return loss.item(), l_align.item(), l_unif.item(), n_uq_log, n_ut_log, margin_active, total
 
 	def _train_au_tensor_batch_micro(
@@ -924,16 +918,7 @@ class KGAUStrategy(Evaluator):
 			margin_acc += margin_active
 			margin_batches += 1
 
-		if use_amp:
-			self.scaler.unscale_(self.optimizer)
-			torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
-			self.scaler.step(self.optimizer)
-			self.scaler.update()
-			self.criterion.clamp_learnable_gamma_adj()
-		else:
-			torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
-			self.optimizer.step()
-			self.criterion.clamp_learnable_gamma_adj()
+		self._optimizer_step(use_amp)
 
 		avg_margin = (margin_acc / margin_batches) if margin_batches > 0 else 0.0
 		return loss_sum / total, align_sum / total, unif_sum / total, n_uq_log, n_ut_log, avg_margin, total
@@ -1065,11 +1050,7 @@ class KGAUStrategy(Evaluator):
 						loss, l_align, l_unif, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
 							q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					self.scaler.scale(loss).backward()
-					self.scaler.unscale_(self.optimizer)
-					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
-					self.scaler.step(self.optimizer)
-					self.scaler.update()
-					self.criterion.clamp_learnable_gamma_adj()
+					self._optimizer_step(use_amp)
 				else:
 					outputs = self.model(**batch_dict)
 					q_raw = outputs['hr_vector']
@@ -1080,9 +1061,7 @@ class KGAUStrategy(Evaluator):
 					loss, l_align, l_unif, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
 						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					loss.backward()
-					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
-					self.optimizer.step()
-					self.criterion.clamp_learnable_gamma_adj()
+					self._optimizer_step(use_amp)
 				batch_examples = len(batch_dict['batch_data'])
 				losses.update(loss.item(), batch_examples)
 				epoch_align_loss += l_align.item() * batch_examples

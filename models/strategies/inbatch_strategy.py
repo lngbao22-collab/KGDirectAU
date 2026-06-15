@@ -151,15 +151,18 @@ class InBatchStrategy(Trainer, Evaluator):
 			losses.update(loss.item(), batch_size)
 
 			self.optimizer.zero_grad()
+			grad_clip = getattr(self.args, 'grad_clip', None)
 			if self.args.use_amp:
 				self.scaler.scale(loss).backward()
 				self.scaler.unscale_(self.optimizer)
-				torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
+				if grad_clip is not None:
+					torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
 				self.scaler.step(self.optimizer)
 				self.scaler.update()
 			else:
 				loss.backward()
-				torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
+				if grad_clip is not None:
+					torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
 				self.optimizer.step()
 			self.scheduler.step()
 
