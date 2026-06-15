@@ -35,6 +35,20 @@ def _resolve_preprocessed_dir() -> str:
     return os.getcwd()
 
 
+def _resolve_split_path(path: str | None) -> str | None:
+	"""Return an existing split path (repo-relative or absolute)."""
+
+	if not path:
+		return None
+	if os.path.isabs(path) and os.path.exists(path):
+		return path
+	repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+	for candidate in (path, os.path.join(os.getcwd(), path), os.path.join(repo_root, path)):
+		if candidate and os.path.exists(candidate):
+			return os.path.abspath(candidate)
+	return None
+
+
 def _resolve_entity_dict_dir() -> str:
 	"""Resolve the directory containing ``entities.json`` for the configured dataset."""
 
@@ -42,24 +56,16 @@ def _resolve_entity_dict_dir() -> str:
 	candidate_dirs: list[str] = []
 
 	def _add_dir(path: str | None) -> None:
-		if not path:
+		resolved = _resolve_split_path(path)
+		if not resolved:
 			return
-		abs_path = path
-		if not os.path.isabs(abs_path):
-			for base in (os.getcwd(), repo_root):
-				candidate = os.path.join(base, path)
-				if os.path.exists(candidate):
-					abs_path = os.path.abspath(candidate)
-					break
-			else:
-				abs_path = os.path.abspath(os.path.join(os.getcwd(), path))
-		if os.path.isfile(abs_path):
-			candidate_dirs.append(os.path.dirname(abs_path))
-			parent = os.path.dirname(os.path.dirname(abs_path))
+		if os.path.isfile(resolved):
+			candidate_dirs.append(os.path.dirname(resolved))
+			parent = os.path.dirname(os.path.dirname(resolved))
 			if parent:
 				candidate_dirs.append(parent)
-		elif os.path.isdir(abs_path):
-			candidate_dirs.append(abs_path)
+		elif os.path.isdir(resolved):
+			candidate_dirs.append(resolved)
 
 	for split_path in (
 		getattr(args, 'train_path', None),
@@ -96,6 +102,10 @@ def _resolve_entity_dict_dir() -> str:
 		for name in ('train.txt.json', 'valid.txt.json', 'test.txt.json', 'train.txt', 'valid.txt'):
 			if os.path.exists(os.path.join(candidate_dir, name)):
 				return candidate_dir
+
+	train_path = _resolve_split_path(getattr(args, 'train_path', None))
+	if train_path:
+		return os.path.dirname(train_path)
 
 	return unique_dirs[0] if unique_dirs else os.getcwd()
 

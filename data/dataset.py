@@ -57,16 +57,27 @@ class EntityExample:
 	entity_desc: str = ''
 
 
-def _collect_entity_ids_from_split(path: str, entity_ids: set[str]) -> None:
-	if not path or not os.path.exists(path):
+def _collect_entity_ids_from_split(path: str | None, entity_ids: set[str]) -> None:
+	if not path:
 		return
-	if path.endswith('.json'):
-		with open(path, 'r', encoding='utf-8') as reader:
+	resolved = path
+	if not os.path.isabs(resolved):
+		repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+		for candidate in (path, os.path.join(os.getcwd(), path), os.path.join(repo_root, path)):
+			if candidate and os.path.exists(candidate):
+				resolved = os.path.abspath(candidate)
+				break
+		else:
+			return
+	elif not os.path.exists(resolved):
+		return
+	if resolved.endswith('.json'):
+		with open(resolved, 'r', encoding='utf-8') as reader:
 			for obj in json.load(reader):
 				entity_ids.add(obj['head_id'])
 				entity_ids.add(obj['tail_id'])
-	elif path.endswith('.txt'):
-		with open(path, 'r', encoding='utf-8') as reader:
+	elif resolved.endswith('.txt'):
+		with open(resolved, 'r', encoding='utf-8') as reader:
 			for line in reader:
 				fields = line.strip().split('\t')
 				if len(fields) not in (3, 4):
@@ -93,9 +104,18 @@ def _bootstrap_entities_json(entity_dict_dir: str, output_path: str) -> None:
 		_collect_entity_ids_from_split(os.path.join(entity_dict_dir, name), entity_ids)
 
 	if not entity_ids:
+		checked = [
+			p for p in (
+				getattr(current_args, 'train_path', None),
+				getattr(current_args, 'valid_path', None),
+				getattr(current_args, 'test_path', None),
+				entity_dict_dir,
+			)
+			if p
+		]
 		raise FileNotFoundError(
 			f'entities.json is missing under {entity_dict_dir!r} and no split files were found to rebuild it. '
-			'Run data/preprocess.py or place entities.json next to your train/valid/test splits.'
+			f'Checked: {checked}. Run data/preprocess.py or place entities.json next to your splits.'
 		)
 
 	os.makedirs(entity_dict_dir, exist_ok=True)

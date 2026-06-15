@@ -5,7 +5,6 @@ import torch
 
 from configs.config import args
 from data.dict_hub import get_tokenizer
-from models.samplers.masking_sampler import construct_mask, construct_self_negative_mask
 
 
 def to_indices_and_mask(batch_tensor, pad_token_id=0, need_mask=True) -> torch.Tensor | tuple[torch.Tensor, torch.ByteTensor]:
@@ -27,7 +26,9 @@ def to_indices_and_mask(batch_tensor, pad_token_id=0, need_mask=True) -> torch.T
 
 def collate(batch_data: List[dict]) -> dict:
 	"""Collate a batch of examples into tensors suitable for model input, including constructing masks for contrastive learning."""
-	
+
+	from models.samplers.masking_sampler import construct_mask, construct_self_negative_mask
+
 	hr_token_ids, hr_mask = to_indices_and_mask(
 		[torch.LongTensor(ex['hr_token_ids']) for ex in batch_data],
 		pad_token_id=get_tokenizer().pad_token_id,
