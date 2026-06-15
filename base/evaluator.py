@@ -17,6 +17,7 @@ from data.dataset import Example, load_data
 from data.dataloader import collate
 from metrics.ranking import ranking_metrics_from_ranks, ranks_from_score_matrix
 from metrics.classification import classification_metrics, find_global_threshold
+from models.losses.bce_loss import bce_logit_offset
 
 from configs.config import args as global_args
 from data.dict_hub import build_tokenizer
@@ -332,6 +333,83 @@ def _ranks_from_score_matrix(
 	return ranks_from_score_matrix(score, target_indices, **_tie_handling_kwargs(args))
 
 
+def _load_labeled_examples(label_path: str) -> List[Example]:
+	"""Load triple-classification examples that carry binary labels."""
+
+	return [
+		ex
+		for ex in load_data(
+			label_path,
+			add_forward_triplet=label_path.endswith('.json'),
+			add_backward_triplet=False,
+		)
+		if ex.label is not None
+	]
+
+
+def _resolve_label_split_path(args, split: str) -> str:
+	"""Resolve a labeled split path (``valid`` or ``test``) from config or data dirs."""
+
+	attr = f'{split}_w_label_path'
+	label_path = getattr(args, attr, '') or ''
+	if label_path and os.path.exists(label_path):
+		return label_path
+
+	candidate_dirs = []
+	for source_path in [
+		getattr(args, 'valid_w_label_path', ''),
+		getattr(args, 'test_w_label_path', ''),
+		getattr(args, 'valid_path', ''),
+		getattr(args, 'test_path', ''),
+		getattr(args, 'train_path', ''),
+	]:
+		if source_path:
+			candidate_dirs.append(os.path.dirname(source_path))
+	candidate_dirs.append(os.path.join('data', getattr(args, 'dataset', '')))
+	candidate_dirs.append(os.path.join('data', getattr(args, 'dataset', ''), 'preprocessed'))
+
+	for candidate_dir in candidate_dirs:
+		for candidate_name in [
+			f'{split}_w_label.txt.json',
+			f'{split}_w_label.txt',
+			f'{split}_label.txt.json',
+			f'{split}_label.txt',
+		]:
+			candidate_path = os.path.join(candidate_dir, candidate_name)
+			if os.path.exists(candidate_path):
+				return candidate_path
+	return ''
+
+
+def _scores_to_classification_probs(scores: torch.Tensor, args) -> torch.Tensor:
+	"""Map raw KGE logits to calibrated positive-class probabilities."""
+
+	if not isinstance(scores, torch.Tensor):
+		scores = torch.as_tensor(scores, dtype=torch.float32)
+	offset = bce_logit_offset(args)
+	if offset != 0.0:
+		scores = scores + offset
+	return torch.sigmoid(scores)
+
+
+def _collect_index_triple_classification_probs(
+	model,
+	examples: Sequence[Example],
+	entity_dict,
+	batch_size: int,
+	tc_args,
+) -> List[float]:
+	"""Score labeled triples and return positive-class probabilities."""
+
+	y_prob: List[float] = []
+	for i in range(0, len(examples), batch_size):
+		batch = examples[i:i + batch_size]
+		scores = _score_triple_classification_batch(model, batch, entity_dict)
+		prob = _scores_to_classification_probs(scores, tc_args).detach().cpu().numpy().reshape(-1)
+		y_prob.extend(prob.tolist())
+	return y_prob
+
+
 def _score_triple_classification_batch(
 	model,
 	batch: Sequence[Example],
@@ -603,14 +681,7 @@ class Evaluator:
             logger.info(f"[EVAL] {label_file} not found, skip evaluation.")
             return
         eval_set = 'TEST' if 'test' in label_file else 'VALID'
-        eval_exs = [
-            ex for ex in load_data(
-                label_file,
-                add_forward_triplet=label_file.endswith('.json'),
-                add_backward_triplet=False,
-            )
-            if ex.label is not None
-        ]
+        eval_exs = _load_labeled_examples(label_file)
         y_true = [int(ex.label) for ex in eval_exs]
         y_prob = []
         tc_args = _eval_args_for_triple_classification(self)
@@ -619,10 +690,9 @@ class Evaluator:
                 logger.info(f"[EVAL] {label_file} has no labeled examples, skip evaluation.")
                 return
             entity_dict = get_entity_dict()
-            for i in range(0, len(eval_exs), batch_size):
-                batch = eval_exs[i:i + batch_size]
-                scores = _score_triple_classification_batch(model, batch, entity_dict)
-                y_prob.extend(torch.sigmoid(scores).detach().cpu().numpy().reshape(-1).tolist())
+            y_prob = _collect_index_triple_classification_probs(
+                model, eval_exs, entity_dict, batch_size, tc_args
+            )
         elif not _bert_encoder_configured(tc_args):
             raise ModelInterfaceError(
                 f'Model {getattr(tc_args, "model", "?")} cannot run text triple classification: '
@@ -803,37 +873,13 @@ class Evaluator:
         """Evaluate triple classification on the test split using the loaded checkpoint."""
 
         args = self.args if self.args is not None else global_args
-        test_label_path = getattr(args, 'test_w_label_path', '')
+        test_label_path = _resolve_label_split_path(args, 'test')
         if not test_label_path or not os.path.exists(test_label_path):
-            candidate_dirs = []
-            for source_path in [getattr(args, 'valid_w_label_path', ''), getattr(args, 'valid_path', ''), getattr(args, 'train_path', ''), getattr(args, 'test_path', '')]:
-                if source_path:
-                    candidate_dirs.append(os.path.dirname(source_path))
-            candidate_dirs.append(os.path.join('data', getattr(args, 'dataset', '')))
-            candidate_dirs.append(os.path.join('data', getattr(args, 'dataset', ''), 'preprocessed'))
-            for candidate_dir in candidate_dirs:
-                for candidate_name in ['test_w_label.txt.json', 'test_w_label.txt', 'test_label.txt.json', 'test_label.txt']:
-                    candidate_path = os.path.join(candidate_dir, candidate_name)
-                    if os.path.exists(candidate_path):
-                        test_label_path = candidate_path
-                        break
-                if test_label_path:
-                    break
-
-        if not os.path.exists(test_label_path):
             logger.info('[TEST] test_w_label.txt not found, skip test evaluation.')
             return {}
 
         logger.info('[TEST] Evaluating triple classification on test set...')
-        test_exs = [
-            ex
-            for ex in load_data(
-                test_label_path,
-                add_forward_triplet=True,
-                add_backward_triplet=False,
-            )
-            if ex.label is not None
-        ]
+        test_exs = _load_labeled_examples(test_label_path)
         if not test_exs:
             logger.info(f"[TEST] {test_label_path} has no labeled examples, skip test evaluation.")
             return {}
@@ -857,11 +903,9 @@ class Evaluator:
         tc_args = _eval_args_for_triple_classification(self, args)
         if _should_use_index_triple_classification(self.model, tc_args):
             entity_dict = get_entity_dict()
-            for i in range(0, len(test_exs), batch_size):
-                batch = test_exs[i:i + batch_size]
-                scores = _score_triple_classification_batch(self.model, batch, entity_dict)
-                prob = torch.sigmoid(scores).detach().cpu().numpy().reshape(-1)
-                y_prob.extend(prob.tolist())
+            y_prob = _collect_index_triple_classification_probs(
+                self.model, test_exs, entity_dict, batch_size, tc_args
+            )
         elif not _bert_encoder_configured(tc_args):
             raise ModelInterfaceError(
                 f'Model {getattr(tc_args, "model", "?")} cannot run text triple classification: '
@@ -880,10 +924,45 @@ class Evaluator:
                 prob = torch.sigmoid(logits.diag()).detach().cpu().numpy().reshape(-1)
                 y_prob.extend(prob.tolist())
 
-        threshold = find_global_threshold(y_true, y_prob)
+        threshold = None
+        valid_label_path = _resolve_label_split_path(args, 'valid')
+        if valid_label_path and os.path.exists(valid_label_path):
+            valid_exs = _load_labeled_examples(valid_label_path)
+            if valid_exs:
+                valid_y_true = [int(ex.label) for ex in valid_exs]
+                if _should_use_index_triple_classification(self.model, tc_args):
+                    valid_y_prob = _collect_index_triple_classification_probs(
+                        self.model, valid_exs, get_entity_dict(), batch_size, tc_args
+                    )
+                elif not _bert_encoder_configured(tc_args):
+                    raise ModelInterfaceError(
+                        f'Model {getattr(tc_args, "model", "?")} cannot run text triple classification: '
+                        'bert_encoder is empty and the loaded model has no score_spo/score_batch.'
+                    )
+                else:
+                    valid_y_prob = []
+                    for i in range(0, len(valid_exs), batch_size):
+                        batch = valid_exs[i:i + batch_size]
+                        batch_vec = [ex.vectorize() for ex in batch]
+                        batch_dict = collate(batch_vec)
+                        if torch.cuda.is_available():
+                            batch_dict = move_to_cuda(batch_dict)
+                            self.model.cuda()
+                        output_dict = self.model(**batch_dict)
+                        logits = self.model.compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
+                        prob = torch.sigmoid(logits.diag()).detach().cpu().numpy().reshape(-1)
+                        valid_y_prob.extend(prob.tolist())
+                threshold = find_global_threshold(valid_y_true, valid_y_prob)
+                logger.info('[TEST] Threshold tuned on validation set: %.6f', threshold)
+        if threshold is None:
+            logger.warning(
+                '[TEST] Validation label file not found; falling back to tuning threshold on test set.'
+            )
+            threshold = find_global_threshold(y_true, y_prob)
+
         y_pred = (np.array(y_prob) > threshold).astype(int).tolist()
         metrics_cls = classification_metrics(y_true, y_pred, y_prob)
-        log_thresh = f'[TEST] Best threshold on test: {threshold:.6f}'
+        log_thresh = f'[TEST] Classification threshold: {threshold:.6f}'
         log_cls = f'[TEST] Triple Classification: {json.dumps(metrics_cls)}'
         logger.info(log_thresh)
         logger.info(log_cls)

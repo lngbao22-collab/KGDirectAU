@@ -19,96 +19,96 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(description='Generic KG arguments')
 
-    parser.add_argument('--config-path', default='', type=str,
+    parser.add_argument('--config-path', default=None, type=str,
                         help='path to a JSON config file in configs/ or an absolute config path')
 
-    parser.add_argument('--model', default='simkgc', type=str,
+    parser.add_argument('--model', default=None, type=str,
                         help='model family name, e.g. simkgc, transe, transd, rotate')
-    parser.add_argument('--model-embedder-path', default='', type=str,
+    parser.add_argument('--model-embedder-path', default=None, type=str,
                         help='path to embedder module, e.g. models/embedders/lookup_embedder.py')
-    parser.add_argument('--model-scorer-path', default='', type=str,
+    parser.add_argument('--model-scorer-path', default=None, type=str,
                         help='path to scorer module, e.g. models/scorers/distmult_scorer.py')
-    parser.add_argument('--model-encoder-path', default='', type=str,
+    parser.add_argument('--model-encoder-path', default=None, type=str,
                         help='(legacy) alias for model_scorer_path when embedder/scorer are not split')
-    parser.add_argument('--model-loss-path', default='', type=str,
+    parser.add_argument('--model-loss-path', default=None, type=str,
                         help='path to loss module, e.g. models/losses/infonce_loss.py')
-    parser.add_argument('--model-sampler-path', default='', type=str,
+    parser.add_argument('--model-sampler-path', default=None, type=str,
                         help='path to sampler module, e.g. models/samplers/masking_sampler.py')
-    parser.add_argument('--model-strategy-path', default='', type=str,
+    parser.add_argument('--model-strategy-path', default=None, type=str,
                         help='path to strategy module, e.g. models/strategies/simkgc_strategy.py')
-    parser.add_argument('--task', default='both', type=str,
+    parser.add_argument('--task', default=None, type=str,
                         help='link prediction/triple classification/both')
-    parser.add_argument('--bert-encoder', '--encoder', default='distilbert-base-uncased', type=str, dest='bert_encoder',
+    parser.add_argument('--bert-encoder', '--encoder', default=None, type=str, dest='bert_encoder',
                         help='pretrained text encoder name or path')
-    parser.add_argument('--dataset', default='wn18rr', type=str,
+    parser.add_argument('--dataset', default=None, type=str,
                         help='dataset or benchmark name')
 
     # Core data/model paths.
-    parser.add_argument('--train-path', default='', type=str,
+    parser.add_argument('--train-path', default=None, type=str,
                         help='path to training data')
-    parser.add_argument('--valid-path', default='', type=str,
+    parser.add_argument('--valid-path', default=None, type=str,
                         help='path to validation data')
-    parser.add_argument('--test-path', default='', type=str,
+    parser.add_argument('--test-path', default=None, type=str,
                         help='path to test data')
-    parser.add_argument('--valid-w-label-path', default='', type=str,
+    parser.add_argument('--valid-w-label-path', default=None, type=str,
                         help='path to validation data for triple classification')
-    parser.add_argument('--test-w-label-path', default='', type=str,
+    parser.add_argument('--test-w-label-path', default=None, type=str,
                         help='path to test data for triple classification')
     # in default, paths for .txt.json (preprocess) or .txt (unprocessed) are taken by dataset in 'data/<dataset>/preprocessed' folder e.g. data/WN18RR/preprocessed/train.txt.json, data/WN18RR/preprocessed/valid.txt.json, data/WN18RR/preprocessed/test.txt.json
 
-    parser.add_argument('--eval-model-path', default='', type=str,
+    parser.add_argument('--eval-model-path', default=None, type=str,
                         help='path to model to evaluate')
     # in default, eval_model_path is taken from best_model.mdl in output-dir if exists; otherwise, it needs to be specified.
 
-    parser.add_argument('--output-dir-prefix', default='', type=str,
+    parser.add_argument('--output-dir-prefix', default=None, type=str,
                         help='prefix for the directory used to save checkpoints, predictions, and logs; a timestamp will be appended when used')
     # in default, output is saved in 'logs/<model>_<dataset>' folder e.g. logs/SimKGC_WN18RR.
     # This folder will contain: train.log (Text training output), results.txt (Final result metrics + best valid + time), best_model.mdl  (Best model weights)
 
     # Hyperparameters and settings.
-    parser.add_argument('--additive-margin', default=0.0, type=float,
+    parser.add_argument('--additive-margin', default=None, type=float,
                         help='additive margin for contrastive loss and AU loss')
-    parser.add_argument('-b', '--batch-size', default=64, type=int,
+    parser.add_argument('-b', '--batch-size', default=None, type=int,
                         help='mini-batch size')
-    parser.add_argument('--dim', default=768, type=int,
+    parser.add_argument('--dim', default=None, type=int,
                         help='embedding dimension for non-text KG models')
-    parser.add_argument('--dropout', default=0.1, type=float,
+    parser.add_argument('--dropout', default=None, type=float,
                         help='dropout rate')
-    parser.add_argument('--epochs', default=10, type=int,
+    parser.add_argument('--epochs', default=None, type=int,
                         help='number of epochs to run')
-    parser.add_argument('--eval-every-n-step', default=10000, type=int,
+    parser.add_argument('--eval-every-n-step', default=None, type=int,
                         help='evaluate every n steps')
     parser.add_argument('--finetune-t', action='store_true',
                         help='make InfoNCE temperature trainable')
-    parser.add_argument('--grad-clip', default=10.0, type=float,
+    parser.add_argument('--grad-clip', default=None, type=float,
                         help='gradient clipping')
     parser.add_argument('--is-test', action='store_true',
                         help='run test-mode evaluation')
-    parser.add_argument('--lr', '--learning-rate', default=2e-5, type=float, dest='lr',
+    parser.add_argument('--lr', '--learning-rate', default=None, type=float, dest='lr',
                         help='initial learning rate')
-    parser.add_argument('--lr-scheduler', default='linear', type=str,
+    parser.add_argument('--lr-scheduler', default=None, type=str,
                         help='learning-rate scheduler')
-    parser.add_argument('--max-num-tokens', default=50, type=int,
+    parser.add_argument('--max-num-tokens', default=None, type=int,
                         help='maximum number of tokens for text-based models')
-    parser.add_argument('--max-uniformity-samples', default=1024, type=int,
+    parser.add_argument('--max-uniformity-samples', default=None, type=int,
                         help='maximum number of embeddings used to estimate the AU uniformity term')
-    parser.add_argument('--max-to-keep', default=5, type=int,
+    parser.add_argument('--max-to-keep', default=None, type=int,
                         help='maximum number of checkpoints to keep')
-    parser.add_argument('--neighbor-weight', default=0.0, type=float,
+    parser.add_argument('--neighbor-weight', default=None, type=float,
                         help='reranking weight')
-    parser.add_argument('--pooling', default='cls', type=str,
+    parser.add_argument('--pooling', default=None, type=str,
                         help='pooling strategy for text encoders')
-    parser.add_argument('--pre-batch', default=0, type=int,
+    parser.add_argument('--pre-batch', default=None, type=int,
                         help='number of pre-batch negatives')
-    parser.add_argument('--pre-batch-weight', default=0.5, type=float,
+    parser.add_argument('--pre-batch-weight', default=None, type=float,
                         help='weight for pre-batch negatives')
-    parser.add_argument('-p', '--print-freq', default=50, type=int,
+    parser.add_argument('-p', '--print-freq', default=None, type=int,
                         help='logging frequency')
-    parser.add_argument('--rerank-n-hop', default=2, type=int,
+    parser.add_argument('--rerank-n-hop', default=None, type=int,
                         help='neighbor hops for reranking during evaluation')
     parser.add_argument('--seed', default=None, type=int,
                         help='random seed')
-    parser.add_argument('--infonce-t', '--t', default=0.05, type=float, dest='infonce_t',
+    parser.add_argument('--infonce-t', '--t', default=None, type=float, dest='infonce_t',
                         help='InfoNCE temperature parameter')
     parser.add_argument('--use-amp', action='store_true',
                         help='use AMP if available')
@@ -116,11 +116,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help='use neighbors from link graph as context')
     parser.add_argument('--use-self-negative', action='store_true',
                         help='use head entity as negative')
-    parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
+    parser.add_argument('--wd', '--weight-decay', default=None, type=float,
                         dest='weight_decay', help='weight decay')
-    parser.add_argument('-j', '--workers', default=2, type=int,
+    parser.add_argument('-j', '--workers', default=None, type=int,
                         help='number of data loading workers')
-    parser.add_argument('--warmup', default=400, type=int,
+    parser.add_argument('--warmup', default=None, type=int,
                         help='warmup steps')
 
     # Softmax / Bernoulli negative-sampling (DistMult, ComplEx, etc.).
@@ -145,22 +145,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--learnable-au-gammas', '--learnable_au_gammas',
                         dest='learnable_au_gammas', action='store_true', default=False,
                         help='make AU uniformity gammas learnable (log re-parameterization)')
-    parser.add_argument('--log-au-gamma-lr', '--log_au_gamma_lr', default=1e-2, type=float,
+    parser.add_argument('--log-au-gamma-lr', '--log_au_gamma_lr', default=None, type=float,
                         dest='log_au_gamma_lr',
                         help='learning rate for learnable log-gamma parameters')
     parser.add_argument('--gamma-linear-schedule', '--gamma_linear_schedule',
-                        dest='gamma_linear_schedule', action='store_true', default=None,
+                        dest='gamma_linear_schedule', action='store_true', default=False,
                         help='linearly decay AU gamma multiplier from 1.0 to gamma_schedule_end')
     parser.add_argument('--no-gamma-linear-schedule', dest='gamma_linear_schedule',
                         action='store_false',
                         help='disable gamma linear schedule (even with learnable_au_gammas)')
-    parser.add_argument('--gamma-schedule-end', '--gamma_schedule_end', default=0.1, type=float,
+    parser.add_argument('--gamma-schedule-end', '--gamma_schedule_end', default=None, type=float,
                         dest='gamma_schedule_end',
                         help='gamma schedule multiplier at the last scheduled epoch')
-    parser.add_argument('--gamma-schedule-start-epoch', '--gamma_schedule_start_epoch', default=0, type=int,
+    parser.add_argument('--gamma-schedule-start-epoch', '--gamma_schedule_start_epoch', default=None, type=int,
                         dest='gamma_schedule_start_epoch',
                         help='epoch index (0-based) to begin gamma linear schedule')
-    parser.add_argument('--gamma-schedule-epochs', '--gamma_schedule_epochs', default=0, type=int,
+    parser.add_argument('--gamma-schedule-epochs', '--gamma_schedule_epochs', default=None, type=int,
                         dest='gamma_schedule_epochs',
                         help='epochs over which to schedule gamma multiplier (0: full training)')
     parser.add_argument('--tuni', default=None, type=float,
@@ -168,7 +168,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--learnable-uniformity-scale', '--learnable_uniformity_scale',
                         dest='learnable_uniformity_scale', action='store_true', default=False,
                         help='make AU uniformity scale tuni learnable (log re-parameterization)')
-    parser.add_argument('--log-uniformity-lr', '--log_uniformity_lr', default=1e-2, type=float,
+    parser.add_argument('--log-uniformity-lr', '--log_uniformity_lr', default=None, type=float,
                         dest='log_uniformity_lr',
                         help='learning rate for learnable log-uniformity-scale (tuni)')
     parser.add_argument('--tuni-linear-schedule', '--tuni_linear_schedule',
@@ -180,21 +180,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--tuni-schedule-end', '--tuni_schedule_end', default=None, type=float,
                         dest='tuni_schedule_end',
                         help='ending tuni for linear schedule (default: --tuni)')
-    parser.add_argument('--tuni-schedule-start-epoch', '--tuni_schedule_start_epoch', default=0, type=int,
+    parser.add_argument('--tuni-schedule-start-epoch', '--tuni_schedule_start_epoch', default=None, type=int,
                         dest='tuni_schedule_start_epoch',
                         help='epoch index (0-based) to begin tuni linear schedule')
-    parser.add_argument('--tuni-schedule-epochs', '--tuni_schedule_epochs', default=0, type=int,
+    parser.add_argument('--tuni-schedule-epochs', '--tuni_schedule_epochs', default=None, type=int,
                         dest='tuni_schedule_epochs',
                         help='epochs over which to schedule tuni (0: use --epochs through last epoch)')
     parser.add_argument('--au-per-epoch', '--au_per_epoch', dest='au_per_epoch',
-                        action='store_true', default=None,
+                        action='store_true', default=False,
                         help='KGAU: one optimizer step per epoch with alignment/uniformity over full train set')
     normalize_group = parser.add_mutually_exclusive_group()
     normalize_group.add_argument(
         '--normalize-lp-scores', '--normalize_lp_scores',
         dest='normalize_lp_scores',
         action='store_true',
-        default=None,
+        default=False,
         help='L2-normalize query/tail vectors for link-prediction scoring',
     )
     normalize_group.add_argument(
@@ -222,13 +222,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--relation-regularize-weight', '--relation_regularize_weight',
                         default=None, type=float, dest='relation_regularize_weight',
                         help='L3 relation embedding regularization weight')
-    parser.add_argument('--init-method', '--init_method', default='', type=str,
+    parser.add_argument('--init-method', '--init_method', default=None, type=str,
                         dest='init_method', help='lookup init: uniform_, xavier_uniform_, scaled')
     parser.add_argument('--init-uniform-a', '--init_uniform_a', default=None, type=float,
                         dest='init_uniform_a', help='uniform_ lower bound (upper defaults to -a)')
     parser.add_argument('--init-uniform-b', '--init_uniform_b', default=None, type=float,
                         dest='init_uniform_b', help='uniform_ upper bound')
-    parser.add_argument('--init-xavier-gain', '--init_xavier_gain', default=1.0, type=float,
+    parser.add_argument('--init-xavier-gain', '--init_xavier_gain', default=None, type=float,
                         dest='init_xavier_gain', help='xavier init gain')
     parser.add_argument('--eval-batch-size', '--eval_batch_size', default=None, type=int,
                         dest='eval_batch_size', help='link-prediction evaluation batch size')
@@ -241,16 +241,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--early-stopping-min-metric', '--early_stopping_min_metric',
                         default=None, type=float, dest='early_stopping_min_metric',
                         help='only count plateau epochs once best valid MRR reaches this value')
-    parser.add_argument('--lr-scheduler-mode', '--lr_scheduler_mode', default='max', type=str,
+    parser.add_argument('--lr-scheduler-mode', '--lr_scheduler_mode', default=None, type=str,
                         dest='lr_scheduler_mode', help='ReduceLROnPlateau mode')
-    parser.add_argument('--lr-scheduler-factor', '--lr_scheduler_factor', default=0.95, type=float,
+    parser.add_argument('--lr-scheduler-factor', '--lr_scheduler_factor', default=None, type=float,
                         dest='lr_scheduler_factor',
                         help='LR decay factor (ReduceLROnPlateau factor / StepLR gamma)')
-    parser.add_argument('--lr-scheduler-patience', '--lr_scheduler_patience', default=7, type=int,
+    parser.add_argument('--lr-scheduler-patience', '--lr_scheduler_patience', default=None, type=int,
                         dest='lr_scheduler_patience', help='ReduceLROnPlateau patience')
-    parser.add_argument('--lr-scheduler-threshold', '--lr_scheduler_threshold', default=1e-4, type=float,
+    parser.add_argument('--lr-scheduler-threshold', '--lr_scheduler_threshold', default=None, type=float,
                         dest='lr_scheduler_threshold', help='ReduceLROnPlateau threshold')
-    parser.add_argument('--lr-scheduler-step-size', '--lr_scheduler_step_size', default=50, type=int,
+    parser.add_argument('--lr-scheduler-step-size', '--lr_scheduler_step_size', default=None, type=int,
                         dest='lr_scheduler_step_size',
                         help='StepLR: multiply LR by factor every this many epochs')
 
@@ -279,7 +279,7 @@ def _resolve_output_dir() -> str:
         absolute_placeholder = os.path.normpath(os.path.join(os.getcwd(), placeholder))
         return normalized_path in {normalized_placeholder, absolute_placeholder}
     # starting candidate list: explicit output_dir, prefix, or fallback defaults
-    candidates = [getattr(args, 'output_dir', ''), getattr(args, 'output_dir_prefix', '')]
+    candidates = [getattr(args, 'output_dir', None) or '', getattr(args, 'output_dir_prefix', None) or '']
 
     if args.eval_model_path:
         candidates.append(os.path.dirname(args.eval_model_path))
@@ -302,6 +302,8 @@ def _resolve_output_dir() -> str:
 def _format_model_name(model: str) -> str:
     """Format the model name for consistent config lookup and output naming."""
 
+    if not model:
+        return ''
     mapping = {
         'dabr': 'DaBR',
         'dabr-au': 'DaBR-AU',
@@ -316,6 +318,8 @@ def _format_model_name(model: str) -> str:
 def _format_dataset_name(dataset: str) -> str:
     """Format the dataset name for consistent config lookup and output naming."""
 
+    if not dataset:
+        return ''
     mapping = {
         'wn18rr': 'WN18RR',
         'fb15k237': 'FB15k237',
@@ -327,7 +331,7 @@ def _format_dataset_name(dataset: str) -> str:
 def _resolve_config_path() -> str:
     """Resolve the config JSON path, preferring an explicit path and then configs/ fallbacks."""
 
-    explicit_path = getattr(args, 'config_path', '')
+    explicit_path = getattr(args, 'config_path', None) or ''
     if explicit_path:
         if os.path.exists(explicit_path):
             return explicit_path
@@ -337,7 +341,7 @@ def _resolve_config_path() -> str:
 
     candidates = [
         os.path.join('configs', f'{_format_model_name(args.model)}_{_format_dataset_name(args.dataset)}.json'),
-        os.path.join('configs', f'{args.model.lower()}_{args.dataset.lower()}.json'),
+        os.path.join('configs', f'{(args.model or "").lower()}_{(args.dataset or "").lower()}.json'),
     ]
     for candidate in candidates:
         if os.path.exists(candidate):
@@ -534,31 +538,33 @@ for _name, _default in (('gamma_h', 0.0), ('gamma_ent', 0.0), ('gamma_cross', 0.
     if getattr(args, _name, None) is None:
         setattr(args, _name, _default)
 
-args.train_path = _resolve_data_path(getattr(args, 'train_path', ''))
-args.valid_path = _resolve_data_path(_derive_split_variant(getattr(args, 'valid_path', ''), split_name='valid', labeled=False))
-args.test_path = _resolve_data_path(_derive_split_variant(getattr(args, 'test_path', ''), split_name='test', labeled=False))
+args.train_path = _resolve_data_path(getattr(args, 'train_path', None) or '')
+args.valid_path = _resolve_data_path(_derive_split_variant(getattr(args, 'valid_path', None) or '', split_name='valid', labeled=False))
+args.test_path = _resolve_data_path(_derive_split_variant(getattr(args, 'test_path', None) or '', split_name='test', labeled=False))
 args.valid_w_label_path = _resolve_data_path(
-    getattr(args, 'valid_w_label_path', '')
+    getattr(args, 'valid_w_label_path', None) or ''
     or _derive_split_variant(args.valid_path, split_name='valid', labeled=True)
 )
 args.test_w_label_path = _resolve_data_path(
-    getattr(args, 'test_w_label_path', '')
+    getattr(args, 'test_w_label_path', None) or ''
     or _derive_split_variant(args.test_path, split_name='test', labeled=True)
 )
 assert not args.train_path or os.path.exists(args.train_path)
-assert args.pooling in ['cls', 'mean', 'max']
+if args.pooling is not None:
+    assert args.pooling in ['cls', 'mean', 'max']
 _model_name_for_scheduler = (args.model or '').lower()
 _is_index_kge_model = _model_name_for_scheduler in {
     'distmult', 'distmult-au', 'distmult-adversarial', 'distmult-adversarial-au',
     'complex', 'complex-au', 'dabr', 'dabr-au', 'rotate', 'rotate-au', 'protate', 'protate-au',
 }
-if _is_index_kge_model:
-    assert args.lr_scheduler.lower() in {
-        'linear', 'cosine', 'none', 'constant', 'reducelronplateau',
-        'step', 'steplr', 'stepdecay',
-    }
-else:
-    assert args.lr_scheduler in ['linear', 'cosine']
+if args.lr_scheduler is not None:
+    if _is_index_kge_model:
+        assert args.lr_scheduler.lower() in {
+            'linear', 'cosine', 'none', 'constant', 'reducelronplateau',
+            'step', 'steplr', 'stepdecay',
+        }
+    else:
+        assert args.lr_scheduler in ['linear', 'cosine']
 
 args.config_path = config_path
 
@@ -654,7 +660,7 @@ if not hasattr(args, 'output_dir'):
 
 # If a user provided an output_dir_prefix (e.g., "logs/Model_Dataset"),
 # convert it into a timestamped run directory and prefer it when writable.
-if getattr(args, 'output_dir_prefix', ''):
+if getattr(args, 'output_dir_prefix', None):
     prefix = args.output_dir_prefix.rstrip('/\\')
     import re, datetime
     ts_pattern = re.compile(r'.*\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$')

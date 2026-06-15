@@ -49,7 +49,11 @@ def classification_metrics(y_true, y_pred, y_prob=None, zero_division=0) -> dict
 
 
 def find_global_threshold(y_true, y_prob, n_thresholds=100) -> float:
-    """Find a global threshold that maximizes validation accuracy."""
+    """Find a global threshold that maximizes validation accuracy.
+
+    When multiple thresholds tie on accuracy, prefer the one with higher F1 so
+    precision/recall are not degenerate on balanced label splits.
+    """
 
     y_true = np.asarray(y_true)
     y_prob = np.asarray(y_prob)
@@ -64,12 +68,15 @@ def find_global_threshold(y_true, y_prob, n_thresholds=100) -> float:
 
     thresholds = np.linspace(float(y_prob.min()), float(y_prob.max()), n_thresholds)
     best_acc = -1.0
+    best_f1 = -1.0
     best_t = float(thresholds[0])
     for t in thresholds:
         y_pred = (y_prob > t).astype(int)
-        acc = (y_pred == y_true).mean()
-        if acc > best_acc:
+        acc = float((y_pred == y_true).mean())
+        f1 = float(f1_score(y_true, y_pred, zero_division=0))
+        if acc > best_acc or (acc == best_acc and f1 > best_f1):
             best_acc = acc
+            best_f1 = f1
             best_t = float(t)
     return best_t
 

@@ -73,12 +73,11 @@ class KGAULoss(nn.Module):
 		}
 		for name, value in gamma_inits.items():
 			init = float(value)
-			if self.learnable_au_gammas and init <= 0.0:
-				init = 1.0
+			# init <= 0 disables a term (fixed or learnable); only positive inits are scheduled/learned.
 			self.register_buffer(f'gamma_init_{name}', torch.tensor(init))
 			if not self.learnable_au_gammas:
 				setattr(self, f'_gamma_{name}', init)
-			else:
+			elif init > 0.0:
 				# Bounded downward adjustment only: exp(adj) in (0, 1], init at 0.
 				# Unconstrained log-scale gammas rise under AU loss because uniformity is negative.
 				setattr(self, f'log_gamma_adj_{name}', nn.Parameter(torch.zeros(())))
@@ -110,6 +109,9 @@ class KGAULoss(nn.Module):
 		adj = getattr(self, f'log_gamma_adj_{name}')
 		return torch.exp(torch.clamp(adj, max=0.0))
 
+	def _learnable_gamma_enabled(self, name: str) -> bool:
+		return hasattr(self, f'log_gamma_adj_{name}')
+
 	def set_gamma_schedule_mult(self, mult: float) -> None:
 		self.gamma_schedule_mult.fill_(float(mult))
 
@@ -119,6 +121,8 @@ class KGAULoss(nn.Module):
 		if not self.learnable_au_gammas:
 			return
 		for name in ('q', 't', 'h', 'ent', 'cross'):
+			if not hasattr(self, f'log_gamma_adj_{name}'):
+				continue
 			with torch.no_grad():
 				getattr(self, f'log_gamma_adj_{name}').clamp_(max=0.0)
 
@@ -126,6 +130,8 @@ class KGAULoss(nn.Module):
 		mult = self.gamma_schedule_mult
 		if self.learnable_au_gammas:
 			init = getattr(self, f'gamma_init_{name}')
+			if not self._learnable_gamma_enabled(name):
+				return init * mult
 			return init * mult * self._learnable_gamma_factor(name)
 		return float(getattr(self, f'_gamma_{name}')) * float(mult)
 

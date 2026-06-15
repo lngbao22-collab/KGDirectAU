@@ -3,9 +3,32 @@
 from __future__ import annotations
 
 import math
+import os
 
 import torch
 import torch.nn.functional as F
+
+
+def uses_bce_logit_offset(args) -> bool:
+	"""Return True when inference should add the LibKGE BCE logit offset to raw scores."""
+
+	loss_path = str(getattr(args, 'model_loss_path', '') or '').lower()
+	basename = os.path.basename(loss_path)
+	return basename in {'bce_loss.py', 'bce_loss'}
+
+
+def bce_logit_offset(args) -> float:
+	"""Return the BCE logit offset (LibKGE ``train.loss_arg``) for inference."""
+
+	if not uses_bce_logit_offset(args):
+		return 0.0
+	offset = getattr(args, 'bce_offset', None)
+	if offset is not None:
+		return float(offset)
+	raw = getattr(args, 'loss_arg', None)
+	if raw is None or (isinstance(raw, float) and math.isnan(raw)):
+		return 0.0
+	return float(raw)
 
 
 def _labels_as_matrix(scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
@@ -43,10 +66,7 @@ def compute_bce_loss(
 def build_bce_loss_fn(args):
 	"""Factory for standard BCE-with-logits training."""
 
-	offset = getattr(args, 'bce_offset', None)
-	if offset is None:
-		raw = getattr(args, 'loss_arg', None)
-		offset = 0.0 if raw is None or (isinstance(raw, float) and math.isnan(raw)) else float(raw)
+	offset = bce_logit_offset(args)
 	reduction = str(getattr(args, 'bce_reduction', 'mean'))
 
 	def loss_fn(scores: torch.Tensor, targets: torch.Tensor, **_kwargs) -> torch.Tensor:
@@ -62,10 +82,7 @@ build_loss_fn = build_bce_loss_fn
 def build_negsamp_loss_fn(args):
 	"""Factory for LibKGE triple negative-sampling BCE (``train.loss: bce``)."""
 
-	offset = getattr(args, 'bce_offset', None)
-	if offset is None:
-		raw = getattr(args, 'loss_arg', None)
-		offset = 0.0 if raw is None or (isinstance(raw, float) and math.isnan(raw)) else float(raw)
+	offset = bce_logit_offset(args)
 
 	def loss_fn(pos_scores: torch.Tensor, neg_scores: torch.Tensor, weights=None, **_kwargs) -> torch.Tensor:
 		pos_scores = pos_scores.reshape(-1)
