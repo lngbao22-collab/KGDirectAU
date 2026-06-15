@@ -22,7 +22,7 @@ from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, s
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
 from utils.logger import AverageMeter, ProgressMeter, logger
 from utils.memory import PhaseMemoryTracker, format_memory
-from models.losses.au_loss import KGAULoss, distinct_first_indices, select_distinct_rows
+from models.losses.au_loss import KGAULoss, distinct_first_indices, select_distinct_rows, _GAMMA_NAMES
 
 
 def _load_encoder(args) -> torch.nn.Module:
@@ -77,17 +77,20 @@ def _build_optimizer(args, parameters, weight_decay: float):
 
 
 def _build_kgau_optimizer(args, model, criterion: KGAULoss, weight_decay: float):
-	"""Build optimizer over model + KGAU loss params (optional learnable ``tuni`` group)."""
+	"""Build optimizer over model + KGAU loss params (optional learnable ``tuni`` / gammas)."""
 
 	lr = float(getattr(args, 'lr', getattr(args, 'learning_rate', 2e-5)))
 	base_params = [p for p in model.parameters() if p.requires_grad]
 	log_tuni_param = None
+	log_gamma_params = []
 	aux_other_params = []
 	for name, param in criterion.named_parameters():
 		if not param.requires_grad:
 			continue
 		if name == 'log_tuni' or name.endswith('.log_tuni'):
 			log_tuni_param = param
+		elif name.startswith('log_gamma_'):
+			log_gamma_params.append(param)
 		else:
 			aux_other_params.append(param)
 
@@ -98,6 +101,9 @@ def _build_kgau_optimizer(args, model, criterion: KGAULoss, weight_decay: float)
 	if log_tuni_param is not None:
 		log_tuni_lr = float(getattr(args, 'log_uniformity_lr', lr))
 		param_groups.append({'params': [log_tuni_param], 'lr': log_tuni_lr, 'weight_decay': 0.0})
+	if log_gamma_params:
+		log_gamma_lr = float(getattr(args, 'log_au_gamma_lr', lr))
+		param_groups.append({'params': log_gamma_params, 'lr': log_gamma_lr, 'weight_decay': 0.0})
 
 	if not param_groups:
 		return _build_optimizer(args, model.parameters(), weight_decay)
@@ -139,6 +145,39 @@ def _scheduled_tuni_value(args, epoch: int) -> float:
 		return start_scale
 	progress = min(1.0, max(0.0, (epoch - start_epoch) / float(schedule_span)))
 	return start_scale + (end_scale - start_scale) * progress
+
+
+def _gamma_schedule_enabled(args) -> bool:
+	if getattr(args, 'gamma_linear_schedule', None) is not None:
+		return bool(args.gamma_linear_schedule)
+	return config_bool(args, 'learnable_au_gammas', False)
+
+
+def _scheduled_gamma_mult(args, epoch: int) -> float:
+	"""Linear gamma multiplier: 1.0 at start, ``gamma_schedule_end`` at the last scheduled epoch."""
+
+	start_epoch = int(getattr(args, 'gamma_schedule_start_epoch', 0) or 0)
+	end_mult = float(getattr(args, 'gamma_schedule_end', 0.1))
+	schedule_epochs = int(getattr(args, 'gamma_schedule_epochs', 0) or 0)
+	if schedule_epochs <= 0:
+		schedule_span = max(1, int(getattr(args, 'epochs', 1)) - 1 - start_epoch)
+	else:
+		schedule_span = max(1, schedule_epochs - 1)
+
+	if epoch < start_epoch:
+		return 1.0
+	progress = min(1.0, max(0.0, (epoch - start_epoch) / float(schedule_span)))
+	return 1.0 + (end_mult - 1.0) * progress
+
+
+def _gamma_log_suffix(criterion: KGAULoss) -> str:
+	parts = []
+	for name in _GAMMA_NAMES:
+		if criterion.gamma_active(name):
+			parts.append(f'{name}={criterion.gamma_value(name):.4f}')
+	if not parts:
+		return ''
+	return ' | gammas: ' + ', '.join(parts)
 
 
 def _build_text_train_loader(args, train_examples) -> torch.utils.data.DataLoader:
@@ -239,6 +278,7 @@ class KGAUStrategy(Evaluator):
 
 		tuni_val = _config_float(args, 'tuni', _config_float(args, 'temperature', _config_float(args, 't', 2.0)))
 		learnable_tuni = config_bool(args, 'learnable_uniformity_scale', False)
+		learnable_au_gammas = config_bool(args, 'learnable_au_gammas', False)
 
 		# Alignment mode is opt-in: cosine by default for all encoders; only pRotatE-AU sets
 		# ``sin_phase`` (via config and/or encoder ``kga_u_alignment_mode``).
@@ -258,6 +298,7 @@ class KGAUStrategy(Evaluator):
 			gamma_cross=_config_float(args, 'gamma_cross', 0.0),
 			tuni=tuni_val,
 			learnable_tuni=learnable_tuni,
+			learnable_au_gammas=learnable_au_gammas,
 			max_uniformity_samples=int(_config_float(args, 'max_uniformity_samples', 1024)),
 			additive_margin=_config_float(args, 'additive_margin', 0.0),
 			alignment_mode=alignment_mode,
@@ -280,9 +321,26 @@ class KGAUStrategy(Evaluator):
 			)
 		if learnable_tuni and config_bool(args, 'tuni_linear_schedule', False):
 			logger.warning('tuni_linear_schedule is ignored when learnable_uniformity_scale is enabled')
+		if learnable_au_gammas:
+			logger.info(
+				'Learnable AU gammas: initial q/t/h/ent/cross=%.4f/%.4f/%.4f/%.4f/%.4f, log_au_gamma_lr=%.2e',
+				self.criterion._gamma_init_value('q'),
+				self.criterion._gamma_init_value('t'),
+				self.criterion._gamma_init_value('h'),
+				self.criterion._gamma_init_value('ent'),
+				self.criterion._gamma_init_value('cross'),
+				float(getattr(args, 'log_au_gamma_lr', getattr(args, 'lr', 2e-5))),
+			)
+		if _gamma_schedule_enabled(args):
+			end_mult = float(getattr(args, 'gamma_schedule_end', 0.1))
+			logger.info(
+				'Gamma linear schedule: multiplier epoch 0=1.0000 -> last=%.4f (start_epoch=%d)',
+				end_mult,
+				int(getattr(args, 'gamma_schedule_start_epoch', 0) or 0),
+			)
 		self.optimizer = _build_kgau_optimizer(args, self.model, self.criterion, self.weight_decay)
 		self.lr_scheduler = build_lr_scheduler(args, self.optimizer)
-		if self.criterion.gamma_ent > 0 and self.uses_text_inputs:
+		if self.criterion.gamma_active('ent') and self.uses_text_inputs:
 			logger.info(
 				'Entity uniformity (text encoder): gamma_ent uses deduplicated batch head+tail vectors '
 				'(max_uniformity_samples=%d)',
@@ -411,9 +469,9 @@ class KGAUStrategy(Evaluator):
 	) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None, int, int]:
 		"""Deduplicate embeddings per uniformity type before AU uniformity loss."""
 
-		q_uni = select_distinct_rows(q_raw, q_keys) if self.criterion.gamma_q > 0 else None
-		t_uni = select_distinct_rows(t_raw, t_keys) if self.criterion.gamma_t > 0 else None
-		h_uni = select_distinct_rows(h_raw, h_keys) if self.criterion.gamma_h > 0 else None
+		q_uni = select_distinct_rows(q_raw, q_keys) if self.criterion.gamma_active('q') else None
+		t_uni = select_distinct_rows(t_raw, t_keys) if self.criterion.gamma_active('t') else None
+		h_uni = select_distinct_rows(h_raw, h_keys) if self.criterion.gamma_active('h') else None
 		n_unique_q = q_uni.size(0) if q_uni is not None else 0
 		n_unique_t = t_uni.size(0) if t_uni is not None else 0
 		return q_uni, t_uni, h_uni, n_unique_q, n_unique_t
@@ -440,7 +498,7 @@ class KGAUStrategy(Evaluator):
 	) -> torch.Tensor | None:
 		"""Build pooled query+tail vectors for ``gamma_cross`` uniformity."""
 
-		if self.criterion.gamma_cross <= 0:
+		if not self.criterion.gamma_active('cross'):
 			return None
 		q_uni = select_distinct_rows(q_raw, q_keys)
 		t_uni = select_distinct_rows(t_raw, t_keys)
@@ -455,8 +513,8 @@ class KGAUStrategy(Evaluator):
 		"""Count unique query/tail keys in a full training batch (logging only; cheap)."""
 
 		q_keys, t_keys, _ = self._uniformity_keys(head_indices, relation_indices, tail_indices)
-		n_unique_q = int(distinct_first_indices(q_keys).numel()) if self.criterion.gamma_q > 0 else 0
-		n_unique_t = int(distinct_first_indices(t_keys).numel()) if self.criterion.gamma_t > 0 else 0
+		n_unique_q = int(distinct_first_indices(q_keys).numel()) if self.criterion.gamma_active('q') else 0
+		n_unique_t = int(distinct_first_indices(t_keys).numel()) if self.criterion.gamma_active('t') else 0
 		return n_unique_q, n_unique_t
 
 	def _embedding_l3_regularization(self, model) -> torch.Tensor | None:
@@ -532,7 +590,7 @@ class KGAUStrategy(Evaluator):
 		batch, with gradients flowing through the main forward pass.
 		"""
 
-		if self.criterion.gamma_ent <= 0 or h_raw.size(0) == 0:
+		if not self.criterion.gamma_active('ent') or h_raw.size(0) == 0:
 			return None
 
 		seen: set[int] = set()
@@ -553,7 +611,7 @@ class KGAUStrategy(Evaluator):
 	def _catalog_entity_uniformity_vectors(self, model) -> torch.Tensor | None:
 		"""Full entity-table vectors for embedding encoders (ComplEx, DistMult, DaBR, etc.)."""
 
-		if self.criterion.gamma_ent <= 0:
+		if not self.criterion.gamma_active('ent'):
 			return None
 		kwargs = _entity_embeddings_call_kwargs(model, self.device, self.criterion)
 		# Optional encoder hook (pRotatE-AU only); all other encoders use ``entity_embeddings``.
@@ -681,12 +739,12 @@ class KGAUStrategy(Evaluator):
 			align_loss_sum += l_align.item() * chunk
 
 		q_uni = self._au_vectors_at_indices(model, self.epoch_q_rep_idx, chunk_size, 'q') if (
-			self.criterion.gamma_q > 0 or self.criterion.gamma_cross > 0
+			self.criterion.gamma_active('q') or self.criterion.gamma_active('cross')
 		) else None
 		t_uni = self._au_vectors_at_indices(model, self.epoch_t_rep_idx, chunk_size, 't') if (
-			self.criterion.gamma_t > 0 or self.criterion.gamma_cross > 0
+			self.criterion.gamma_active('t') or self.criterion.gamma_active('cross')
 		) else None
-		h_uni = self._au_vectors_at_indices(model, self.epoch_h_rep_idx, chunk_size, 'h') if self.criterion.gamma_h > 0 else None
+		h_uni = self._au_vectors_at_indices(model, self.epoch_h_rep_idx, chunk_size, 'h') if self.criterion.gamma_active('h') else None
 		ent_raw = self._catalog_entity_uniformity_vectors(model)
 		cross_uni = self._merge_cross_uniformity_vectors(q_uni, t_uni)
 
@@ -713,8 +771,8 @@ class KGAUStrategy(Evaluator):
 
 		self._optimizer_step(use_amp)
 
-		n_unique_q = int(self.epoch_q_rep_idx.numel()) if self.criterion.gamma_q > 0 else 0
-		n_unique_t = int(self.epoch_t_rep_idx.numel()) if self.criterion.gamma_t > 0 else 0
+		n_unique_q = int(self.epoch_q_rep_idx.numel()) if self.criterion.gamma_active('q') else 0
+		n_unique_t = int(self.epoch_t_rep_idx.numel()) if self.criterion.gamma_active('t') else 0
 		avg_align = align_loss_sum / max(num_examples, 1)
 		avg_unif = l_unif.item()
 		avg_loss = avg_align + avg_unif
@@ -1067,6 +1125,7 @@ class KGAUStrategy(Evaluator):
 		tuni_suffix = ''
 		if self._should_log_tuni():
 			tuni_suffix = f' | tuni: {_tuni_scalar(self.criterion):.4f}'
+		gamma_suffix = _gamma_log_suffix(self.criterion) if self._should_log_gammas() else ''
 		if float(self.criterion.additive_margin) > 0.0:
 			logger.info(
 				'[EPOCH %s] train loss: %.6f | align: %.6f | uniformity: %.6f | '
@@ -1075,7 +1134,7 @@ class KGAUStrategy(Evaluator):
 				unique_scope, avg_unique_q, avg_unique_t,
 				'' if self.au_per_epoch else f' (of {batch_size})',
 				100.0 * avg_margin_active,
-				tuni_suffix,
+				tuni_suffix + gamma_suffix,
 			)
 		else:
 			logger.info(
@@ -1084,7 +1143,7 @@ class KGAUStrategy(Evaluator):
 				display_epoch, avg_loss, avg_align_loss, avg_unif_loss,
 				unique_scope, avg_unique_q, avg_unique_t,
 				'' if self.au_per_epoch else f' (of {batch_size})',
-				tuni_suffix,
+				tuni_suffix + gamma_suffix,
 			)
 		self.train_component_losses = {
 			'loss': avg_loss,
@@ -1097,7 +1156,27 @@ class KGAUStrategy(Evaluator):
 			self.train_component_losses['margin_buffer_pair_frac'] = avg_margin_active
 		if hasattr(self.criterion, 'log_tuni') or config_bool(self.args, 'tuni_linear_schedule', False):
 			self.train_component_losses['tuni'] = _tuni_scalar(self.criterion)
+		if self._should_log_gammas():
+			for name in _GAMMA_NAMES:
+				if self.criterion.gamma_active(name):
+					self.train_component_losses[f'gamma_{name}'] = self.criterion.gamma_value(name)
 		return avg_loss
+
+	def _maybe_update_gamma_schedule(self, epoch: int) -> None:
+		"""Apply linear gamma multiplier decay before each training epoch."""
+
+		if not _gamma_schedule_enabled(self.args):
+			return
+
+		mult = _scheduled_gamma_mult(self.args, epoch)
+		if mult <= 0.0:
+			logger.warning('Scheduled gamma multiplier <= 0 (%.6f) at epoch %d; skip update', mult, epoch)
+			return
+
+		self.criterion.set_gamma_schedule_mult(mult)
+
+	def _should_log_gammas(self) -> bool:
+		return self.criterion.learnable_au_gammas or _gamma_schedule_enabled(self.args)
 
 	def _maybe_update_tuni_schedule(self, epoch: int) -> None:
 		"""Apply linear tuni schedule before each training epoch (fixed scale only)."""
@@ -1179,6 +1258,7 @@ class KGAUStrategy(Evaluator):
 
 		total_start_time = time.time()
 		for epoch in range(self.args.epochs):
+			self._maybe_update_gamma_schedule(epoch)
 			self._maybe_update_tuni_schedule(epoch)
 			epoch_train_start = time.time()
 			self.memory_tracker.begin_phase()

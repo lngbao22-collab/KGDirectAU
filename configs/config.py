@@ -142,6 +142,27 @@ def build_parser() -> argparse.ArgumentParser:
                         help='uniformity weight for all entity embeddings')
     parser.add_argument('--gamma-cross', '--gamma_cross', default=None, type=float,
                         help='uniformity weight on pooled query+tail vectors (joint LP space)')
+    parser.add_argument('--learnable-au-gammas', '--learnable_au_gammas',
+                        dest='learnable_au_gammas', action='store_true', default=False,
+                        help='make AU uniformity gammas learnable (log re-parameterization)')
+    parser.add_argument('--log-au-gamma-lr', '--log_au_gamma_lr', default=1e-2, type=float,
+                        dest='log_au_gamma_lr',
+                        help='learning rate for learnable log-gamma parameters')
+    parser.add_argument('--gamma-linear-schedule', '--gamma_linear_schedule',
+                        dest='gamma_linear_schedule', action='store_true', default=None,
+                        help='linearly decay AU gamma multiplier from 1.0 to gamma_schedule_end')
+    parser.add_argument('--no-gamma-linear-schedule', dest='gamma_linear_schedule',
+                        action='store_false',
+                        help='disable gamma linear schedule (even with learnable_au_gammas)')
+    parser.add_argument('--gamma-schedule-end', '--gamma_schedule_end', default=0.1, type=float,
+                        dest='gamma_schedule_end',
+                        help='gamma schedule multiplier at the last scheduled epoch')
+    parser.add_argument('--gamma-schedule-start-epoch', '--gamma_schedule_start_epoch', default=0, type=int,
+                        dest='gamma_schedule_start_epoch',
+                        help='epoch index (0-based) to begin gamma linear schedule')
+    parser.add_argument('--gamma-schedule-epochs', '--gamma_schedule_epochs', default=0, type=int,
+                        dest='gamma_schedule_epochs',
+                        help='epochs over which to schedule gamma multiplier (0: full training)')
     parser.add_argument('--tuni', default=None, type=float,
                         help='AU uniformity temperature (Gaussian potential scale)')
     parser.add_argument('--learnable-uniformity-scale', '--learnable_uniformity_scale',

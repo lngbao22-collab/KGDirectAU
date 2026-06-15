@@ -41,6 +41,9 @@ def select_distinct_rows(vectors: torch.Tensor, keys: torch.Tensor) -> torch.Ten
 	return vectors.index_select(0, indices)
 
 
+_GAMMA_NAMES = ('q', 't', 'h', 'ent', 'cross')
+
+
 class KGAULoss(nn.Module):
 	"""Alignment and uniformity loss for knowledge graph embeddings."""
 
@@ -53,17 +56,29 @@ class KGAULoss(nn.Module):
 		gamma_cross=0.0,
 		tuni=2.0,
 		learnable_tuni: bool = False,
+		learnable_au_gammas: bool = False,
 		max_uniformity_samples: int = 1024,
 		additive_margin: float = 0.0,
 		alignment_mode: str = 'cosine',
 		normalize_uniformity: bool = True,
 	):
 		super().__init__()
-		self.gamma_q = _coalesce_float(gamma_q, 1.0)
-		self.gamma_t = _coalesce_float(gamma_t, 1.0)
-		self.gamma_h = _coalesce_float(gamma_h, 0.0)
-		self.gamma_ent = _coalesce_float(gamma_ent, 0.0)
-		self.gamma_cross = _coalesce_float(gamma_cross, 0.0)
+		self.learnable_au_gammas = bool(learnable_au_gammas)
+		gamma_inits = {
+			'q': _coalesce_float(gamma_q, 1.0),
+			't': _coalesce_float(gamma_t, 1.0),
+			'h': _coalesce_float(gamma_h, 0.0),
+			'ent': _coalesce_float(gamma_ent, 0.0),
+			'cross': _coalesce_float(gamma_cross, 0.0),
+		}
+		if self.learnable_au_gammas:
+			for name, value in gamma_inits.items():
+				init = float(value) if value > 0.0 else 1.0
+				setattr(self, f'log_gamma_{name}', nn.Parameter(torch.tensor(math.log(init))))
+		else:
+			for name, value in gamma_inits.items():
+				setattr(self, f'_gamma_{name}', float(value))
+		self.register_buffer('gamma_schedule_mult', torch.tensor(1.0))
 		# `tuni` is the uniformity temperature/scaling factor; optionally learnable via log-scale.
 		tuni_val = _coalesce_float(tuni, 2.0)
 		if learnable_tuni:
@@ -78,6 +93,53 @@ class KGAULoss(nn.Module):
 		# `sin_phase`: pRotatE link-pred term sum_i |sin(theta_q,i - theta_t,i)| (no global normalize).
 		self.alignment_mode = alignment_mode or 'cosine'
 		self.normalize_uniformity = normalize_uniformity
+
+	def _gamma_init_value(self, name: str) -> float:
+		if self.learnable_au_gammas:
+			param = getattr(self, f'log_gamma_{name}')
+			return float(torch.exp(param.detach()).cpu().item())
+		return float(getattr(self, f'_gamma_{name}'))
+
+	def set_gamma_schedule_mult(self, mult: float) -> None:
+		self.gamma_schedule_mult.fill_(float(mult))
+
+	def _effective_gamma(self, name: str) -> torch.Tensor | float:
+		mult = self.gamma_schedule_mult
+		if self.learnable_au_gammas:
+			log_gamma = getattr(self, f'log_gamma_{name}')
+			return torch.exp(log_gamma) * mult
+		return float(getattr(self, f'_gamma_{name}')) * float(mult)
+
+	def gamma_value(self, name: str) -> float:
+		"""Scalar effective gamma for logging and control flow."""
+
+		value = self._effective_gamma(name)
+		if torch.is_tensor(value):
+			return float(value.detach().cpu().item())
+		return float(value)
+
+	def gamma_active(self, name: str, eps: float = 1e-6) -> bool:
+		return self.gamma_value(name) > eps
+
+	@property
+	def gamma_q(self) -> float:
+		return self.gamma_value('q')
+
+	@property
+	def gamma_t(self) -> float:
+		return self.gamma_value('t')
+
+	@property
+	def gamma_h(self) -> float:
+		return self.gamma_value('h')
+
+	@property
+	def gamma_ent(self) -> float:
+		return self.gamma_value('ent')
+
+	@property
+	def gamma_cross(self) -> float:
+		return self.gamma_value('cross')
 
 	@property
 	def tuni(self):
@@ -263,30 +325,35 @@ class KGAULoss(nn.Module):
 		active_sum = 0.0
 		active_weight = 0.0
 
-		if self.gamma_q > 0:
+		gamma_q = self._effective_gamma('q')
+		if self.gamma_active('q'):
 			q_uniformity = q_uni if q_uni is not None else q
 			term, frac = self.uniformity_loss_with_stats(q_uniformity)
-			l_unif = l_unif + self.gamma_q * term
-			active_sum += self.gamma_q * frac
-			active_weight += self.gamma_q
-		if self.gamma_t > 0:
+			l_unif = l_unif + gamma_q * term
+			active_sum += self.gamma_value('q') * frac
+			active_weight += self.gamma_value('q')
+		gamma_t = self._effective_gamma('t')
+		if self.gamma_active('t'):
 			t_uniformity = t_uni if t_uni is not None else t
 			term, frac = self.uniformity_loss_with_stats(t_uniformity)
-			l_unif = l_unif + self.gamma_t * term
-			active_sum += self.gamma_t * frac
-			active_weight += self.gamma_t
-		if h is not None and self.gamma_h > 0:
+			l_unif = l_unif + gamma_t * term
+			active_sum += self.gamma_value('t') * frac
+			active_weight += self.gamma_value('t')
+		gamma_h = self._effective_gamma('h')
+		if h is not None and self.gamma_active('h'):
 			h_uniformity = h_uni if h_uni is not None else h
 			term, _ = self.uniformity_loss_with_stats(h_uniformity)
-			l_unif = l_unif + self.gamma_h * term
-		if ent is not None and self.gamma_ent > 0:
+			l_unif = l_unif + gamma_h * term
+		gamma_ent = self._effective_gamma('ent')
+		if ent is not None and self.gamma_active('ent'):
 			ent_rows = self._subsample_uniformity_rows(ent)
 			if ent_rows is not None:
 				term, _ = self.uniformity_loss_with_stats(ent_rows)
-				l_unif = l_unif + self.gamma_ent * term
-		if cross_uni is not None and self.gamma_cross > 0:
+				l_unif = l_unif + gamma_ent * term
+		gamma_cross = self._effective_gamma('cross')
+		if cross_uni is not None and self.gamma_active('cross'):
 			term, _ = self.uniformity_loss_with_stats(cross_uni)
-			l_unif = l_unif + self.gamma_cross * term
+			l_unif = l_unif + gamma_cross * term
 
 		if float(self.additive_margin) > 0.0 and active_weight > 0:
 			margin_active_frac = active_sum / active_weight
