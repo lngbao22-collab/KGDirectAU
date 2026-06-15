@@ -82,6 +82,7 @@ def _build_kgau_optimizer(args, model, criterion: KGAULoss, weight_decay: float)
 	lr = float(getattr(args, 'lr', getattr(args, 'learning_rate', 2e-5)))
 	base_params = [p for p in model.parameters() if p.requires_grad]
 	log_tuni_param = None
+	log_alpha_param = None
 	log_gamma_params = []
 	aux_other_params = []
 	for name, param in criterion.named_parameters():
@@ -89,6 +90,8 @@ def _build_kgau_optimizer(args, model, criterion: KGAULoss, weight_decay: float)
 			continue
 		if name == 'log_tuni' or name.endswith('.log_tuni'):
 			log_tuni_param = param
+		elif name == 'log_alpha_adj' or name.endswith('.log_alpha_adj'):
+			log_alpha_param = param
 		elif name.startswith('log_gamma_adj_'):
 			log_gamma_params.append(param)
 		else:
@@ -98,6 +101,9 @@ def _build_kgau_optimizer(args, model, criterion: KGAULoss, weight_decay: float)
 	base_group_params = base_params + aux_other_params
 	if base_group_params:
 		param_groups.append({'params': base_group_params, 'lr': lr, 'weight_decay': weight_decay})
+	if log_alpha_param is not None:
+		log_alpha_lr = float(getattr(args, 'log_alpha_lr', lr))
+		param_groups.append({'params': [log_alpha_param], 'lr': log_alpha_lr, 'weight_decay': 0.0})
 	if log_tuni_param is not None:
 		log_tuni_lr = float(getattr(args, 'log_uniformity_lr', lr))
 		param_groups.append({'params': [log_tuni_param], 'lr': log_tuni_lr, 'weight_decay': 0.0})
@@ -148,9 +154,133 @@ def _scheduled_tuni_value(args, epoch: int) -> float:
 
 
 def _gamma_schedule_enabled(args) -> bool:
+	if config_bool(args, 'learnable_au_weights', False):
+		return False
 	if getattr(args, 'gamma_linear_schedule', None) is not None:
 		return bool(args.gamma_linear_schedule)
 	return config_bool(args, 'learnable_au_gammas', False)
+
+
+def _gamma_log_suffix(criterion: KGAULoss) -> str:
+	parts = []
+	if criterion.learnable_au_weights:
+		parts.append(f'alpha={criterion.alpha_value():.4f}')
+	elif criterion.learnable_au_gammas or criterion.gamma_schedule_mult_value() != 1.0:
+		parts.append(f'mult={criterion.gamma_schedule_mult_value():.4f}')
+	for name in _GAMMA_NAMES:
+		if criterion.gamma_active(name):
+			parts.append(f'{name}={criterion.gamma_value(name):.4f}')
+	if not parts:
+		return ''
+	return ' | gammas: ' + ', '.join(parts)
+
+
+_AU_COMPONENT_ORDER = ('align', 'unif_q', 'unif_t', 'unif_h', 'unif_ent', 'unif_cross')
+
+
+def _au_tensor_scalar(value) -> float:
+	if torch.is_tensor(value):
+		return float(value.detach().cpu().item())
+	return float(value)
+
+
+def _format_au_component_term(key: str, raw_avg: float, scale_name: str, scale: float, weighted_avg: float) -> str:
+	label = key.removeprefix('unif_') if key.startswith('unif_') else key
+	return (
+		f'{label}: raw={raw_avg:.6f} '
+		f'scale({scale_name})={scale:.4f} '
+		f'weighted={weighted_avg:.6f}'
+	)
+
+
+class _AUComponentAccumulator:
+	"""Running weighted averages of AU loss terms for epoch logging."""
+
+	def __init__(self) -> None:
+		self._entries: dict[str, dict[str, float]] = {}
+
+	def reset(self) -> None:
+		self._entries.clear()
+
+	def record(self, components: dict[str, dict], weight: float) -> None:
+		w = float(weight)
+		if w <= 0.0:
+			return
+		for key, comp in components.items():
+			entry = self._entries.setdefault(
+				key, {'raw_sum': 0.0, 'weighted_sum': 0.0, 'weight': 0.0, 'scale_name': comp.get('scale_name', '')},
+			)
+			entry['raw_sum'] += _au_tensor_scalar(comp['raw']) * w
+			entry['weighted_sum'] += _au_tensor_scalar(comp['weighted']) * w
+			entry['weight'] += w
+			if comp.get('scale_name'):
+				entry['scale_name'] = comp['scale_name']
+
+	def merge(self, other: '_AUComponentAccumulator') -> None:
+		for key, entry in other._entries.items():
+			dest = self._entries.setdefault(
+				key,
+				{
+					'raw_sum': 0.0,
+					'weighted_sum': 0.0,
+					'weight': 0.0,
+					'scale_name': entry.get('scale_name', ''),
+				},
+			)
+			dest['raw_sum'] += entry['raw_sum']
+			dest['weighted_sum'] += entry['weighted_sum']
+			dest['weight'] += entry['weight']
+			if entry.get('scale_name'):
+				dest['scale_name'] = entry['scale_name']
+
+	def to_train_dict(self, criterion: KGAULoss) -> dict[str, float]:
+		stats: dict[str, float] = {}
+		for key, entry in self._entries.items():
+			if entry['weight'] <= 0.0:
+				continue
+			raw_avg = entry['raw_sum'] / entry['weight']
+			weighted_avg = entry['weighted_sum'] / entry['weight']
+			prefix = key.removeprefix('unif_') if key.startswith('unif_') else key
+			stats[f'{prefix}_raw'] = raw_avg
+			stats[f'{prefix}_weighted'] = weighted_avg
+			scale_name = entry.get('scale_name') or ''
+			if scale_name == 'alpha':
+				stats['alpha'] = criterion.alpha_value()
+			elif scale_name.startswith('gamma_'):
+				stats[scale_name] = criterion.gamma_value(scale_name.removeprefix('gamma_'))
+		stats['tuni'] = _tuni_scalar(criterion)
+		if criterion.learnable_au_gammas or criterion.gamma_schedule_mult_value() != 1.0:
+			stats['gamma_mult'] = criterion.gamma_schedule_mult_value()
+		return stats
+
+	def format_epoch_log(self, criterion: KGAULoss, epoch: int) -> str:
+		term_parts: list[str] = []
+		for key in _AU_COMPONENT_ORDER:
+			entry = self._entries.get(key)
+			if not entry or entry['weight'] <= 0.0:
+				continue
+			raw_avg = entry['raw_sum'] / entry['weight']
+			weighted_avg = entry['weighted_sum'] / entry['weight']
+			scale_name = entry.get('scale_name') or 'scale'
+			if scale_name == 'alpha':
+				scale = criterion.alpha_value()
+			elif scale_name.startswith('gamma_'):
+				scale = criterion.gamma_value(scale_name.removeprefix('gamma_'))
+			else:
+				scale = 1.0
+			term_parts.append(_format_au_component_term(key, raw_avg, scale_name, scale, weighted_avg))
+
+		shared_parts = [f'tuni={_tuni_scalar(criterion):.4f}']
+		mult = criterion.gamma_schedule_mult_value()
+		if mult != 1.0 or criterion.learnable_au_gammas:
+			shared_parts.append(f'gamma_mult={mult:.4f}')
+		if not term_parts:
+			return f'[EPOCH {epoch}] AU breakdown | (no active terms) | shared: {", ".join(shared_parts)}'
+		return (
+			f'[EPOCH {epoch}] AU breakdown | '
+			+ ' | '.join(term_parts)
+			+ f' | shared: {", ".join(shared_parts)}'
+		)
 
 
 def _scheduled_gamma_mult(args, epoch: int) -> float:
@@ -168,18 +298,6 @@ def _scheduled_gamma_mult(args, epoch: int) -> float:
 		return 1.0
 	progress = min(1.0, max(0.0, (epoch - start_epoch) / float(schedule_span)))
 	return 1.0 + (end_mult - 1.0) * progress
-
-
-def _gamma_log_suffix(criterion: KGAULoss) -> str:
-	parts = []
-	if criterion.learnable_au_gammas or criterion.gamma_schedule_mult_value() != 1.0:
-		parts.append(f'mult={criterion.gamma_schedule_mult_value():.4f}')
-	for name in _GAMMA_NAMES:
-		if criterion.gamma_active(name):
-			parts.append(f'{name}={criterion.gamma_value(name):.4f}')
-	if not parts:
-		return ''
-	return ' | gammas: ' + ', '.join(parts)
 
 
 def _build_text_train_loader(args, train_examples) -> torch.utils.data.DataLoader:
@@ -280,7 +398,15 @@ class KGAUStrategy(Evaluator):
 
 		tuni_val = _config_float(args, 'tuni', _config_float(args, 'temperature', _config_float(args, 't', 2.0)))
 		learnable_tuni = config_bool(args, 'learnable_uniformity_scale', False)
+		learnable_au_weights = config_bool(args, 'learnable_au_weights', False)
 		learnable_au_gammas = config_bool(args, 'learnable_au_gammas', False)
+		if learnable_au_weights and learnable_au_gammas:
+			logger.warning('learnable_au_weights is enabled; learnable_au_gammas is ignored')
+		if learnable_au_weights and config_bool(args, 'gamma_linear_schedule', False):
+			logger.warning('gamma_linear_schedule is ignored when learnable_au_weights is enabled')
+		if learnable_au_weights:
+			learnable_au_gammas = False
+		alpha_init = _config_float(args, 'alpha', 1.0)
 
 		# Alignment mode is opt-in: cosine by default for all encoders; only pRotatE-AU sets
 		# ``sin_phase`` (via config and/or encoder ``kga_u_alignment_mode``).
@@ -301,6 +427,8 @@ class KGAUStrategy(Evaluator):
 			tuni=tuni_val,
 			learnable_tuni=learnable_tuni,
 			learnable_au_gammas=learnable_au_gammas,
+			learnable_au_weights=learnable_au_weights,
+			alpha=alpha_init,
 			max_uniformity_samples=int(_config_float(args, 'max_uniformity_samples', 1024)),
 			additive_margin=_config_float(args, 'additive_margin', 0.0),
 			alignment_mode=alignment_mode,
@@ -323,7 +451,21 @@ class KGAUStrategy(Evaluator):
 			)
 		if learnable_tuni and config_bool(args, 'tuni_linear_schedule', False):
 			logger.warning('tuni_linear_schedule is ignored when learnable_uniformity_scale is enabled')
-		if learnable_au_gammas:
+		if learnable_au_weights:
+			logger.info(
+				'Learnable AU weights: alpha init=%.4f (increase-only), '
+				'gamma inits q/t/h/ent/cross=%.4f/%.4f/%.4f/%.4f/%.4f (decrease-only, independent), '
+				'log_alpha_lr=%.2e, log_au_gamma_lr=%.2e',
+				alpha_init,
+				self.criterion._gamma_init_value('q'),
+				self.criterion._gamma_init_value('t'),
+				self.criterion._gamma_init_value('h'),
+				self.criterion._gamma_init_value('ent'),
+				self.criterion._gamma_init_value('cross'),
+				float(getattr(args, 'log_alpha_lr', getattr(args, 'lr', 2e-5))),
+				float(getattr(args, 'log_au_gamma_lr', getattr(args, 'lr', 2e-5))),
+			)
+		elif learnable_au_gammas:
 			logger.info(
 				'Learnable AU gammas: init q/t/h/ent/cross=%.4f/%.4f/%.4f/%.4f/%.4f, '
 				'schedule mult 1.0 -> %.4f, log_au_gamma_lr=%.2e',
@@ -356,6 +498,26 @@ class KGAUStrategy(Evaluator):
 		self.valid_time = 0.0
 		self.total_time = 0.0
 		self.memory_tracker = PhaseMemoryTracker()
+		self._au_component_accum = _AUComponentAccumulator()
+
+	def _record_epoch_au_components(self, components: dict[str, dict], weight: float) -> None:
+		self._au_component_accum.record(components, weight)
+
+	def _build_align_component(self, l_align_raw: float | torch.Tensor) -> dict[str, dict]:
+		alpha = self.criterion._effective_alpha()
+		if torch.is_tensor(l_align_raw):
+			raw = l_align_raw
+		else:
+			raw = torch.tensor(float(l_align_raw), device=self.device, dtype=torch.float32)
+		weighted = raw * alpha if torch.is_tensor(alpha) else raw * float(alpha)
+		return {
+			'align': {
+				'raw': raw,
+				'scale': alpha,
+				'scale_name': 'alpha',
+				'weighted': weighted,
+			},
+		}
 
 	def _resolve_relation_index(self, relation: str) -> int:
 		"""Resolve a relation string to its index.
@@ -568,17 +730,17 @@ class KGAUStrategy(Evaluator):
 		h_keys: torch.Tensor,
 		*,
 		batch_triples: torch.Tensor | None = None,
-	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, int, float]:
+	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, int, float, dict[str, dict]]:
 		"""KGAU loss with deduplicated uniformity inputs (by entity/relation id keys)."""
 
 		q_uni, t_uni, h_uni, n_unique_q, n_unique_t = self._distinct_uniformity_inputs(
 			q_raw, t_raw, h_raw, q_keys, t_keys, h_keys)
 		cross_uni = self._cross_uniformity_vectors(q_raw, t_raw, q_keys, t_keys)
-		loss, l_align, l_unif, margin_active_frac = self.criterion(
+		loss, l_align, l_unif, margin_active_frac, components = self.criterion.forward_components(
 			q_raw, t_raw, h_raw, ent_raw, q_uni=q_uni, t_uni=t_uni, h_uni=h_uni,
-			cross_uni=cross_uni, return_stats=True)
+			cross_uni=cross_uni)
 		loss = self._apply_embedding_regularization(loss, batch_triples=batch_triples)
-		return loss, l_align, l_unif, n_unique_q, n_unique_t, margin_active_frac
+		return loss, l_align, l_unif, n_unique_q, n_unique_t, margin_active_frac, components
 
 	def _batch_entity_uniformity_vectors(
 		self,
@@ -714,7 +876,7 @@ class KGAUStrategy(Evaluator):
 		epoch: int,
 		chunk_size: int,
 		use_amp: bool,
-	) -> tuple[float, float, float, int, int, float]:
+	) -> tuple[float, float, float, int, int, float, dict[str, dict]]:
 		"""One optimizer step per epoch: global alignment mean + full-set uniformity."""
 
 		del epoch
@@ -735,13 +897,15 @@ class KGAUStrategy(Evaluator):
 			if use_amp:
 				with torch.amp.autocast(device_type='cuda'):
 					q_raw, t_raw, _ = self._au_representation_batch(model, ss, rs, ts)
-					l_align = self.criterion.forward_alignment(q_raw, t_raw)
+					l_align_raw = self.criterion.forward_alignment(q_raw, t_raw)
+				l_align = l_align_raw * self.criterion._effective_alpha()
 				self._backward_au_loss(l_align, fraction, use_amp=True)
 			else:
 				q_raw, t_raw, _ = self._au_representation_batch(model, ss, rs, ts)
-				l_align = self.criterion.forward_alignment(q_raw, t_raw)
+				l_align_raw = self.criterion.forward_alignment(q_raw, t_raw)
+				l_align = l_align_raw * self.criterion._effective_alpha()
 				self._backward_au_loss(l_align, fraction, use_amp=False)
-			align_loss_sum += l_align.item() * chunk
+			align_loss_sum += l_align_raw.item() * chunk
 
 		q_uni = self._au_vectors_at_indices(model, self.epoch_q_rep_idx, chunk_size, 'q') if (
 			self.criterion.gamma_active('q') or self.criterion.gamma_active('cross')
@@ -760,16 +924,16 @@ class KGAUStrategy(Evaluator):
 
 		if use_amp:
 			with torch.amp.autocast(device_type='cuda'):
-				l_unif, margin_active = self.criterion.forward_uniformity(
+				l_unif, margin_active, unif_components = self.criterion.forward_uniformity(
 					dummy_q, dummy_t, q_uni=q_uni, t_uni=t_uni, h=h_uni, h_uni=h_uni, ent=ent_raw,
-					cross_uni=cross_uni,
+					cross_uni=cross_uni, return_components=True,
 				)
 				loss = self._apply_embedding_regularization(l_unif)
 			self.scaler.scale(loss).backward()
 		else:
-			l_unif, margin_active = self.criterion.forward_uniformity(
+			l_unif, margin_active, unif_components = self.criterion.forward_uniformity(
 				dummy_q, dummy_t, q_uni=q_uni, t_uni=t_uni, h=h_uni, h_uni=h_uni, ent=ent_raw,
-				cross_uni=cross_uni,
+				cross_uni=cross_uni, return_components=True,
 			)
 			loss = self._apply_embedding_regularization(l_unif)
 			loss.backward()
@@ -780,8 +944,10 @@ class KGAUStrategy(Evaluator):
 		n_unique_t = int(self.epoch_t_rep_idx.numel()) if self.criterion.gamma_active('t') else 0
 		avg_align = align_loss_sum / max(num_examples, 1)
 		avg_unif = l_unif.item()
-		avg_loss = avg_align + avg_unif
-		return avg_loss, avg_align, avg_unif, n_unique_q, n_unique_t, margin_active
+		avg_loss = self.criterion.alpha_value() * avg_align + avg_unif
+		components = dict(unif_components)
+		components.update(self._build_align_component(avg_align))
+		return avg_loss, avg_align, avg_unif, n_unique_q, n_unique_t, margin_active, components
 
 	def _train_au_tensor_batch(
 		self,
@@ -790,7 +956,7 @@ class KGAUStrategy(Evaluator):
 		rs: torch.Tensor,
 		ts: torch.Tensor,
 		use_amp: bool,
-	) -> tuple[float, float, float, int, int, float, int]:
+	) -> tuple[float, float, float, int, int, float, int, dict[str, dict] | _AUComponentAccumulator]:
 		"""Run one optimizer step on a head/relation/tail batch.
 
 		Non-DaBR encoders use a single forward/backward over the full batch (unchanged).
@@ -843,7 +1009,7 @@ class KGAUStrategy(Evaluator):
 		n_uq_log: int,
 		n_ut_log: int,
 		total: int,
-	) -> tuple[float, float, float, int, int, float, int]:
+	) -> tuple[float, float, float, int, int, float, int, dict[str, dict]]:
 		"""Full-batch training step (DistMult-AU, ComplEx-AU, RotatE-AU, etc.)."""
 
 		self.optimizer.zero_grad()
@@ -854,7 +1020,7 @@ class KGAUStrategy(Evaluator):
 				q_raw, t_raw, h_raw = self._au_representation_batch(model, ss, rs, ts)
 				ent_raw = self._entity_uniformity_vectors_for_loss(
 					model, h_raw, t_raw, h_keys, t_keys)
-				loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
+				loss, l_align, l_unif, _, _, margin_active, components = self._au_loss_with_distinct_keys(
 					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 			self.scaler.scale(loss).backward()
 			self._optimizer_step(use_amp)
@@ -862,11 +1028,11 @@ class KGAUStrategy(Evaluator):
 			q_raw, t_raw, h_raw = self._au_representation_batch(model, ss, rs, ts)
 			ent_raw = self._entity_uniformity_vectors_for_loss(
 				model, h_raw, t_raw, h_keys, t_keys)
-			loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
+			loss, l_align, l_unif, _, _, margin_active, components = self._au_loss_with_distinct_keys(
 				q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 			loss.backward()
 			self._optimizer_step(use_amp)
-		return loss.item(), l_align.item(), l_unif.item(), n_uq_log, n_ut_log, margin_active, total
+		return loss.item(), l_align.item(), l_unif.item(), n_uq_log, n_ut_log, margin_active, total, components
 
 	def _train_au_tensor_batch_micro(
 		self,
@@ -879,7 +1045,7 @@ class KGAUStrategy(Evaluator):
 		n_ut_log: int,
 		total: int,
 		micro_batch: int,
-	) -> tuple[float, float, float, int, int, float, int]:
+	) -> tuple[float, float, float, int, int, float, int, dict[str, dict]]:
 		"""DaBR-only: gradient accumulation over micro-batches to avoid OOM."""
 
 		loss_sum = 0.0
@@ -887,6 +1053,7 @@ class KGAUStrategy(Evaluator):
 		unif_sum = 0.0
 		margin_acc = 0.0
 		margin_batches = 0
+		component_accum = _AUComponentAccumulator()
 
 		self.optimizer.zero_grad()
 		for start in range(0, total, micro_batch):
@@ -900,7 +1067,7 @@ class KGAUStrategy(Evaluator):
 						model, ss[start:end], rs[start:end], ts[start:end])
 					ent_raw = self._entity_uniformity_vectors_for_loss(
 						model, h_raw, t_raw, h_keys, t_keys)
-					loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
+					loss, l_align, l_unif, _, _, margin_active, components = self._au_loss_with_distinct_keys(
 						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 				self._backward_au_loss(loss, fraction, use_amp=True)
 			else:
@@ -908,7 +1075,7 @@ class KGAUStrategy(Evaluator):
 					model, ss[start:end], rs[start:end], ts[start:end])
 				ent_raw = self._entity_uniformity_vectors_for_loss(
 					model, h_raw, t_raw, h_keys, t_keys)
-				loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
+				loss, l_align, l_unif, _, _, margin_active, components = self._au_loss_with_distinct_keys(
 					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 				self._backward_au_loss(loss, fraction, use_amp=False)
 			chunk = end - start
@@ -917,11 +1084,12 @@ class KGAUStrategy(Evaluator):
 			unif_sum += l_unif.item() * chunk
 			margin_acc += margin_active
 			margin_batches += 1
+			component_accum.record(components, chunk)
 
 		self._optimizer_step(use_amp)
 
 		avg_margin = (margin_acc / margin_batches) if margin_batches > 0 else 0.0
-		return loss_sum / total, align_sum / total, unif_sum / total, n_uq_log, n_ut_log, avg_margin, total
+		return loss_sum / total, align_sum / total, unif_sum / total, n_uq_log, n_ut_log, avg_margin, total, component_accum
 
 	def _extract_monitor_value(self, metric_dict, valid_metric='mrr') -> float | None:
 		"""Extract the value to monitor for checkpointing decisions from the metric dictionary."""
@@ -1019,6 +1187,7 @@ class KGAUStrategy(Evaluator):
 		"""Train the model for one epoch and return the average training loss."""
 
 		self.model.train()
+		self._au_component_accum.reset()
 		epoch_loss = 0.0
 		epoch_align_loss = 0.0
 		epoch_unif_loss = 0.0
@@ -1047,7 +1216,7 @@ class KGAUStrategy(Evaluator):
 						h_raw = outputs['head_vector']
 						ent_raw = self._entity_uniformity_vectors_for_loss(
 							model, h_raw, t_raw, h_keys, t_keys)
-						loss, l_align, l_unif, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
+						loss, l_align, l_unif, n_uq, n_ut, margin_active, components = self._au_loss_with_distinct_keys(
 							q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					self.scaler.scale(loss).backward()
 					self._optimizer_step(use_amp)
@@ -1058,7 +1227,7 @@ class KGAUStrategy(Evaluator):
 					h_raw = outputs['head_vector']
 					ent_raw = self._entity_uniformity_vectors_for_loss(
 						model, h_raw, t_raw, h_keys, t_keys)
-					loss, l_align, l_unif, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
+					loss, l_align, l_unif, n_uq, n_ut, margin_active, components = self._au_loss_with_distinct_keys(
 						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					loss.backward()
 					self._optimizer_step(use_amp)
@@ -1067,6 +1236,7 @@ class KGAUStrategy(Evaluator):
 				epoch_align_loss += l_align.item() * batch_examples
 				epoch_unif_loss += l_unif.item() * batch_examples
 				epoch_loss += loss.item() * batch_examples
+				self._record_epoch_au_components(components, batch_examples)
 				epoch_unique_q += n_uq
 				epoch_unique_t += n_ut
 				epoch_margin_active += margin_active
@@ -1074,13 +1244,14 @@ class KGAUStrategy(Evaluator):
 				if i % self.args.print_freq == 0:
 					progress.display(i)
 		elif self.au_per_epoch:
-			loss, l_align, l_unif, n_uq, n_ut, margin_active = self._train_au_epoch(
+			loss, l_align, l_unif, n_uq, n_ut, margin_active, components = self._train_au_epoch(
 				model, epoch, batch_size, use_amp,
 			)
 			n_train = len(self.train_examples)
 			epoch_loss = loss * n_train
 			epoch_align_loss = l_align * n_train
 			epoch_unif_loss = l_unif * n_train
+			self._record_epoch_au_components(components, n_train)
 			epoch_unique_q = float(n_uq)
 			epoch_unique_t = float(n_ut)
 			epoch_margin_active = margin_active
@@ -1089,9 +1260,13 @@ class KGAUStrategy(Evaluator):
 			for batch_idx, (ss, rs, ts) in enumerate(
 				self._iter_batches(self.train_src, self.train_rel, self.train_dst, batch_size, shuffle=True),
 			):
-				loss, l_align, l_unif, n_uq, n_ut, margin_active, n_examples = self._train_au_tensor_batch(
+				loss, l_align, l_unif, n_uq, n_ut, margin_active, n_examples, batch_components = self._train_au_tensor_batch(
 					model, ss, rs, ts, use_amp,
 				)
+				if isinstance(batch_components, _AUComponentAccumulator):
+					self._au_component_accum.merge(batch_components)
+				else:
+					self._record_epoch_au_components(batch_components, n_examples)
 				epoch_align_loss += l_align * n_examples
 				epoch_unif_loss += l_unif * n_examples
 				epoch_loss += loss * n_examples
@@ -1135,6 +1310,7 @@ class KGAUStrategy(Evaluator):
 				'' if self.au_per_epoch else f' (of {batch_size})',
 				tuni_suffix + gamma_suffix,
 			)
+		logger.info(self._au_component_accum.format_epoch_log(self.criterion, display_epoch))
 		self.train_component_losses = {
 			'loss': avg_loss,
 			'align': avg_align_loss,
@@ -1142,6 +1318,7 @@ class KGAUStrategy(Evaluator):
 			'avg_unique_q': avg_unique_q,
 			'avg_unique_t': avg_unique_t,
 		}
+		self.train_component_losses.update(self._au_component_accum.to_train_dict(self.criterion))
 		if float(self.criterion.additive_margin) > 0.0:
 			self.train_component_losses['margin_buffer_pair_frac'] = avg_margin_active
 		if hasattr(self.criterion, 'log_tuni') or config_bool(self.args, 'tuni_linear_schedule', False):
@@ -1150,6 +1327,8 @@ class KGAUStrategy(Evaluator):
 			for name in _GAMMA_NAMES:
 				if self.criterion.gamma_active(name):
 					self.train_component_losses[f'gamma_{name}'] = self.criterion.gamma_value(name)
+			if self.criterion.learnable_au_weights:
+				self.train_component_losses['alpha'] = self.criterion.alpha_value()
 		return avg_loss
 
 	def _maybe_update_gamma_schedule(self, epoch: int) -> None:
@@ -1166,7 +1345,11 @@ class KGAUStrategy(Evaluator):
 		self.criterion.set_gamma_schedule_mult(mult)
 
 	def _should_log_gammas(self) -> bool:
-		return self.criterion.learnable_au_gammas or _gamma_schedule_enabled(self.args)
+		return (
+			self.criterion.learnable_au_weights
+			or self.criterion.learnable_au_gammas
+			or _gamma_schedule_enabled(self.args)
+		)
 
 	def _maybe_update_tuni_schedule(self, epoch: int) -> None:
 		"""Apply linear tuni schedule before each training epoch (fixed scale only)."""

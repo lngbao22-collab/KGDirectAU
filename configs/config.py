@@ -144,7 +144,15 @@ def build_parser() -> argparse.ArgumentParser:
                         help='uniformity weight on pooled query+tail vectors (joint LP space)')
     parser.add_argument('--learnable-au-gammas', '--learnable_au_gammas',
                         dest='learnable_au_gammas', action='store_true', default=False,
-                        help='make AU uniformity gammas learnable (log re-parameterization)')
+                        help='make AU uniformity gammas learnable (log re-parameterization; superseded by learnable_au_weights)')
+    parser.add_argument('--learnable-au-weights', '--learnable_au_weights',
+                        dest='learnable_au_weights', action='store_true', default=False,
+                        help='learn alpha (alignment, increase-only) and per-channel gammas (decrease-only, independent); disables learnable_au_gammas and gamma_linear_schedule')
+    parser.add_argument('--alpha', default=None, type=float,
+                        help='initial alignment scale when learnable_au_weights is enabled (default 1.0)')
+    parser.add_argument('--log-alpha-lr', '--log_alpha_lr', default=None, type=float,
+                        dest='log_alpha_lr',
+                        help='learning rate for learnable log-alpha adjustment')
     parser.add_argument('--log-au-gamma-lr', '--log_au_gamma_lr', default=None, type=float,
                         dest='log_au_gamma_lr',
                         help='learning rate for learnable log-gamma parameters')

@@ -57,13 +57,17 @@ class KGAULoss(nn.Module):
 		tuni=2.0,
 		learnable_tuni: bool = False,
 		learnable_au_gammas: bool = False,
+		learnable_au_weights: bool = False,
+		alpha: float = 1.0,
 		max_uniformity_samples: int = 1024,
 		additive_margin: float = 0.0,
 		alignment_mode: str = 'cosine',
 		normalize_uniformity: bool = True,
 	):
 		super().__init__()
-		self.learnable_au_gammas = bool(learnable_au_gammas)
+		self.learnable_au_weights = bool(learnable_au_weights)
+		self.learnable_au_gammas = bool(learnable_au_gammas) and not self.learnable_au_weights
+		gamma_learnable = self.learnable_au_weights or self.learnable_au_gammas
 		gamma_inits = {
 			'q': _coalesce_float(gamma_q, 1.0),
 			't': _coalesce_float(gamma_t, 1.0),
@@ -75,13 +79,18 @@ class KGAULoss(nn.Module):
 			init = float(value)
 			# init <= 0 disables a term (fixed or learnable); only positive inits are scheduled/learned.
 			self.register_buffer(f'gamma_init_{name}', torch.tensor(init))
-			if not self.learnable_au_gammas:
+			if not gamma_learnable:
 				setattr(self, f'_gamma_{name}', init)
 			elif init > 0.0:
 				# Bounded downward adjustment only: exp(adj) in (0, 1], init at 0.
 				# Unconstrained log-scale gammas rise under AU loss because uniformity is negative.
 				setattr(self, f'log_gamma_adj_{name}', nn.Parameter(torch.zeros(())))
 		self.register_buffer('gamma_schedule_mult', torch.tensor(1.0))
+		if self.learnable_au_weights:
+			alpha_init = _coalesce_float(alpha, 1.0)
+			self.register_buffer('alpha_init', torch.tensor(alpha_init))
+			# Increase-only: alpha = alpha_init * exp(clamp(adj, min=0)).
+			self.log_alpha_adj = nn.Parameter(torch.zeros(()))
 		# `tuni` is the uniformity temperature/scaling factor; optionally learnable via log-scale.
 		tuni_val = _coalesce_float(tuni, 2.0)
 		if learnable_tuni:
@@ -98,9 +107,22 @@ class KGAULoss(nn.Module):
 		self.normalize_uniformity = normalize_uniformity
 
 	def _gamma_init_value(self, name: str) -> float:
-		if self.learnable_au_gammas:
+		if self.learnable_au_weights or self.learnable_au_gammas:
 			return float(getattr(self, f'gamma_init_{name}').detach().cpu().item())
 		return float(getattr(self, f'_gamma_{name}'))
+
+	def alpha_value(self) -> float:
+		"""Scalar effective alignment weight for logging."""
+
+		value = self._effective_alpha()
+		if torch.is_tensor(value):
+			return float(value.detach().cpu().item())
+		return float(value)
+
+	def _effective_alpha(self) -> torch.Tensor | float:
+		if not self.learnable_au_weights:
+			return 1.0
+		return self.alpha_init * torch.exp(torch.clamp(self.log_alpha_adj, min=0.0))
 
 	def gamma_schedule_mult_value(self) -> float:
 		return float(self.gamma_schedule_mult.detach().cpu().item())
@@ -116,17 +138,24 @@ class KGAULoss(nn.Module):
 		self.gamma_schedule_mult.fill_(float(mult))
 
 	def clamp_learnable_gamma_adj(self) -> None:
-		"""Keep learnable gamma adjustments at or below 0 (effective factor in (0, 1])."""
+		"""Keep learnable AU auxiliary params within their bounded ranges."""
 
-		if not self.learnable_au_gammas:
-			return
-		for name in ('q', 't', 'h', 'ent', 'cross'):
-			if not hasattr(self, f'log_gamma_adj_{name}'):
-				continue
+		if self.learnable_au_weights or self.learnable_au_gammas:
+			for name in _GAMMA_NAMES:
+				if not hasattr(self, f'log_gamma_adj_{name}'):
+					continue
+				with torch.no_grad():
+					getattr(self, f'log_gamma_adj_{name}').clamp_(max=0.0)
+		if self.learnable_au_weights:
 			with torch.no_grad():
-				getattr(self, f'log_gamma_adj_{name}').clamp_(max=0.0)
+				self.log_alpha_adj.clamp_(min=0.0)
 
 	def _effective_gamma(self, name: str) -> torch.Tensor | float:
+		if self.learnable_au_weights:
+			init = getattr(self, f'gamma_init_{name}')
+			if not self._learnable_gamma_enabled(name):
+				return init
+			return init * self._learnable_gamma_factor(name)
 		mult = self.gamma_schedule_mult
 		if self.learnable_au_gammas:
 			init = getattr(self, f'gamma_init_{name}')
@@ -343,48 +372,94 @@ class KGAULoss(nn.Module):
 		h_uni: torch.Tensor | None = None,
 		ent: torch.Tensor | None = None,
 		cross_uni: torch.Tensor | None = None,
-	) -> tuple[torch.Tensor, float]:
+		return_components: bool = False,
+	) -> tuple[torch.Tensor, float] | tuple[torch.Tensor, float, dict[str, dict]]:
 		"""Uniformity terms only; returns (loss, margin-active fraction for logging)."""
 
 		l_unif = q.new_zeros(())
 		active_sum = 0.0
 		active_weight = 0.0
+		components: dict[str, dict] = {}
+
+		def _record(name: str, scale_key: str, raw_term: torch.Tensor, scale) -> None:
+			nonlocal l_unif
+			weighted = raw_term * scale
+			l_unif = l_unif + weighted
+			if return_components:
+				components[f'unif_{name}'] = {
+					'raw': raw_term,
+					'scale': scale,
+					'scale_name': scale_key,
+					'weighted': weighted,
+				}
 
 		gamma_q = self._effective_gamma('q')
 		if self.gamma_active('q'):
 			q_uniformity = q_uni if q_uni is not None else q
 			term, frac = self.uniformity_loss_with_stats(q_uniformity)
-			l_unif = l_unif + gamma_q * term
+			_record('q', 'gamma_q', term, gamma_q)
 			active_sum += self.gamma_value('q') * frac
 			active_weight += self.gamma_value('q')
 		gamma_t = self._effective_gamma('t')
 		if self.gamma_active('t'):
 			t_uniformity = t_uni if t_uni is not None else t
 			term, frac = self.uniformity_loss_with_stats(t_uniformity)
-			l_unif = l_unif + gamma_t * term
+			_record('t', 'gamma_t', term, gamma_t)
 			active_sum += self.gamma_value('t') * frac
 			active_weight += self.gamma_value('t')
 		gamma_h = self._effective_gamma('h')
 		if h is not None and self.gamma_active('h'):
 			h_uniformity = h_uni if h_uni is not None else h
 			term, _ = self.uniformity_loss_with_stats(h_uniformity)
-			l_unif = l_unif + gamma_h * term
+			_record('h', 'gamma_h', term, gamma_h)
 		gamma_ent = self._effective_gamma('ent')
 		if ent is not None and self.gamma_active('ent'):
 			ent_rows = self._subsample_uniformity_rows(ent)
 			if ent_rows is not None:
 				term, _ = self.uniformity_loss_with_stats(ent_rows)
-				l_unif = l_unif + gamma_ent * term
+				_record('ent', 'gamma_ent', term, gamma_ent)
 		gamma_cross = self._effective_gamma('cross')
 		if cross_uni is not None and self.gamma_active('cross'):
 			term, _ = self.uniformity_loss_with_stats(cross_uni)
-			l_unif = l_unif + gamma_cross * term
+			_record('cross', 'gamma_cross', term, gamma_cross)
 
 		if float(self.additive_margin) > 0.0 and active_weight > 0:
 			margin_active_frac = active_sum / active_weight
 		else:
 			margin_active_frac = 0.0
+		if return_components:
+			return l_unif, margin_active_frac, components
 		return l_unif, margin_active_frac
+
+	def forward_components(
+		self,
+		q: torch.Tensor,
+		t: torch.Tensor,
+		h: torch.Tensor | None = None,
+		ent: torch.Tensor | None = None,
+		q_uni: torch.Tensor | None = None,
+		t_uni: torch.Tensor | None = None,
+		h_uni: torch.Tensor | None = None,
+		cross_uni: torch.Tensor | None = None,
+		external_align: torch.Tensor | None = None,
+	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, float, dict[str, dict]]:
+		"""Return total/align/unif losses, margin stats, and per-term component breakdown."""
+
+		l_align = self.forward_alignment(q, t, external_align=external_align)
+		l_unif, margin_active_frac, components = self.forward_uniformity(
+			q, t, q_uni=q_uni, t_uni=t_uni, h=h, h_uni=h_uni, ent=ent, cross_uni=cross_uni,
+			return_components=True,
+		)
+		alpha = self._effective_alpha()
+		l_align_weighted = l_align * alpha if torch.is_tensor(alpha) else l_align * float(alpha)
+		components['align'] = {
+			'raw': l_align,
+			'scale': alpha,
+			'scale_name': 'alpha',
+			'weighted': l_align_weighted,
+		}
+		total_loss = l_align_weighted + l_unif
+		return total_loss, l_align, l_unif, margin_active_frac, components
 
 	def forward(
 		self,
@@ -411,7 +486,9 @@ class KGAULoss(nn.Module):
 			q, t, q_uni=q_uni, t_uni=t_uni, h=h, h_uni=h_uni, ent=ent, cross_uni=cross_uni,
 		)
 
-		total_loss = l_align + l_unif
+		alpha = self._effective_alpha()
+		l_align_weighted = l_align * alpha if torch.is_tensor(alpha) else l_align * float(alpha)
+		total_loss = l_align_weighted + l_unif
 		if return_stats:
 			return total_loss, l_align, l_unif, margin_active_frac
 		return total_loss, l_align, l_unif
