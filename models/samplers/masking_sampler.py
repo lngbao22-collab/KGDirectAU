@@ -62,3 +62,10 @@ def construct_self_negative_mask(exs: List) -> torch.tensor:
         if head_id in neighbor_ids:
             mask[idx] = 0
     return mask.bool()
+
+
+def build_sampler(args, train_triples=None, model=None):
+    """In-batch negatives are masked in the collate fn; no separate sampler object."""
+
+    del args, train_triples, model
+    return None
