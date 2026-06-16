@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import torch
-import torch.nn.functional as F
+
+from models.losses.loss_utilities import compute_softmax_loss
 
 
 def compute_ce_loss(scores: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
@@ -17,7 +18,7 @@ def compute_ce_loss(scores: torch.Tensor, targets: torch.Tensor) -> torch.Tensor
 		targets = torch.as_tensor(targets, device=scores.device, dtype=torch.long)
 	else:
 		targets = targets.to(device=scores.device, dtype=torch.long)
-	return F.cross_entropy(scores, targets)
+	return compute_softmax_loss(scores, targets, reduction='mean')
 
 
 def build_ce_loss_fn(args):

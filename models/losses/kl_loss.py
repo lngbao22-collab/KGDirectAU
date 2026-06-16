@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import torch
-import torch.nn.functional as F
+
+from models.losses.loss_utilities import compute_softmax_loss
 
 
 def compute_kl_loss(
@@ -19,14 +20,7 @@ def compute_kl_loss(
 	For multi-hot / smoothed KvsAll labels, matches LibKGE ``KLDivWithSoftmaxKgeLoss``.
 	"""
 
-	if targets.dim() == 1:
-		index_targets = targets.long().to(device=scores.device)
-		return F.cross_entropy(scores, index_targets, reduction=reduction)
-
-	target_matrix = targets.to(device=scores.device, dtype=scores.dtype)
-	log_probs = F.log_softmax(scores, dim=1)
-	target_probs = F.normalize(target_matrix, p=1, dim=1)
-	return F.kl_div(log_probs, target_probs, reduction=reduction)
+	return compute_softmax_loss(scores, targets, reduction=reduction)
 
 
 def build_kl_loss_fn(args):

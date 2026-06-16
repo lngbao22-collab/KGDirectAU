@@ -2,7 +2,8 @@
 
 from dataclasses import dataclass
 import torch
-import torch.nn.functional as F
+
+from models.losses.loss_utilities import compute_softmax_loss
 
 
 @dataclass
@@ -24,10 +25,7 @@ def compute_listwise_loss(scores: torch.Tensor, truth_indices: torch.Tensor) -> 
 	else:
 		truth_indices = truth_indices.to(device=scores.device, dtype=torch.long)
 
-	log_probs = F.log_softmax(scores, dim=-1)
-	row_indices = torch.arange(scores.size(0), device=scores.device)
-	loss = -log_probs[row_indices, truth_indices]
-	return loss.mean()
+	return compute_softmax_loss(scores, truth_indices, reduction='mean')
 
 
 def compute_infonce_logits(query_vec: torch.Tensor, candidate_vec: torch.Tensor, temp: torch.Tensor, margin: float = 0.0) -> torch.Tensor:
@@ -68,7 +66,7 @@ def build_1vsall_loss_fn(args):
 	del args
 
 	def loss_fn(scores: torch.Tensor, targets: torch.Tensor, **_kwargs) -> torch.Tensor:
-		return F.cross_entropy(scores, targets.long())
+		return compute_softmax_loss(scores, targets.long(), reduction='mean')
 
 	return loss_fn
 

@@ -6,7 +6,7 @@ import math
 import os
 
 import torch
-import torch.nn.functional as F
+from models.losses.loss_utilities import compute_bce_loss as _compute_bce_loss
 
 
 def uses_bce_logit_offset(args) -> bool:
@@ -30,18 +30,6 @@ def bce_logit_offset(args) -> float:
 		return 0.0
 	return float(raw)
 
-
-def _labels_as_matrix(scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-	"""Convert index labels to a multi-hot matrix when needed."""
-
-	if labels.dim() == 2:
-		return labels.to(device=scores.device, dtype=scores.dtype)
-	index_labels = labels.long().to(scores.device)
-	matrix = torch.zeros(scores.shape, device=scores.device, dtype=scores.dtype)
-	matrix[torch.arange(scores.size(0), device=scores.device), index_labels] = 1.0
-	return matrix
-
-
 def compute_bce_loss(
 	scores: torch.Tensor,
 	targets: torch.Tensor,
@@ -57,10 +45,7 @@ def compute_bce_loss(
 	:param reduction: ``mean``, ``sum``, or ``none``
 	"""
 
-	target_matrix = _labels_as_matrix(scores, targets)
-	if offset != 0.0:
-		scores = scores + offset
-	return F.binary_cross_entropy_with_logits(scores, target_matrix, reduction=reduction)
+	return _compute_bce_loss(scores, targets, offset=offset, reduction=reduction)
 
 
 def build_bce_loss_fn(args):
@@ -70,7 +55,7 @@ def build_bce_loss_fn(args):
 	reduction = str(getattr(args, 'bce_reduction', 'mean'))
 
 	def loss_fn(scores: torch.Tensor, targets: torch.Tensor, **_kwargs) -> torch.Tensor:
-		return compute_bce_loss(scores, targets, offset=offset, reduction=reduction)
+		return _compute_bce_loss(scores, targets, offset=offset, reduction=reduction)
 
 	return loss_fn
 
@@ -85,20 +70,13 @@ def build_negsamp_loss_fn(args):
 	offset = bce_logit_offset(args)
 
 	def loss_fn(pos_scores: torch.Tensor, neg_scores: torch.Tensor, weights=None, **_kwargs) -> torch.Tensor:
-		pos_scores = pos_scores.reshape(-1)
-		if neg_scores.dim() == 3:
-			neg_scores = neg_scores.squeeze(-1)
-		batch_size = max(pos_scores.size(0), 1)
-		scores = torch.cat([pos_scores.unsqueeze(1), neg_scores], dim=1)
-		labels = torch.zeros_like(scores)
-		labels[:, 0] = 1.0
-		if offset != 0.0:
-			scores = scores + offset
-		per_row = F.binary_cross_entropy_with_logits(scores, labels, reduction='none').sum(dim=1)
-		if weights is not None:
-			weights = weights.to(scores.device).reshape(-1)
-			return (per_row * weights).sum() / weights.sum().clamp_min(1e-12)
-		return per_row.sum() / batch_size
+		return _compute_bce_loss(
+			scores=pos_scores,
+			pos_scores=pos_scores,
+			neg_scores=neg_scores,
+			weights=weights,
+			offset=offset,
+		)
 
 	return loss_fn
 

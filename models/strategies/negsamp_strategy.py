@@ -138,6 +138,27 @@ class NegSampStrategy:
 		neg_scores = self.model.score_spo(neg_triples[:, 0], neg_triples[:, 1], neg_triples[:, 2])
 		return pos_scores, neg_scores
 
+	def _compute_loss(self, pos_scores: torch.Tensor, neg_scores: torch.Tensor, weights) -> torch.Tensor:
+		"""Dispatch to negsamp-style loss or row-wise softmax fallback."""
+
+		try:
+			return self.loss_fn(pos_scores, neg_scores, weights)
+		except TypeError:
+			pass
+		try:
+			return self.loss_fn(pos_scores, neg_scores)
+		except TypeError:
+			pass
+
+		pos_scores = pos_scores.reshape(-1)
+		if neg_scores.dim() == 3:
+			neg_scores = neg_scores.squeeze(-1)
+		if neg_scores.dim() == 1:
+			neg_scores = neg_scores.unsqueeze(1)
+		row_scores = torch.cat([pos_scores.unsqueeze(1), neg_scores], dim=1)
+		targets = torch.zeros(row_scores.size(0), dtype=torch.long, device=row_scores.device)
+		return self.loss_fn(row_scores, targets)
+
 	def _regularization_term(self) -> torch.Tensor | None:
 		model_obj = get_model_obj(self.model)
 		reg_coef = config_float(self.args, 'regularization', 0.0)
@@ -206,13 +227,13 @@ class NegSampStrategy:
 			with torch.autocast(device_type='cuda', enabled=self.use_amp):
 				if self._pointwise_mode:
 					pos_scores, neg_scores = self._score_pointwise_batch(pos_batch, neg_batch)
-					loss = self.loss_fn(pos_scores, neg_scores, weights)
+					loss = self._compute_loss(pos_scores, neg_scores, weights)
 					dabr_reg = self._dabr_regularization(pos_batch)
 					if dabr_reg is not None:
 						loss = loss + dabr_reg
 				else:
 					pos_scores, neg_scores = self._score_filtered_negatives(pos_batch, neg_batch, mode)
-					loss = self.loss_fn(pos_scores, neg_scores, weights)
+					loss = self._compute_loss(pos_scores, neg_scores, weights)
 					loss = apply_kge_regularization(
 						loss,
 						self.model,

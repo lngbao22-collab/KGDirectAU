@@ -183,14 +183,16 @@ Each model implementation should be split into four composable pieces so the rep
 
 This repository uses a modular, component-driven architecture. Each experiment is defined by a combination of an **Encoder**, a **Loss Function**, a **Sampler**, and a **Training Strategy**.
 
-| Model | Encoder (`models/encoders/`) | Loss (`models/losses/`) | Sampler (`models/samplers/`) | Strategy (`models/strategies/`) |
+| Model | Scorer (`models/scorers/`) | Loss (`models/losses/`) | Sampler (`models/samplers/`) | Strategy (`models/strategies/`) |
 | :--- | :--- | :--- | :--- | :--- |
-| **DistMult** | `distmult_encoder.py` | `infonce_loss.py` | `bernoulli_sampler.py` | `softmax_strategy.py` |
-| **ComplEx** | `complex_encoder.py` | `infonce_loss.py` | `bernoulli_sampler.py` | `softmax_strategy.py` |
-| **RotatE** | `rotate_encoder.py` | `adversarial_bce_loss.py` | `filtered_1_to_n_sampler.py`| `adversarial_strategy.py` |
-| **pRotatE** | `rotate_encoder.py` | `adversarial_bce_loss.py` | `filtered_1_to_n_sampler.py`| `adversarial_strategy.py` |
-| **DaBR** | `dabr_encoder.py` | `pointwise_logistic_loss.py`| `uniform_pointwise_sampler.py` | `pointwise_strategy.py` |
-| **SimKGC** | `bert_encoder.py` | `infonce_loss.py` | `masking_sampler.py` | `contrastive_strategy.py` |
+| **DistMult** | `distmult_scorer.py` | `kl_loss.py` | *(None)* | `kvsall_strategy.py` |
+| **ComplEx** | `complex_scorer.py` | `ce_loss.py` | *(None)* | `1vsall_strategy.py` |
+| **RotatE** | `rotate_scorer.py` | `bce_loss.py` | `filtered_1_to_n_sampler.py`| `negsamp_strategy.py` |
+| **pRotatE** | `protate_scorer.py` | `adversarial_bce_loss.py` | `filtered_1_to_n_sampler.py`| `negsamp_strategy.py` |
+| **DaBR** | `dabr_scorer.py` | `pointwise_logistic_loss.py`| `uniform_pointwise_sampler.py` | `negsamp_strategy.py` |
+| **SimKGC** | `simkgc_scorer.py` | `infonce_loss.py` | `masking_sampler.py` | `inbatch_strategy.py` |
 | **X-AU** | `X_encoder.py` | `au_loss.py` | *(None)* | `kgau_strategy.py` |
 
 > **Note:** The KGAU (Alignment and Uniformity) strategy computes the loss directly on the positive batch embeddings and does not require negative sampling.
+>
+> Loss wrappers and shared objective backends are documented in `models/losses/LOSS_RELATIONSHIPS.md`.
