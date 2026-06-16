@@ -45,7 +45,7 @@
   "gamma_h": 0,
   "gamma_ent": 0,
   "tuni": 2,
-  "max_uniformity_samples": 40943,
+  "max_uniformity_samples": 10000,
   "max_uniformity_pairs": 327544,
   "au_per_epoch": false,
   "au_uniformity_per_epoch": false,

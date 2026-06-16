@@ -92,6 +92,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help='maximum number of tokens for text-based models')
     parser.add_argument('--max-uniformity-samples', default=None, type=int,
                         help='maximum number of embeddings used to estimate the AU uniformity term')
+    parser.add_argument('--max-uniformity-pairs', '--max_uniformity_pairs', default=None, type=int,
+                        dest='max_uniformity_pairs',
+                        help='maximum random pairwise distances for AU uniformity when full pdist is too large')
+    parser.add_argument('--uniformity-chunk-size', '--uniformity_chunk_size', default=None, type=int,
+                        dest='uniformity_chunk_size',
+                        help='chunk size for full-dataset AU vector gathering (global uniformity modes)')
     parser.add_argument('--max-to-keep', default=None, type=int,
                         help='maximum number of checkpoints to keep')
     parser.add_argument('--neighbor-weight', default=None, type=float,

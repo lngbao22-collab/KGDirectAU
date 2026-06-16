@@ -308,9 +308,14 @@ class KGAUStrategy(Evaluator):
 		elif self.au_uniformity_global_per_batch:
 			self.weight_decay = float(weight_decay) / num_batches
 			self._build_epoch_uniformity_representatives()
+			unif_chunk = self._global_uniformity_chunk_size(batch_size)
 			logger.info(
 				'KGAU au_uniformity_global_per_batch: each batch step uses batch alignment + '
-				'full-dataset uniformity. Epoch uniformity reps: unique q/t/h=%d/%d/%d.',
+				'full-dataset uniformity (~%d align batches/epoch; uniformity gather chunk=%d). '
+				'Epoch uniformity reps: unique q/t/h=%d/%d/%d. '
+				'First batch can take minutes because global uniformity is recomputed every step.',
+				num_batches,
+				unif_chunk,
 				int(self.epoch_q_rep_idx.numel()),
 				int(self.epoch_t_rep_idx.numel()),
 				int(self.epoch_h_rep_idx.numel()),
@@ -682,6 +687,14 @@ class KGAUStrategy(Evaluator):
 		if self.uses_text_inputs:
 			return self._batch_entity_uniformity_vectors(h_raw, t_raw, h_keys, t_keys)
 		return self._catalog_entity_uniformity_vectors(model)
+
+	def _global_uniformity_chunk_size(self, train_batch_size: int) -> int:
+		"""Chunk size for full-dataset uniformity vector gathering (forward-only, can exceed align batch)."""
+
+		explicit = getattr(self.args, 'uniformity_chunk_size', None)
+		if explicit is not None and int(explicit) > 0:
+			return max(int(explicit), 1)
+		return max(train_batch_size, 4096)
 
 	def _train_micro_batch_size(self, batch_size: int) -> int:
 		"""Split training batches only for DaBR (high memory AU vectors). Other encoders use full ``batch_size``."""
@@ -1277,11 +1290,20 @@ class KGAUStrategy(Evaluator):
 			epoch_unique_t = float(n_ut)
 			epoch_margin_active = margin_active
 		elif self.au_uniformity_global_per_batch:
-			for ss, rs, ts in self._iter_batches(
-				self.train_src, self.train_rel, self.train_dst, batch_size, shuffle=True,
+			unif_chunk = self._global_uniformity_chunk_size(batch_size)
+			print_freq = max(int(getattr(self.args, 'print_freq', 10) or 10), 1)
+			for batch_idx, (ss, rs, ts) in enumerate(
+				self._iter_batches(self.train_src, self.train_rel, self.train_dst, batch_size, shuffle=True),
 			):
+				if batch_idx == 0:
+					logger.info(
+						'[EPOCH %d] global-uniformity batch 1/%d: gathering full-dataset reps (chunk=%d)...',
+						epoch + 1,
+						max(math.ceil(len(self.train_examples) / batch_size), 1),
+						unif_chunk,
+					)
 				loss, l_align, l_unif, n_uq, n_ut, margin_active, n_examples = self._train_au_batch_with_global_uniformity(
-					model, ss, rs, ts, batch_size, use_amp,
+					model, ss, rs, ts, unif_chunk, use_amp,
 				)
 				epoch_align_loss += l_align * n_examples
 				epoch_unif_loss += l_unif * n_examples
@@ -1290,6 +1312,15 @@ class KGAUStrategy(Evaluator):
 				epoch_unique_t += n_ut
 				epoch_margin_active += margin_active
 				epoch_batches += 1
+				if batch_idx == 0 or (batch_idx + 1) % print_freq == 0:
+					logger.info(
+						'[EPOCH %d] global-uniformity batch %d: loss=%.4f align=%.4f unif=%.4f',
+						epoch + 1,
+						batch_idx + 1,
+						loss,
+						l_align,
+						l_unif,
+					)
 		else:
 			for batch_idx, (ss, rs, ts) in enumerate(
 				self._iter_batches(self.train_src, self.train_rel, self.train_dst, batch_size, shuffle=True),
