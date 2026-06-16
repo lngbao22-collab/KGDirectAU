@@ -4,13 +4,12 @@ import json
 import os
 
 import torch
-import torch.nn as nn
 
 from base.evaluator import Evaluator
 from base.trainer import Trainer
 from data.dict_hub import build_tokenizer, get_entity_dict
 from metrics.ranking import topk_accuracy as accuracy
-from models.builder import import_module_from_path, load_attr_from_path
+from models.builder import import_module_from_path, load_attr_from_path, load_loss_fn
 from utils.device import get_model_obj, move_to_cuda
 from utils.logger import AverageMeter, ProgressMeter, logger
 
@@ -19,7 +18,7 @@ class InBatchStrategy(Trainer, Evaluator):
 	"""Train with in-batch negatives: broadcast queries against batch targets only."""
 
 	def __init__(self, model, sampler, loss_fn, args, ngpus_per_node=1, **_kwargs):
-		del model, sampler, loss_fn
+		del model, sampler
 		Evaluator.__init__(self)
 		self.args = args
 		self.ngpus_per_node = ngpus_per_node
@@ -35,11 +34,8 @@ class InBatchStrategy(Trainer, Evaluator):
 		model_obj = build_model(args)
 		logger.info(model_obj)
 
-		criterion = nn.CrossEntropyLoss()
-		if torch.cuda.is_available():
-			criterion = criterion.cuda()
-
-		super().__init__(args, ngpus_per_node, model=model_obj, criterion=criterion)
+		self.loss_fn = loss_fn if loss_fn is not None else load_loss_fn(args)
+		super().__init__(args, ngpus_per_node, model=model_obj, criterion=self.loss_fn)
 
 		loss_path = getattr(args, 'model_loss_path', '') or 'models/losses/infonce_loss.py'
 		try:
@@ -112,6 +108,21 @@ class InBatchStrategy(Trainer, Evaluator):
 
 		return pre_batch_logits
 
+	def _compute_infonce_loss(
+		self,
+		logits: torch.Tensor,
+		labels: torch.Tensor,
+		batch_size: int,
+		*,
+		symmetric: bool,
+	) -> torch.Tensor:
+		"""Mean CE on (h,r)->tail logits; optionally add symmetric tail->(h,r) term."""
+
+		loss = self.loss_fn(logits, labels)
+		if symmetric:
+			loss = loss + self.loss_fn(logits[:, :batch_size].t(), labels)
+		return loss
+
 	def train_epoch(self, epoch) -> None:
 		losses = AverageMeter('Loss', ':.4')
 		top1 = AverageMeter('Acc@1', ':6.2f')
@@ -141,8 +152,7 @@ class InBatchStrategy(Trainer, Evaluator):
 			logits, labels = outputs.logits, outputs.labels
 			assert logits.size(0) == batch_size
 
-			loss = self.criterion(logits, labels)
-			loss += self.criterion(logits[:, :batch_size].t(), labels)
+			loss = self._compute_infonce_loss(logits, labels, batch_size, symmetric=True)
 
 			acc1, acc3 = accuracy(logits, labels, topk=(1, 3))
 			top1.update(acc1.item(), batch_size)
@@ -193,7 +203,7 @@ class InBatchStrategy(Trainer, Evaluator):
 				outputs = self._compute_logits(output_dict=outputs, batch_dict=batch_dict)
 				outputs = self.ModelOutput(**outputs)
 				logits, labels = outputs.logits, outputs.labels
-				loss = self.criterion(logits, labels)
+				loss = self._compute_infonce_loss(logits, labels, batch_size, symmetric=False)
 				losses.update(loss.item(), batch_size)
 
 				acc1, acc3 = accuracy(logits, labels, topk=(1, 3))
