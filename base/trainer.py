@@ -36,7 +36,7 @@ class Trainer(ABC):
         self.optimizer = AdamW(
             [p for p in self.model.parameters() if p.requires_grad],
             lr=args.lr,
-            weight_decay=args.weight_decay,
+            weight_decay=float(args.weight_decay) if args.weight_decay is not None else 0.0,
         )
         report_num_trainable_parameters(self.model)
 
