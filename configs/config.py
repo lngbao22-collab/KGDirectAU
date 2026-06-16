@@ -189,6 +189,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--au-per-epoch', '--au_per_epoch', dest='au_per_epoch',
                         action='store_true', default=False,
                         help='KGAU: one optimizer step per epoch with alignment/uniformity over full train set')
+    parser.add_argument('--au-uniformity-per-epoch', '--au_uniformity_per_epoch',
+                        dest='au_uniformity_per_epoch', action='store_true', default=False,
+                        help='KGAU: train alignment per batch, then apply one full-dataset uniformity step per epoch')
     normalize_group = parser.add_mutually_exclusive_group()
     normalize_group.add_argument(
         '--normalize-lp-scores', '--normalize_lp_scores',

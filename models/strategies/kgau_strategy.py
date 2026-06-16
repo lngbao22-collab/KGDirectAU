@@ -264,15 +264,30 @@ class KGAUStrategy(Evaluator):
 		batch_size = max(getattr(args, 'batch_size', 1), 1)
 		num_batches = max(math.ceil(len(self.train_examples) / batch_size), 1)
 		self.au_per_epoch = config_bool(args, 'au_per_epoch', False)
+		self.au_uniformity_per_epoch = config_bool(args, 'au_uniformity_per_epoch', False)
 		if self.au_per_epoch and self.uses_text_inputs:
 			logger.warning('au_per_epoch is not supported for text encoders; using per-batch AU.')
 			self.au_per_epoch = False
+		if self.au_uniformity_per_epoch and self.uses_text_inputs:
+			logger.warning('au_uniformity_per_epoch is not supported for text encoders; using per-batch AU.')
+			self.au_uniformity_per_epoch = False
+		if self.au_per_epoch and self.au_uniformity_per_epoch:
+			logger.warning('Both au_per_epoch and au_uniformity_per_epoch are enabled; au_per_epoch takes precedence.')
+			self.au_uniformity_per_epoch = False
 		if self.au_per_epoch:
 			self.weight_decay = float(weight_decay)
 			self._build_epoch_uniformity_representatives()
 			logger.info(
 				'KGAU au_per_epoch: one optimizer step per epoch; '
 				'alignment/uniformity use the full training set (batch_size=%d is forward chunk size only).',
+				batch_size,
+			)
+		elif self.au_uniformity_per_epoch:
+			self.weight_decay = float(weight_decay) / num_batches
+			self._build_epoch_uniformity_representatives()
+			logger.info(
+				'KGAU au_uniformity_per_epoch: alignment updates per batch + '
+				'one full-dataset uniformity update per epoch (batch_size=%d).',
 				batch_size,
 			)
 		else:
@@ -783,6 +798,75 @@ class KGAUStrategy(Evaluator):
 		avg_loss = avg_align + avg_unif
 		return avg_loss, avg_align, avg_unif, n_unique_q, n_unique_t, margin_active
 
+	def _train_alignment_batch_only(
+		self,
+		model,
+		ss: torch.Tensor,
+		rs: torch.Tensor,
+		ts: torch.Tensor,
+		use_amp: bool,
+	) -> tuple[float, int]:
+		"""One optimizer step on per-batch alignment only (uniformity deferred to epoch end)."""
+
+		total = ss.size(0)
+		self.optimizer.zero_grad()
+		if use_amp:
+			with torch.amp.autocast(device_type='cuda'):
+				q_raw, t_raw, _ = self._au_representation_batch(model, ss, rs, ts)
+				l_align = self.criterion.forward_alignment(q_raw, t_raw)
+			self.scaler.scale(l_align).backward()
+			self._optimizer_step(use_amp)
+		else:
+			q_raw, t_raw, _ = self._au_representation_batch(model, ss, rs, ts)
+			l_align = self.criterion.forward_alignment(q_raw, t_raw)
+			l_align.backward()
+			self._optimizer_step(use_amp)
+		return l_align.item(), total
+
+	def _train_uniformity_epoch_only(
+		self,
+		model,
+		chunk_size: int,
+		use_amp: bool,
+	) -> tuple[float, int, int, float]:
+		"""One optimizer step on full-dataset uniformity only."""
+
+		q_uni = self._au_vectors_at_indices(model, self.epoch_q_rep_idx, chunk_size, 'q') if (
+			self.criterion.gamma_active('q') or self.criterion.gamma_active('cross')
+		) else None
+		t_uni = self._au_vectors_at_indices(model, self.epoch_t_rep_idx, chunk_size, 't') if (
+			self.criterion.gamma_active('t') or self.criterion.gamma_active('cross')
+		) else None
+		h_uni = self._au_vectors_at_indices(model, self.epoch_h_rep_idx, chunk_size, 'h') if self.criterion.gamma_active('h') else None
+		ent_raw = self._catalog_entity_uniformity_vectors(model)
+		cross_uni = self._merge_cross_uniformity_vectors(q_uni, t_uni)
+
+		dummy_q = q_uni if q_uni is not None else t_uni if t_uni is not None else h_uni
+		if dummy_q is None:
+			dummy_q = ent_raw if ent_raw is not None else next(model.parameters())
+		dummy_t = t_uni if t_uni is not None else dummy_q
+
+		self.optimizer.zero_grad()
+		if use_amp:
+			with torch.amp.autocast(device_type='cuda'):
+				l_unif, margin_active = self.criterion.forward_uniformity(
+					dummy_q, dummy_t, q_uni=q_uni, t_uni=t_uni, h=h_uni, h_uni=h_uni, ent=ent_raw,
+					cross_uni=cross_uni,
+				)
+				loss = self._apply_embedding_regularization(l_unif)
+			self.scaler.scale(loss).backward()
+		else:
+			l_unif, margin_active = self.criterion.forward_uniformity(
+				dummy_q, dummy_t, q_uni=q_uni, t_uni=t_uni, h=h_uni, h_uni=h_uni, ent=ent_raw,
+				cross_uni=cross_uni,
+			)
+			loss = self._apply_embedding_regularization(l_unif)
+			loss.backward()
+		self._optimizer_step(use_amp)
+		n_unique_q = int(self.epoch_q_rep_idx.numel()) if self.criterion.gamma_active('q') else 0
+		n_unique_t = int(self.epoch_t_rep_idx.numel()) if self.criterion.gamma_active('t') else 0
+		return l_unif.item(), n_unique_q, n_unique_t, margin_active
+
 	def _train_au_tensor_batch(
 		self,
 		model,
@@ -1085,6 +1169,21 @@ class KGAUStrategy(Evaluator):
 			epoch_unique_t = float(n_ut)
 			epoch_margin_active = margin_active
 			epoch_batches = 1
+		elif self.au_uniformity_per_epoch:
+			for ss, rs, ts in self._iter_batches(
+				self.train_src, self.train_rel, self.train_dst, batch_size, shuffle=True,
+			):
+				l_align, n_examples = self._train_alignment_batch_only(model, ss, rs, ts, use_amp)
+				epoch_align_loss += l_align * n_examples
+				epoch_loss += l_align * n_examples
+				epoch_batches += 1
+			l_unif, n_uq, n_ut, margin_active = self._train_uniformity_epoch_only(model, batch_size, use_amp)
+			n_train = len(self.train_examples)
+			epoch_unif_loss = l_unif * n_train
+			epoch_loss += epoch_unif_loss
+			epoch_unique_q = float(n_uq)
+			epoch_unique_t = float(n_ut)
+			epoch_margin_active = margin_active
 		else:
 			for batch_idx, (ss, rs, ts) in enumerate(
 				self._iter_batches(self.train_src, self.train_rel, self.train_dst, batch_size, shuffle=True),
@@ -1111,7 +1210,7 @@ class KGAUStrategy(Evaluator):
 			avg_margin_active = epoch_margin_active / epoch_batches
 		else:
 			avg_unique_q = avg_unique_t = avg_margin_active = 0.0
-		unique_scope = 'epoch' if self.au_per_epoch else 'batch'
+		unique_scope = 'epoch' if (self.au_per_epoch or self.au_uniformity_per_epoch) else 'batch'
 		tuni_suffix = ''
 		if self._should_log_tuni():
 			tuni_suffix = f' | tuni: {_tuni_scalar(self.criterion):.4f}'
@@ -1122,7 +1221,7 @@ class KGAUStrategy(Evaluator):
 				'unique q/t per %s: %.0f/%.0f%s | margin-buffer pairs: %.2f%%%s',
 				display_epoch, avg_loss, avg_align_loss, avg_unif_loss,
 				unique_scope, avg_unique_q, avg_unique_t,
-				'' if self.au_per_epoch else f' (of {batch_size})',
+				'' if (self.au_per_epoch or self.au_uniformity_per_epoch) else f' (of {batch_size})',
 				100.0 * avg_margin_active,
 				tuni_suffix + gamma_suffix,
 			)
@@ -1132,7 +1231,7 @@ class KGAUStrategy(Evaluator):
 				'unique q/t per %s: %.0f/%.0f%s%s',
 				display_epoch, avg_loss, avg_align_loss, avg_unif_loss,
 				unique_scope, avg_unique_q, avg_unique_t,
-				'' if self.au_per_epoch else f' (of {batch_size})',
+				'' if (self.au_per_epoch or self.au_uniformity_per_epoch) else f' (of {batch_size})',
 				tuni_suffix + gamma_suffix,
 			)
 		self.train_component_losses = {
