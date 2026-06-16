@@ -105,3 +105,193 @@ def compute_bce_loss(
     if offset != 0.0:
         scores = scores + offset
     return F.binary_cross_entropy_with_logits(scores, target_matrix, reduction=reduction)
+
+
+def compute_softplus_loss(
+    scores: torch.Tensor | None = None,
+    labels: torch.Tensor | None = None,
+    *,
+    pos_scores: torch.Tensor | None = None,
+    neg_scores: torch.Tensor | None = None,
+    weights: torch.Tensor | None = None,
+    reduction: str = "mean",
+) -> torch.Tensor:
+    """Compute pointwise logistic (softplus) loss for higher-is-better scores.
+
+    Explicit mode:
+        - Provide ``scores`` and ``labels`` with values in ``{+1, -1}``.
+    Negative-sampling mode:
+        - Provide ``pos_scores`` and ``neg_scores`` (or ``scores`` as ``pos_scores``).
+        - Optional ``weights`` for weighted batch averaging.
+    """
+
+    if neg_scores is not None or pos_scores is not None:
+        if pos_scores is None:
+            pos_scores = scores
+        if pos_scores is None or neg_scores is None:
+            raise ValueError("Negative-sampling softplus loss requires both pos_scores and neg_scores")
+
+        pos_scores = pos_scores.reshape(-1)
+        if neg_scores.dim() == 3:
+            neg_scores = neg_scores.squeeze(-1)
+        neg_scores = neg_scores.to(pos_scores.device)
+        batch_size = max(pos_scores.size(0), 1)
+
+        if weights is not None:
+            weights = weights.to(pos_scores.device).reshape(-1)
+            pos_loss = F.softplus(-pos_scores)
+            neg_flat = neg_scores.reshape(-1)
+            if neg_flat.size(0) == batch_size:
+                neg_2d = neg_flat.unsqueeze(1)
+            elif neg_flat.size(0) % batch_size == 0:
+                neg_2d = neg_flat.view(batch_size, -1)
+            else:
+                labels_cat = torch.cat(
+                    [torch.ones_like(pos_scores), -torch.ones_like(neg_flat)],
+                    dim=0,
+                )
+                scores_cat = torch.cat([pos_scores, neg_flat], dim=0)
+                per_example = F.softplus(-scores_cat * labels_cat)
+                return per_example.mean() if reduction == "mean" else per_example.sum()
+            neg_loss = F.softplus(neg_2d).mean(dim=1)
+            per_row = (pos_loss + neg_loss) / 2.0
+            return (per_row * weights).sum() / weights.sum().clamp_min(1e-12)
+
+        labels_cat = torch.cat(
+            [torch.ones_like(pos_scores), -torch.ones_like(neg_scores.reshape(-1))],
+            dim=0,
+        )
+        scores_cat = torch.cat([pos_scores, neg_scores.reshape(-1)], dim=0)
+        per_example = F.softplus(-scores_cat * labels_cat)
+        if reduction == "sum":
+            return per_example.sum()
+        if reduction == "none":
+            return per_example
+        return per_example.mean()
+
+    if scores is None or labels is None:
+        raise ValueError("Explicit softplus loss requires scores and labels")
+
+    scores_flat = scores.view(-1)
+    labels_flat = labels.view(-1).to(scores.device, dtype=scores.dtype)
+    per_example = F.softplus(-scores_flat * labels_flat)
+    if reduction == "sum":
+        return per_example.sum()
+    if reduction == "none":
+        return per_example
+    return per_example.mean()
+
+
+def compute_margin_loss(
+    pos_scores: torch.Tensor,
+    neg_scores: torch.Tensor,
+    *,
+    margin: float,
+) -> torch.Tensor:
+    """Compute ``max(0, margin - pos_score + neg_score)`` averaged over pairs.
+
+    Assumes higher scores are better (similarity). For distance-based scores,
+    flip the sign convention before calling this function.
+    """
+
+    if pos_scores.dim() == 1 and neg_scores.dim() == 2:
+        pos_scores = pos_scores.unsqueeze(1).expand_as(neg_scores)
+    loss = F.relu(float(margin) - pos_scores + neg_scores)
+    return loss.mean()
+
+
+def _margin_broadcast_1vsall(
+    scores: torch.Tensor,
+    targets: torch.Tensor,
+    *,
+    margin: float,
+    reduction: str,
+) -> torch.Tensor:
+    batch_size, num_entities = scores.shape
+    index_targets = _ensure_index_targets(scores, targets)
+    batch_idx = torch.arange(batch_size, device=scores.device)
+    pos_scores = scores[batch_idx, index_targets]
+
+    pair_loss = F.relu(float(margin) - pos_scores.unsqueeze(1) + scores)
+    pair_loss[batch_idx, index_targets] = 0.0
+
+    num_neg = max(num_entities - 1, 1)
+    row_loss = pair_loss.sum(dim=1) / num_neg
+    if reduction == "sum":
+        return row_loss.sum()
+    return row_loss.mean()
+
+
+def _margin_broadcast_kvsall(
+    scores: torch.Tensor,
+    target_matrix: torch.Tensor,
+    *,
+    margin: float,
+    reduction: str,
+) -> torch.Tensor:
+    num_entities = target_matrix.size(1)
+    pos_threshold = 1.0 / num_entities
+    row_losses: list[torch.Tensor] = []
+
+    for row_idx in range(scores.size(0)):
+        pos_mask = target_matrix[row_idx] > pos_threshold
+        neg_mask = ~pos_mask
+        if not bool(pos_mask.any()) or not bool(neg_mask.any()):
+            continue
+        pos = scores[row_idx, pos_mask]
+        neg = scores[row_idx, neg_mask]
+        pair_loss = F.relu(float(margin) - pos.unsqueeze(1) + neg.unsqueeze(0))
+        row_losses.append(pair_loss.sum())
+
+    if not row_losses:
+        return scores.new_zeros(())
+
+    stacked = torch.stack(row_losses)
+    if reduction == "sum":
+        return stacked.sum()
+    return stacked.mean()
+
+
+def compute_margin_broadcast_loss(
+    scores: torch.Tensor,
+    targets: torch.Tensor,
+    *,
+    margin: float,
+    reduction: str = "mean",
+) -> torch.Tensor:
+    """Compute margin ranking over positive-vs-negative entity pairs for broadcast scores.
+
+    :param scores: ``[batch_size, num_entities]`` logits from ``score_sp_()`` / ``score_po_()``
+    :param targets: ``[batch_size]`` entity indices (1vsAll) or ``[batch_size, num_entities]`` multi-hot labels (KvsAll)
+    :param margin: Margin hyperparameter (LibKGE ``train.loss_arg`` for margin_ranking)
+    :param reduction: ``mean`` (1vsAll default) or ``sum`` (KvsAll default; strategy divides by batch size)
+    """
+
+    if targets.dim() == 1:
+        return _margin_broadcast_1vsall(scores, targets, margin=margin, reduction=reduction)
+
+    target_matrix = _labels_as_matrix(scores, targets)
+    return _margin_broadcast_kvsall(scores, target_matrix, margin=margin, reduction=reduction)
+
+
+def compute_margin_ranking_loss(
+    scores: torch.Tensor | None = None,
+    targets: torch.Tensor | None = None,
+    *,
+    pos_scores: torch.Tensor | None = None,
+    neg_scores: torch.Tensor | None = None,
+    margin: float,
+    reduction: str = "mean",
+) -> torch.Tensor:
+    """Thin dispatcher for margin ranking (negsamp vs broadcast)."""
+
+    if pos_scores is not None or neg_scores is not None:
+        if pos_scores is None or neg_scores is None:
+            raise ValueError("Pairwise margin dispatch requires both pos_scores and neg_scores")
+        if reduction != "mean":
+            raise ValueError("Pairwise margin loss only supports reduction='mean'")
+        return compute_margin_loss(pos_scores, neg_scores, margin=margin)
+
+    if scores is None or targets is None:
+        raise ValueError("Broadcast margin ranking dispatch requires scores and targets")
+    return compute_margin_broadcast_loss(scores, targets, margin=margin, reduction=reduction)

@@ -1,10 +1,18 @@
 """Pointwise logistic (softplus) loss for DaBR."""
 
-import torch.nn.functional as F
+from __future__ import annotations
+
 import torch
 
+from models.losses.loss_utilities import compute_softplus_loss as _compute_softplus_loss
 
-def compute_softplus_loss(scores: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+
+def compute_softplus_loss(
+    scores: torch.Tensor,
+    labels: torch.Tensor,
+    *,
+    reduction: str = "mean",
+) -> torch.Tensor:
     """Trouillon logistic loss for higher-is-better DaBR scores (labels +1 / -1).
 
     The encoder returns a plausibility score where **higher is better** (correct
@@ -12,14 +20,12 @@ def compute_softplus_loss(scores: torch.Tensor, labels: torch.Tensor) -> torch.T
     ``softplus(-Y * phi)`` with the same higher-is-better convention, which is
     equivalent to ``softplus(-scores * labels)`` here.
 
-    Positives (Y=+1): ``softplus(-s)`` — loss decreases as *s* increases.
-    Negatives (Y=-1): ``softplus(+s)`` — loss decreases as *s* decreases.
+    Positives (Y=+1): ``softplus(-s)`` - loss decreases as *s* increases.
+    Negatives (Y=-1): ``softplus(+s)`` - loss decreases as *s* decreases.
     This matches filtered link prediction, which ranks candidates by descending score.
     """
 
-    scores = scores.view(-1)
-    labels = labels.view(-1).to(scores.device)
-    return F.softplus(-scores * labels).mean()
+    return _compute_softplus_loss(scores, labels, reduction=reduction)
 
 
 def build_negsamp_loss_fn(args):
@@ -27,15 +33,17 @@ def build_negsamp_loss_fn(args):
 
     del args
 
-    def loss_fn(pos_scores, neg_scores, weights=None, **_kwargs):
-        pos_scores = pos_scores.reshape(-1)
-        neg_scores = neg_scores.reshape(-1)
-        labels = torch.cat([
-            torch.ones_like(pos_scores),
-            -torch.ones_like(neg_scores),
-        ], dim=0)
-        scores = torch.cat([pos_scores, neg_scores], dim=0)
-        return compute_softplus_loss(scores, labels)
+    def loss_fn(
+        pos_scores: torch.Tensor,
+        neg_scores: torch.Tensor,
+        weights=None,
+        **_kwargs,
+    ) -> torch.Tensor:
+        return _compute_softplus_loss(
+            pos_scores=pos_scores,
+            neg_scores=neg_scores,
+            weights=weights,
+        )
 
     return loss_fn
 
@@ -44,4 +52,4 @@ build_loss_fn = build_negsamp_loss_fn
 
 
 def compute_loss(args):
-	return build_negsamp_loss_fn(args)
+    return build_negsamp_loss_fn(args)
