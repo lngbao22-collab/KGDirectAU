@@ -182,6 +182,26 @@ def compute_softplus_loss(
     return per_example.mean()
 
 
+def compute_bpr_loss(
+    pos_scores: torch.Tensor,
+    neg_scores: torch.Tensor,
+    *,
+    weights: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Compute ``softplus(neg - pos)`` averaged over positive–negative pairs.
+
+    Equivalent to ``-log(sigmoid(pos - neg))``. Assumes higher scores are better.
+    """
+
+    if pos_scores.dim() == 1 and neg_scores.dim() == 2:
+        pos_scores = pos_scores.unsqueeze(1).expand_as(neg_scores)
+    per_pair = F.softplus(neg_scores - pos_scores)
+    if weights is not None:
+        weights = weights.to(pos_scores.device).reshape(-1, 1)
+        return (per_pair * weights).sum() / weights.sum().clamp_min(1e-12)
+    return per_pair.mean()
+
+
 def compute_margin_loss(
     pos_scores: torch.Tensor,
     neg_scores: torch.Tensor,
