@@ -38,7 +38,7 @@
   "early_stopping_patience": 10,
   "early_stopping_min_epochs": 50,
   "early_stopping_min_metric": 0.05,
-  "normalize_lp_scores": true,
+  "normalize_lp_scores": false,
   "gamma_q": 1,
   "gamma_t": 1,
   "gamma_cross": 1.0,
