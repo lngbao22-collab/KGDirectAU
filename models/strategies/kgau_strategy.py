@@ -22,7 +22,15 @@ from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, s
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
 from utils.logger import AverageMeter, ProgressMeter, logger
 from utils.memory import PhaseMemoryTracker, format_memory
-from models.losses.au_loss import KGAULoss, distinct_first_indices, select_distinct_rows, _GAMMA_NAMES
+from models.losses.au_loss import (
+	KGAULoss,
+	complex_au_representations,
+	complex_entity_au_embeddings,
+	distinct_first_indices,
+	is_complex_scorer,
+	select_distinct_rows,
+	_GAMMA_NAMES,
+)
 
 
 def _load_encoder(args) -> torch.nn.Module:
@@ -670,6 +678,9 @@ class KGAUStrategy(Evaluator):
 			ent = model.entity_embeddings(**kwargs)
 		else:
 			return None
+		scorer = model.get_scorer() if hasattr(model, 'get_scorer') else None
+		if ent is not None and scorer is not None and is_complex_scorer(scorer):
+			ent = complex_entity_au_embeddings(scorer, ent)
 		if ent is not None and hasattr(model, '_normalize_lp_vector'):
 			ent = model._normalize_lp_vector(ent)
 		return ent
@@ -1007,14 +1018,17 @@ class KGAUStrategy(Evaluator):
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 		"""Fetch AU vectors via decoupled embedders and optional scorer query builder."""
 
-		if hasattr(model, 'get_queries_targets'):
-			return model.get_queries_targets(ss, rs, ts)
-
 		h_emb = model.embed_s(ss)
 		r_emb = model.embed_p(rs)
 		t_emb = model.embed_o(ts)
-		scorer = model.get_scorer()
-		if hasattr(scorer, 'build_query'):
+		scorer = model.get_scorer() if hasattr(model, 'get_scorer') else None
+		if scorer is not None and is_complex_scorer(scorer):
+			return complex_au_representations(scorer, h_emb, r_emb, t_emb)
+
+		if hasattr(model, 'get_queries_targets'):
+			return model.get_queries_targets(ss, rs, ts)
+
+		if scorer is not None and hasattr(scorer, 'build_query'):
 			try:
 				q_emb = scorer.build_query(h_emb, r_emb)
 				return q_emb, t_emb, h_emb

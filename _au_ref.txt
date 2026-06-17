@@ -1,4 +1,4 @@
-"""Alignment and uniformity loss for KGAU (DirectAU)."""
+"""Alignment and uniformity loss for KGAU."""
 
 from __future__ import annotations
 
@@ -41,86 +41,13 @@ def select_distinct_rows(vectors: torch.Tensor, keys: torch.Tensor) -> torch.Ten
 	return vectors.index_select(0, indices)
 
 
-def is_complex_scorer(scorer) -> bool:
-	"""Return True when ``scorer`` exposes ComplEx AU encoder hooks."""
-
-	return (
-		hasattr(scorer, 'query_encoder')
-		and hasattr(scorer, 'target_encoder')
-		and hasattr(scorer, 'inv_query_encoder')
-		and hasattr(scorer, '_split_complex')
-	)
-
-
-def complex_au_representations(
-	scorer,
-	h_emb: torch.Tensor,
-	r_emb: torch.Tensor,
-	t_emb: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-	"""Build ComplEx AU ``(query, tail, head)`` for DirectAU-style loss."""
-
-	h_re, h_im = scorer._split_complex(h_emb)
-	r_re, r_im = scorer._split_complex(r_emb)
-	t_re, t_im = scorer._split_complex(t_emb)
-	query = scorer.query_encoder(h_re, h_im, r_re, r_im)
-	target = scorer.target_encoder(t_re, t_im)
-	head = scorer.target_encoder(h_re, h_im)
-	return query, target, head
-
-
-def complex_inv_query_representation(
-	scorer,
-	r_emb: torch.Tensor,
-	t_emb: torch.Tensor,
-) -> torch.Tensor:
-	"""Head-prediction query ``conj(r) ⊗ t`` via ``inv_query_encoder``."""
-
-	r_re, r_im = scorer._split_complex(r_emb)
-	t_re, t_im = scorer._split_complex(t_emb)
-	return scorer.inv_query_encoder(r_re, r_im, t_re, t_im)
-
-
-def complex_entity_au_embeddings(scorer, entity_emb: torch.Tensor) -> torch.Tensor:
-	"""Encode a full entity table with ``target_encoder``."""
-
-	t_re, t_im = scorer._split_complex(entity_emb)
-	return scorer.target_encoder(t_re, t_im)
-
-
 _GAMMA_NAMES = ('q', 't', 'h', 'ent', 'cross')
 
 
 class KGAULoss(nn.Module):
-	"""DirectAU alignment-uniformity loss on query/target embeddings."""
-
-	@staticmethod
-	def alignment(x: torch.Tensor, y: torch.Tensor, alpha: int = 2) -> torch.Tensor:
-		"""DirectAU alignment: mean L2^alpha distance (inputs should be normalized)."""
-
-		return (x - y).norm(p=2, dim=1).pow(alpha).mean()
-
-	@staticmethod
-	def uniformity(x: torch.Tensor, t: float = 2) -> torch.Tensor:
-		"""DirectAU uniformity on the unit sphere."""
-
-		if x.size(0) < 2:
-			return x.new_zeros(())
-		return torch.pdist(x, p=2).pow(2).mul(-t).exp().mean().log()
-
-	def calculate_loss(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-		"""DirectAU ``calculate_loss`` on a single (query, target) batch."""
-
-		q = F.normalize(q, p=2, dim=-1)
-		t = F.normalize(t, p=2, dim=-1)
-		align = self.alignment(q, t)
-		tuni = float(self.tuni.detach().cpu().item()) if torch.is_tensor(self.tuni) else float(self.tuni)
-		gamma = self.gamma_value('q')
-		uniform = gamma * (self.uniformity(q, tuni) + self.uniformity(t, tuni)) / 2
-		return align + uniform
+	"""Alignment and uniformity loss for knowledge graph embeddings."""
 
 	def __init__(
-
 		self,
 		gamma_q=1.0,
 		gamma_t=1.0,
@@ -258,7 +185,7 @@ class KGAULoss(nn.Module):
 
 		q = F.normalize(q, p=2, dim=-1)
 		t = F.normalize(t, p=2, dim=-1)
-		return self.alignment(q, t)
+		return (q - t).pow(2).sum(dim=-1).mean()
 
 	def sin_phase_alignment_loss(self, phase_query: torch.Tensor, phase_target: torch.Tensor) -> torch.Tensor:
 		"""Alignment in native pRotatE geometry: mean sum of |sin(phase residual)| per dimension.
