@@ -374,29 +374,27 @@ class KGAULoss(nn.Module):
 			return (q - t).pow(2).sum(dim=-1).mean()
 		return self.alignment_loss(q, t)
 
-	def forward_alignment(
+	def forward(
 		self,
 		q: torch.Tensor,
 		t: torch.Tensor,
-		external_align: torch.Tensor | None = None,
-	) -> torch.Tensor:
-		"""Alignment term only (mean over rows of ``q`` and ``t``), scaled by ``alpha``."""
-
-		raw = self._raw_alignment_loss(q, t, external_align=external_align)
-		return self._effective_alpha() * raw
-
-	def forward_uniformity(
-		self,
-		q: torch.Tensor,
-		t: torch.Tensor,
+		h: torch.Tensor | None = None,
+		ent: torch.Tensor | None = None,
 		q_uni: torch.Tensor | None = None,
 		t_uni: torch.Tensor | None = None,
-		h: torch.Tensor | None = None,
 		h_uni: torch.Tensor | None = None,
-		ent: torch.Tensor | None = None,
 		cross_uni: torch.Tensor | None = None,
-	) -> tuple[torch.Tensor, float]:
-		"""Uniformity terms only; returns (loss, margin-active fraction for logging)."""
+		external_align: torch.Tensor | None = None,
+		return_stats: bool = False,
+	):
+		"""Return the total AU loss together with alignment and uniformity terms.
+
+		Each uniformity term is computed exactly once. When ``return_stats`` is
+		True, also return the gamma-weighted fraction of query/target pairs that
+		fall inside the margin buffer (only meaningful when ``additive_margin`` > 0).
+		"""
+
+		l_align = self._effective_alpha() * self._raw_alignment_loss(q, t, external_align=external_align)
 
 		l_unif = q.new_zeros(())
 		active_sum = 0.0
@@ -436,32 +434,6 @@ class KGAULoss(nn.Module):
 			margin_active_frac = active_sum / active_weight
 		else:
 			margin_active_frac = 0.0
-		return l_unif, margin_active_frac
-
-	def forward(
-		self,
-		q: torch.Tensor,
-		t: torch.Tensor,
-		h: torch.Tensor | None = None,
-		ent: torch.Tensor | None = None,
-		q_uni: torch.Tensor | None = None,
-		t_uni: torch.Tensor | None = None,
-		h_uni: torch.Tensor | None = None,
-		cross_uni: torch.Tensor | None = None,
-		external_align: torch.Tensor | None = None,
-		return_stats: bool = False,
-	):
-		"""Return the total AU loss together with alignment and uniformity terms.
-
-		Each uniformity term is computed exactly once. When ``return_stats`` is
-		True, also return the gamma-weighted fraction of query/target pairs that
-		fall inside the margin buffer (only meaningful when ``additive_margin`` > 0).
-		"""
-
-		l_align = self.forward_alignment(q, t, external_align=external_align)
-		l_unif, margin_active_frac = self.forward_uniformity(
-			q, t, q_uni=q_uni, t_uni=t_uni, h=h, h_uni=h_uni, ent=ent, cross_uni=cross_uni,
-		)
 
 		total_loss = l_align + l_unif
 		if return_stats:

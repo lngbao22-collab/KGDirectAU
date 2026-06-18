@@ -95,9 +95,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--max-uniformity-pairs', '--max_uniformity_pairs', default=None, type=int,
                         dest='max_uniformity_pairs',
                         help='maximum random pairwise distances for AU uniformity when full pdist is too large')
-    parser.add_argument('--uniformity-chunk-size', '--uniformity_chunk_size', default=None, type=int,
-                        dest='uniformity_chunk_size',
-                        help='chunk size for full-dataset AU vector gathering (global uniformity modes)')
     parser.add_argument('--max-to-keep', default=None, type=int,
                         help='maximum number of checkpoints to keep')
     parser.add_argument('--neighbor-weight', default=None, type=float,
@@ -218,15 +215,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--tuni-schedule-epochs', '--tuni_schedule_epochs', default=None, type=int,
                         dest='tuni_schedule_epochs',
                         help='epochs over which to schedule tuni (0: use --epochs through last epoch)')
-    parser.add_argument('--au-per-epoch', '--au_per_epoch', dest='au_per_epoch',
-                        action='store_true', default=False,
-                        help='KGAU: one optimizer step per epoch with alignment/uniformity over full train set')
-    parser.add_argument('--au-uniformity-per-epoch', '--au_uniformity_per_epoch',
-                        dest='au_uniformity_per_epoch', action='store_true', default=False,
-                        help='KGAU: train alignment per batch, then apply one full-dataset uniformity step per epoch')
-    parser.add_argument('--au-uniformity-global-per-batch', '--au_uniformity_global_per_batch',
-                        dest='au_uniformity_global_per_batch', action='store_true', default=False,
-                        help='KGAU: per-batch optimization with batch alignment and full-dataset uniformity each step')
     au_deduplicate_group = parser.add_mutually_exclusive_group()
     au_deduplicate_group.add_argument(
         '--au-deduplicate', '--au_deduplicate',
