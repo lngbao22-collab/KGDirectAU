@@ -46,7 +46,7 @@
   "gamma_h": 0,
   "gamma_ent": 0,
   "learnable_au_gammas": true,
-  "log_au_gamma_lr": 0.005,
+  "log_au_gamma_lr": 0.01,
   "gamma_linear_schedule": true,
   "gamma_schedule_end": 0.1,
   "gamma_schedule_start_epoch": 0,
