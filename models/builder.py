@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 
 from base.embeddings import compute_kge_l3_regularization, use_reciprocal_relations
-from base.model import DaBRModel, KGEModel
+from base.model import KGEModel
 from data.dataset import PointwiseDataset, load_data
 from data.dict_hub import get_entity_dict, get_relation_id_map
 from utils.device import get_model_obj
@@ -116,21 +116,24 @@ def build_scorer_module(args) -> nn.Module:
 	return load_attr_from_path(scorer_path, 'build_scorer')(args)
 
 
-def bind_model(args, ent_embedder: nn.Module, rel_embedder: nn.Module, scorer: nn.Module) -> nn.Module:
-	"""Bind embedders and scorer into ``KGEModel`` (or ``DaBRModel`` when needed)."""
+def bind_model(
+	args,
+	ent_embedder: nn.Module,
+	rel_embedder: nn.Module,
+	scorer: nn.Module,
+	aux_embedders: dict[str, nn.Module] | None = None,
+) -> nn.Module:
+	"""Bind embedders and scorer into ``KGEModel``."""
 
+	return KGEModel(ent_embedder, rel_embedder, scorer, args, aux_embedders=aux_embedders)
+
+
+def _build_aux_embedders(args) -> dict[str, nn.Module] | None:
 	model_name = str(getattr(args, 'model', '') or '').lower()
-	if 'dabr' in model_name:
-		embedder_path = _config_path(args, 'model_embedder_path')
-		dr_embedder = load_attr_from_path(embedder_path, 'build_dr_embedder')(args)
-		return DaBRModel(
-			args,
-			ent_embedder=ent_embedder,
-			rel_embedder=rel_embedder,
-			scorer=scorer,
-			dr_embedder=dr_embedder,
-		)
-	return KGEModel(ent_embedder, rel_embedder, scorer, args)
+	if 'dabr' not in model_name:
+		return None
+	embedder_path = _config_path(args, 'model_embedder_path')
+	return {'dr': load_attr_from_path(embedder_path, 'build_dr_embedder')(args)}
 
 
 def build_model(args) -> nn.Module:
@@ -143,7 +146,7 @@ def build_model(args) -> nn.Module:
 	ent_embedder = build_entity_embedder(args)
 	rel_embedder = build_relation_embedder(args)
 	scorer = build_scorer_module(args)
-	return bind_model(args, ent_embedder, rel_embedder, scorer)
+	return bind_model(args, ent_embedder, rel_embedder, scorer, aux_embedders=_build_aux_embedders(args))
 
 
 def load_loss_fn(args):
@@ -705,7 +708,7 @@ def build_pipeline(args, ngpus_per_node: int = 1):
 	ent_embedder = build_entity_embedder(args)
 	rel_embedder = build_relation_embedder(args)
 	scorer = build_scorer_module(args)
-	model = bind_model(args, ent_embedder, rel_embedder, scorer)
+	model = bind_model(args, ent_embedder, rel_embedder, scorer, aux_embedders=_build_aux_embedders(args))
 	if torch.cuda.is_available():
 		model.cuda()
 

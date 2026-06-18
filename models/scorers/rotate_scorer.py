@@ -5,7 +5,8 @@ from __future__ import annotations
 import math
 
 import torch
-import torch.nn as nn
+
+from base.kge_scorer import KGEScorer
 
 
 def build_scorer(args) -> RotatEScorer:
@@ -35,8 +36,10 @@ def normalize_rotate_phases(model) -> None:
 	rel_embedder.weight.data[:] = phases[:]
 
 
-class RotatEScorer(nn.Module):
+class RotatEScorer(KGEScorer):
 	"""RotatE score function with explicit 1-to-1 and 1-vs-All tensor paths."""
+
+	bidirectional_score_batch = True
 
 	def __init__(self, args=None):
 		super().__init__()
@@ -238,3 +241,18 @@ class RotatEScorer(nn.Module):
 			re_score = h_re * r_re - h_im * r_im - t_re
 			im_score = h_re * r_im + h_im * r_re - t_im
 		return self.margin - torch.sqrt(re_score ** 2 + im_score ** 2).sum(dim=-1)
+
+	def au_representations(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+		**kwargs,
+	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+		h_re, h_im = self._split_complex(h_emb)
+		r_phase = self._phase(r_emb)
+		query = torch.cat([
+			h_re * torch.cos(r_phase) - h_im * torch.sin(r_phase),
+			h_re * torch.sin(r_phase) + h_im * torch.cos(r_phase),
+		], dim=-1)
+		return query, t_emb, h_emb

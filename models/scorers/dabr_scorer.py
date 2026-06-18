@@ -5,18 +5,22 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
+from base.kge_scorer import KGEScorer
+
 
 def build_scorer(args) -> DaBRScorer:
 	return DaBRScorer(args)
 
 
-class DaBRScorer(nn.Module):
+class DaBRScorer(KGEScorer):
 	"""DaBR score function with explicit 1-to-1 and 1-vs-All tensor paths."""
+
+	bidirectional_score_batch = True
 
 	def __init__(self, args=None):
 		super().__init__()
 		self.args = args
-		self.para = float(getattr(args, "para", 0.1))
+		self.para = nn.Parameter(torch.tensor([float(getattr(args, 'para', 0.1))]))
 
 	@staticmethod
 	def _normalize_quaternion(quaternion: torch.Tensor) -> torch.Tensor:
@@ -151,3 +155,17 @@ class DaBRScorer(nn.Module):
 			all_t_embs.unsqueeze(0),
 		)
 		return score_s - para_value * add_penalty
+
+	def au_representations(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+		dr_emb: torch.Tensor | None = None,
+		**kwargs,
+	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+		if dr_emb is None:
+			dr_emb = torch.zeros_like(h_emb)
+		q_mult = self._quat_mul(h_emb, r_emb)
+		t_mult = -self._quat_mul(t_emb, self._quat_inv(r_emb))
+		return torch.cat([q_mult, h_emb + dr_emb], dim=-1), torch.cat([t_mult, t_emb], dim=-1), h_emb

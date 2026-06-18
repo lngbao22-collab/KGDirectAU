@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import torch
-import torch.nn as nn
+
+from base.kge_scorer import KGEScorer
 
 
 def build_scorer(args) -> DistMultScorer:
 	return DistMultScorer(args)
 
 
-class DistMultScorer(nn.Module):
+class DistMultScorer(KGEScorer):
 	"""DistMult score function with explicit 1-to-1 and 1-vs-All tensor paths."""
 
 	def __init__(self, args=None):

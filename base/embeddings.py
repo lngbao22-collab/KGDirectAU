@@ -250,6 +250,21 @@ def compute_kge_l3_regularization(
 	return sum(terms)
 
 
+def embedding_l3_penalty(model: nn.Module, p: int = 3) -> torch.Tensor | None:
+	"""Unweighted Lp penalty over entity and relation embedding tables."""
+
+	terms: list[torch.Tensor] = []
+	for embedder in (getattr(model, 'ent_embedder', None), getattr(model, 'rel_embedder', None)):
+		if embedder is None:
+			continue
+		term = _embedding_table_l3(embedder, p=p)
+		if term is not None:
+			terms.append(term)
+	if not terms:
+		return None
+	return sum(terms)
+
+
 class ParameterEmbedder(nn.Module):
 	"""Wrap a shared ``nn.Parameter`` matrix as a LibKGE-style embedder."""
 

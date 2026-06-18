@@ -5,17 +5,19 @@ from __future__ import annotations
 import math
 
 import torch
-import torch.nn as nn
+
+from base.kge_scorer import KGEScorer
 
 
 def build_scorer(args) -> pRotatEScorer:
 	return pRotatEScorer(args)
 
 
-class pRotatEScorer(nn.Module):
+class pRotatEScorer(KGEScorer):
 	"""pRotatE score function with explicit 1-to-1 and 1-vs-All tensor paths."""
 
-	kga_u_alignment_mode = 'sin_phase'
+	bidirectional_score_batch = True
+	kgau_alignment_mode = 'sin_phase'
 
 	def __init__(self, args=None):
 		super().__init__()
@@ -65,3 +67,18 @@ class pRotatEScorer(nn.Module):
 			+ (self._phase(r_emb).unsqueeze(1) - self._phase(t_emb).unsqueeze(1))
 		)
 		return self._score_phase(phase)
+
+	def au_representations(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+		**kwargs,
+	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+		phase_head = self._phase(h_emb)
+		phase_relation = self._phase(r_emb)
+		phase_tail = self._phase(t_emb)
+		return phase_head + phase_relation, phase_tail, phase_head
+
+	def au_entity_embeddings(self, entity_emb: torch.Tensor) -> torch.Tensor:
+		return self._phase(entity_emb)

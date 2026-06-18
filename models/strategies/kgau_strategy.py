@@ -18,6 +18,7 @@ from data.dataloader import collate
 from data.dataset import Dataset, load_data
 from data.dict_hub import get_entity_dict, get_relation_id_map
 from models.builder import apply_kge_regularization, build_lr_scheduler, config_bool, load_attr_from_path, step_lr_scheduler
+from base.embeddings import embedding_l3_penalty
 from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, save_checkpoint
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
 from utils.logger import AverageMeter, ProgressMeter, logger
@@ -378,9 +379,9 @@ class KGAUStrategy(Evaluator):
 		learnable_au_alpha, learnable_au_gammas = _resolve_learnable_au_flags(args)
 
 		# Alignment mode is opt-in: cosine by default for all encoders; only pRotatE-AU sets
-		# ``sin_phase`` (via config and/or encoder ``kga_u_alignment_mode``).
+		# ``sin_phase`` (via config and/or encoder ``kgau_alignment_mode``).
 		model_obj = get_model_obj(self.model)
-		encoder_align = getattr(model_obj, 'kga_u_alignment_mode', None)
+		encoder_align = getattr(model_obj, 'kgau_alignment_mode', None)
 		alignment_mode = getattr(args, 'alignment_mode', None) or encoder_align or 'cosine'
 		normalize_uniformity = getattr(args, 'normalize_uniformity', None)
 		if normalize_uniformity is None:
@@ -641,14 +642,10 @@ class KGAUStrategy(Evaluator):
 		return n_unique_q, n_unique_t
 
 	def _embedding_l3_regularization(self, model) -> torch.Tensor | None:
-		"""Optional L3 embedding penalty (same form as adversarial DistMult/ComplEx training)."""
+		"""Optional L3 embedding penalty (adversarial / legacy scalar ``regularization``)."""
 
 		model_obj = get_model_obj(model)
-		if hasattr(model_obj, 'adversarial_l3_regularization'):
-			return model_obj.adversarial_l3_regularization()
-		if hasattr(model_obj, 'entity_embedding') and hasattr(model_obj, 'relation_embedding'):
-			return model_obj.entity_embedding.norm(p=3) ** 3 + model_obj.relation_embedding.norm(p=3) ** 3
-		return None
+		return embedding_l3_penalty(model_obj)
 
 	def _apply_embedding_regularization(
 		self,
@@ -1080,22 +1077,9 @@ class KGAUStrategy(Evaluator):
 		rs: torch.Tensor,
 		ts: torch.Tensor,
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-		"""Fetch AU vectors via decoupled embedders and optional scorer query builder."""
+		"""Fetch AU vectors via ``KGEModel.get_queries_targets`` (scorer-owned math)."""
 
-		if hasattr(model, 'get_queries_targets'):
-			return model.get_queries_targets(ss, rs, ts)
-
-		h_emb = model.embed_s(ss)
-		r_emb = model.embed_p(rs)
-		t_emb = model.embed_o(ts)
-		scorer = model.get_scorer()
-		if hasattr(scorer, 'build_query'):
-			try:
-				q_emb = scorer.build_query(h_emb, r_emb)
-				return q_emb, t_emb, h_emb
-			except NotImplementedError:
-				pass
-		return h_emb * r_emb, t_emb, h_emb
+		return get_model_obj(model).get_queries_targets(ss, rs, ts)
 
 	def _train_au_tensor_batch_single(
 		self,

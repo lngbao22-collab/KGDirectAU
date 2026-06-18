@@ -236,7 +236,7 @@ def build_relation_embedder(args) -> nn.Module:
 
 
 def build_dr_embedder(args) -> LookupEmbedder:
-	"""DaBR-specific relation drift table (used when binding ``DaBRModel``)."""
+	"""DaBR-specific relation drift table (bound as ``aux_embedders['dr']`` on ``KGEModel``)."""
 
 	_, n_rel = _counts(args)
 	emb_dim = 4 * int(getattr(args, 'dim', getattr(args, 'hidden_size', 100)))

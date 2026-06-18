@@ -18,6 +18,7 @@ from models.builder import (
 	load_sampler,
 	run_index_kge_train_loop,
 )
+from base.embeddings import embedding_l3_penalty
 from models.scorers.rotate_scorer import normalize_rotate_phases
 from utils.device import get_model_obj
 from utils.logger import logger
@@ -160,17 +161,27 @@ class NegSampStrategy:
 		return self.loss_fn(row_scores, targets)
 
 	def _regularization_term(self) -> torch.Tensor | None:
-		model_obj = get_model_obj(self.model)
 		reg_coef = config_float(self.args, 'regularization', 0.0)
 		if reg_coef <= 0.0:
 			return None
-		if hasattr(model_obj, 'adversarial_l3_regularization'):
-			return reg_coef * model_obj.adversarial_l3_regularization()
+		model_obj = get_model_obj(self.model)
+		l3_term = embedding_l3_penalty(model_obj)
+		if l3_term is not None:
+			return reg_coef * l3_term
 		if hasattr(model_obj, 'entity_embedding') and hasattr(model_obj, 'relation_embedding'):
 			return reg_coef * (
 				model_obj.entity_embedding.norm(p=3) ** 3
 				+ model_obj.relation_embedding.norm(p=3) ** 3
 			)
+		return None
+
+	def _aux_relation_embedding(self, model_obj, relation_indices: torch.Tensor):
+		aux = getattr(model_obj, 'aux_embedders', None)
+		if aux is not None and 'dr' in aux:
+			return aux['dr'](relation_indices)
+		dr = getattr(model_obj, 'Dr', None)
+		if dr is not None:
+			return dr(relation_indices)
 		return None
 
 	def _dabr_regularization(self, pos_triples: torch.Tensor) -> torch.Tensor | None:
@@ -185,7 +196,10 @@ class NegSampStrategy:
 		h = model_obj.embed_s(pos_triples[:, 0])
 		r = model_obj.embed_p(pos_triples[:, 1])
 		t = model_obj.embed_o(pos_triples[:, 2])
-		dr = model_obj.Dr(pos_triples[:, 1])
+		dr_embedder = self._aux_relation_embedding(model_obj, pos_triples[:, 1])
+		if dr_embedder is None:
+			return None
+		dr = dr_embedder
 		reg_ent = model_obj.regularization(h) + model_obj.regularization(t)
 		reg_rel = model_obj.regularization(r) + model_obj.regularization(dr)
 		return (entity_reg_weight * reg_ent) + (relation_reg_weight * reg_rel)
