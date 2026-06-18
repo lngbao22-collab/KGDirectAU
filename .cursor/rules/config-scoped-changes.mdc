@@ -1,0 +1,40 @@
+---
+description: Limit config JSON edits to the configs explicitly in scope
+globs: configs/**/*.json
+alwaysApply: false
+---
+
+# Scoped config changes only
+
+When a task targets one or a few files under `configs/`, change **only those configs**. Do not edit unrelated configs to “keep them in sync.”
+
+## Why
+
+`configs/` holds many experiment variants (base runs, AU variants, HPO trials, quick trials, learnable scales, etc.). Each file is an intentional recipe. Propagating a key or value across all JSON files changes unrelated experiments.
+
+## Do
+
+- Edit only the config(s) named in the request, open in the editor, or clearly implied (e.g. “ComplEx-AU learnable gammas trial” → `ComplEx-AU_WN18RR_learnable_gammas*.json`).
+- Register shared new keys in `configs/config.py` once (see `config-json-cli-overrides` rule) so **any** config can opt in via JSON or CLI.
+- Rely on code defaults for optional flags when a config does not need the new behavior.
+- State explicitly which config files were changed and which were left untouched.
+
+## Do not
+
+- Bulk-add keys to every `configs/*.json` unless the user asks for a repo-wide migration.
+- Copy hyperparameters from one variant into others without being asked.
+- Change base configs (e.g. `ComplEx_WN18RR.json`) when the task is AU-only (e.g. `ComplEx-AU_WN18RR*.json`).
+
+## Examples
+
+| Request | Change | Leave alone |
+|---------|--------|-------------|
+| Add `au_deduplicate: false` for DirectAU comparison | `ComplEx-AU_WN18RR.json` (or named trial config) | `DistMult-AU_*.json`, `ComplEx_WN18RR.json`, SimKGC configs |
+| New `learnable_au_gammas` experiment | New or named `*_learnable_gammas*.json` | Other ComplEx-AU variants unless requested |
+| CLI flag for a new KGAU option | `configs/config.py` only | All JSON files (optional per config) |
+
+## Check before finishing
+
+1. Did I touch only configs in scope?
+2. Would unchanged configs still run with prior behavior (defaults / omitted keys)?
+3. If multiple configs need the same change, did the user ask for that explicitly?

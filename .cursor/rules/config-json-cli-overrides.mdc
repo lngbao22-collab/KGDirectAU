@@ -1,0 +1,48 @@
+---
+description: Register new config JSON keys in argparse so CLI can override them
+globs: configs/**/*.json,configs/config.py
+alwaysApply: false
+---
+
+# Config JSON and CLI overrides
+
+When adding or changing keys in `configs/*.json`, also register them in `configs/config.py` → `build_parser()` so users can override from the command line.
+
+## Why
+
+`main.py` loads JSON via `parser.set_defaults(**config_defaults)`, then re-parses CLI args. Only keys registered on the parser can be overridden with flags like `--batch-size 256`.
+
+## Checklist for a new config key
+
+1. Add the key to the JSON config (snake_case).
+2. Add a matching `parser.add_argument` in `build_parser()`:
+   - CLI: `--kebab-case` (and optional `--snake_case` alias)
+   - `dest`: same snake_case name as the JSON key
+3. Pick the right type/action (`type=int`, `type=float`, `store_true`, etc.).
+
+## Boolean flags
+
+Default **false** (opt-in):
+
+```python
+parser.add_argument('--au-per-epoch', '--au_per_epoch', dest='au_per_epoch',
+                    action='store_true', default=None, help='...')
+```
+
+Default **true** (opt-out) — use a mutually exclusive group:
+
+```python
+group = parser.add_mutually_exclusive_group()
+group.add_argument('--au-deduplicate', '--au_deduplicate', dest='au_deduplicate',
+                   action='store_true', default=None, help='...')
+group.add_argument('--no-au-deduplicate', '--no_au_deduplicate', dest='au_deduplicate',
+                   action='store_false', help='...')
+```
+
+## Example
+
+```bash
+python main.py --config-path configs/ComplEx-AU_WN18RR.json --au-deduplicate false --lr 0.1
+```
+
+JSON remains the primary config; CLI overrides win on re-parse.
