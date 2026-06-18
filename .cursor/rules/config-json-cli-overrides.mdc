@@ -25,13 +25,6 @@ When adding or changing keys in `configs/*.json`, also register them in `configs
 Default **false** (opt-in):
 
 ```python
-parser.add_argument('--au-per-epoch', '--au_per_epoch', dest='au_per_epoch',
-                    action='store_true', default=None, help='...')
-```
-
-Default **true** (opt-out) — use a mutually exclusive group:
-
-```python
 group = parser.add_mutually_exclusive_group()
 group.add_argument('--au-deduplicate', '--au_deduplicate', dest='au_deduplicate',
                    action='store_true', default=None, help='...')
