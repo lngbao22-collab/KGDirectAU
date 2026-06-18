@@ -215,6 +215,20 @@ def build_parser() -> argparse.ArgumentParser:
         action='store_false',
         help='disable normalized link-prediction scoring',
     )
+    au_normalize_group = parser.add_mutually_exclusive_group()
+    au_normalize_group.add_argument(
+        '--normalize-au-vectors', '--normalize_au_vectors',
+        dest='normalize_au_vectors',
+        action='store_true',
+        default=None,
+        help='L2-normalize query/tail vectors for KGAU training (default: on for *-AU except pRotatE-AU)',
+    )
+    au_normalize_group.add_argument(
+        '--no-normalize-au-vectors', '--no_normalize_au_vectors',
+        dest='normalize_au_vectors',
+        action='store_false',
+        help='use raw embeddings for KGAU training vectors',
+    )
 
     # LibKGE-style index KGE training (DistMult, ComplEx, KvsAll, reciprocal relations).
     parser.add_argument('--add-reciprocal-relations', '--add_reciprocal_relations',

@@ -337,6 +337,14 @@ class KGAUStrategy(Evaluator):
 			normalize_uniformity = alignment_mode not in ('phase_residual', 'sin_phase')
 		if alignment_mode != 'cosine':
 			logger.info('KGAU alignment mode: %s (normalize_uniformity=%s)', alignment_mode, normalize_uniformity)
+		normalize_au = getattr(model_obj, 'normalize_au_vectors', None)
+		normalize_lp = getattr(model_obj, 'normalize_lp_scores', None)
+		if normalize_au is not None or normalize_lp is not None:
+			logger.info(
+				'KGAU scoring modes: normalize_au_vectors=%s (training), normalize_lp_scores=%s (link prediction)',
+				normalize_au,
+				normalize_lp,
+			)
 		self.criterion = KGAULoss(
 			gamma_q=_config_float(args, 'gamma_q', 1.0),
 			gamma_t=_config_float(args, 'gamma_t', 1.0),
@@ -670,8 +678,8 @@ class KGAUStrategy(Evaluator):
 			ent = model.entity_embeddings(**kwargs)
 		else:
 			return None
-		if ent is not None and hasattr(model, '_normalize_lp_vector'):
-			ent = model._normalize_lp_vector(ent)
+		if ent is not None and hasattr(model, '_normalize_au_vector'):
+			ent = model._normalize_au_vector(ent)
 		return ent
 
 	def _entity_uniformity_vectors_for_loss(

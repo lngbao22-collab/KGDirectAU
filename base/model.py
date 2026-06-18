@@ -53,6 +53,7 @@ class KGEModel(nn.Module):
 		self.args = args
 		self.rel_to_idx = load_relation_to_idx(args) if args is not None else {}
 		self.normalize_lp_scores = _normalize_lp_flag(args) if args is not None else False
+		self.normalize_au_vectors = _normalize_au_flag(args) if args is not None else False
 
 	def get_s_embedder(self) -> nn.Module:
 		"""Return the subject (head) entity embedder."""
@@ -114,9 +115,16 @@ class KGEModel(nn.Module):
 		return {}
 
 	def _normalize_lp_vector(self, vectors: torch.Tensor) -> torch.Tensor:
-		"""L2-normalize vectors when ``normalize_lp_scores`` is enabled."""
+		"""L2-normalize vectors for cosine link-prediction scoring."""
 
 		if not self.normalize_lp_scores:
+			return vectors
+		return F.normalize(vectors, p=2, dim=-1)
+
+	def _normalize_au_vector(self, vectors: torch.Tensor) -> torch.Tensor:
+		"""L2-normalize vectors fed into KGAU alignment/uniformity terms."""
+
+		if not self.normalize_au_vectors:
 			return vectors
 		return F.normalize(vectors, p=2, dim=-1)
 
@@ -284,10 +292,10 @@ class KGEModel(nn.Module):
 		query = self._lp_query_vectors(s, p)
 		head = self.embed_s(s)
 		tail = self.embed_o(o)
-		if self.normalize_lp_scores:
-			query = self._normalize_lp_vector(query)
-			tail = self._normalize_lp_vector(tail)
-			head = self._normalize_lp_vector(head)
+		if self.normalize_au_vectors:
+			query = self._normalize_au_vector(query)
+			tail = self._normalize_au_vector(tail)
+			head = self._normalize_au_vector(head)
 		return query, tail, head
 
 	def score_batch(self, head_ids, relations, tail_entity_ids) -> torch.Tensor:
@@ -332,10 +340,27 @@ def as_index_tensor(values, lookup, device: torch.device) -> torch.Tensor:
 
 
 def _normalize_lp_flag(args) -> bool:
+	"""Whether link-prediction metrics use L2-normalized dot-product (cosine) scoring."""
+
 	value = getattr(args, 'normalize_lp_scores', None)
 	if value is not None:
 		return bool(value)
-	return str(getattr(args, 'model', '')).endswith('-AU')
+	return False
+
+
+def _normalize_au_flag(args) -> bool:
+	"""Whether KGAU training vectors are L2-normalized before alignment/uniformity."""
+
+	value = getattr(args, 'normalize_au_vectors', None)
+	if value is not None:
+		return bool(value)
+	model = str(getattr(args, 'model', '') or '')
+	if not model.endswith('-AU'):
+		return False
+	# Phase-native alignment (pRotatE-AU) must not L2-normalize AU representations.
+	if 'protate' in model.lower():
+		return False
+	return True
 
 
 class _RelationLookupMixin:
@@ -405,7 +430,12 @@ class DistMultModel(_RelationLookupMixin, KGEModel):
 
 	def get_queries_targets(self, src, rel, dst):
 		h, r, t = self.embed_s(src), self.embed_p(rel), self.embed_o(dst)
-		return h * r, t, h
+		q = h * r
+		if self.normalize_au_vectors:
+			q = self._normalize_au_vector(q)
+			t = self._normalize_au_vector(t)
+			h = self._normalize_au_vector(h)
+		return q, t, h
 
 	def query_all_entities_scores(self, src: torch.Tensor, rel: torch.Tensor) -> torch.Tensor:
 		if self.normalize_lp_scores:
@@ -543,7 +573,14 @@ class ComplExModel(_RelationLookupMixin, KGEModel):
 		return self.score_spo(src, rel, dst)
 
 	def get_queries_targets(self, src, rel, dst):
-		return self._query_vectors(src, rel), self.embed_o(dst), self.embed_s(src)
+		query = self._query_vectors(src, rel)
+		tail = self.embed_o(dst)
+		head = self.embed_s(src)
+		if self.normalize_au_vectors:
+			query = self._normalize_au_vector(query)
+			tail = self._normalize_au_vector(tail)
+			head = self._normalize_au_vector(head)
+		return query, tail, head
 
 	def query_all_entities_scores(self, src: torch.Tensor, rel: torch.Tensor) -> torch.Tensor:
 		if self.normalize_lp_scores:
