@@ -77,16 +77,38 @@ def _build_trial_config(
 	return cfg
 
 
-def _run_trial_subprocess(repo_root: str, trial_config_path: str) -> dict:
+def _run_trial_subprocess(repo_root: str, trial_config_path: str, *, log_path: str | None = None) -> dict:
 	env = os.environ.copy()
 	env['PYTHONPATH'] = repo_root + (os.pathsep + env['PYTHONPATH'] if env.get('PYTHONPATH') else '')
 	cmd = [sys.executable, os.path.join(repo_root, 'scripts', 'hpo', 'train_trial.py'), '--trial-config', trial_config_path]
-	proc = subprocess.run(cmd, cwd=repo_root, capture_output=True, text=True, env=env)
-	if proc.returncode != 0:
-		stderr = (proc.stderr or '').strip()
-		stdout = (proc.stdout or '').strip()
-		raise RuntimeError(f'trial failed (code={proc.returncode})\nstdout={stdout}\nstderr={stderr}')
-	lines = [line.strip() for line in (proc.stdout or '').splitlines() if line.strip()]
+	proc = subprocess.Popen(
+		cmd,
+		cwd=repo_root,
+		stdout=subprocess.PIPE,
+		stderr=subprocess.STDOUT,
+		text=True,
+		env=env,
+		bufsize=1,
+	)
+	stdout_lines: list[str] = []
+	log_handle = open(log_path, 'w', encoding='utf-8') if log_path else None
+	try:
+		assert proc.stdout is not None
+		for line in proc.stdout:
+			stdout_lines.append(line)
+			sys.stdout.write(line)
+			sys.stdout.flush()
+			if log_handle is not None:
+				log_handle.write(line)
+				log_handle.flush()
+	finally:
+		if log_handle is not None:
+			log_handle.close()
+	return_code = proc.wait()
+	stdout = ''.join(stdout_lines)
+	if return_code != 0:
+		raise RuntimeError(f'trial failed (code={return_code})\nstdout={stdout.strip()}')
+	lines = [line.strip() for line in stdout.splitlines() if line.strip()]
 	for line in reversed(lines):
 		try:
 			payload = json.loads(line)
@@ -94,7 +116,7 @@ def _run_trial_subprocess(repo_root: str, trial_config_path: str) -> dict:
 				return payload
 		except json.JSONDecodeError:
 			continue
-	raise RuntimeError(f'could not parse trial output:\n{proc.stdout}')
+	raise RuntimeError(f'could not parse trial output:\n{stdout}')
 
 
 def main() -> int:
@@ -168,14 +190,26 @@ def main() -> int:
 		)
 		_save_json(trial_config_path, trial_cfg)
 
+		print(f'\n{"=" * 72}', flush=True)
+		print(f'Trial {trial.number} started at {datetime.now().isoformat(timespec="seconds")}', flush=True)
+		print(f'Config: {trial_config_path}', flush=True)
+		print(f'Params: {json.dumps(sampled, sort_keys=True)}', flush=True)
+		print(f'{"=" * 72}\n', flush=True)
+
 		started = datetime.now().isoformat(timespec='seconds')
+		trial_log_path = os.path.join(trial_dir, 'trial_console.log')
 		try:
-			result = _run_trial_subprocess(repo_root, trial_config_path)
+			result = _run_trial_subprocess(repo_root, trial_config_path, log_path=trial_log_path)
 		except Exception as exc:
 			_save_json(os.path.join(trial_dir, 'error.json'), {'error': str(exc), 'started': started})
 			raise
 
 		best_mrr = float(result.get('best_mrr', 0.0) or 0.0)
+		print(
+			f'\nTrial {trial.number} finished: best_mrr={best_mrr:.6f} '
+			f'(epoch={result.get("best_epoch")}, train_time={result.get("train_time")}s)\n',
+			flush=True,
+		)
 		_save_json(
 			os.path.join(trial_dir, 'result.json'),
 			{'best_mrr': best_mrr, 'started': started, 'finished': datetime.now().isoformat(timespec='seconds'), **result},

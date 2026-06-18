@@ -39,8 +39,11 @@ def main() -> int:
 
 	args = _load_trial_args(config_path)
 
+	from utils.logger import setup_logger
 	from utils.device import init_hardware
 	from models.builder import build_pipeline
+
+	setup_logger(log_file=os.path.join(args.output_dir, 'run.log'))
 
 	ngpus = init_hardware(args)
 	trainer = build_pipeline(args, ngpus_per_node=ngpus)
