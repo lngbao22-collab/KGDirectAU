@@ -9,19 +9,19 @@
     "early_stopping_patience": 10,
     "early_stopping_min_epochs": 50,
     "early_stopping_min_metric": 0.05,
-    "init_method": "uniform_"
+    "init_method": "uniform_",
+    "batch_size": 128,
+    "dim": 128
   },
   "screening_overrides": {
-    "epochs": 100,
+    "epochs": 30,
     "early_stopping_patience": 5,
     "early_stopping_min_epochs": 30,
     "early_stopping_min_metric": 0.03
   },
   "parameters": {
     "lr": {"type": "loguniform", "low": 0.001, "high": 1.0},
-    "batch_size": {"type": "categorical", "choices": [512, 1024]},
     "optim": {"type": "categorical", "choices": ["adagrad", "adam"]},
-    "dim": {"type": "categorical", "choices": [128, 256]},
     "init_uniform_a": {"type": "uniform", "low": -1.0, "high": -0.01},
     "entity_dropout": {"type": "uniform", "low": 0.0, "high": 0.5},
     "relation_dropout": {"type": "uniform", "low": 0.0, "high": 0.5},

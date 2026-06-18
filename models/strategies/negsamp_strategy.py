@@ -19,6 +19,7 @@ from models.builder import (
 	run_index_kge_train_loop,
 )
 from base.embeddings import embedding_l3_penalty
+from models.scorers.protate_scorer import normalize_protate_phases
 from models.scorers.rotate_scorer import normalize_rotate_phases
 from utils.device import get_model_obj
 from utils.logger import logger
@@ -54,16 +55,20 @@ class NegSampStrategy:
 		self.max_steps = config_int(args, 'max_steps', None)
 		self.shuffle_train = config_bool(args, 'shuffle_train', False)
 		self.use_amp = bool(getattr(args, 'use_amp', False)) and torch.cuda.is_available()
-		self.scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
+		device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
+		self.scaler = torch.amp.GradScaler(device_type, enabled=self.use_amp)
 		self._slot_modes = ['head-batch', 'tail-batch']
 		self._slot_step = 0
 		self._pointwise_mode = hasattr(self.sampler, 'num_entities') or type(self.sampler).__name__ == 'PointwiseNegSampler'
-		self._normalize_rotate_phases = (
-			config_bool(args, 'normalize_phases', False)
-			and str(getattr(args, 'model', '') or '').lower() == 'rotate'
-		)
-		if self._normalize_rotate_phases:
-			normalize_rotate_phases(self.model)
+		model_name = str(getattr(args, 'model', '') or '').lower()
+		self._normalize_phases_fn = None
+		if config_bool(args, 'normalize_phases', False):
+			if model_name == 'rotate':
+				self._normalize_phases_fn = normalize_rotate_phases
+			elif 'protate' in model_name:
+				self._normalize_phases_fn = normalize_protate_phases
+		if self._normalize_phases_fn is not None:
+			self._normalize_phases_fn(self.model)
 
 	def _maybe_decay_learning_rate(self) -> None:
 		if self.next_lr_decay_step is None or self.global_step < self.next_lr_decay_step:
@@ -271,8 +276,8 @@ class NegSampStrategy:
 					torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
 				self.optimizer.step()
 
-			if self._normalize_rotate_phases:
-				normalize_rotate_phases(self.model)
+			if self._normalize_phases_fn is not None:
+				self._normalize_phases_fn(self.model)
 
 			self.global_step += 1
 			self._maybe_decay_learning_rate()

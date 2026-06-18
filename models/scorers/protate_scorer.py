@@ -13,6 +13,37 @@ def build_scorer(args) -> pRotatEScorer:
 	return pRotatEScorer(args)
 
 
+@torch.no_grad()
+def normalize_protate_phases(model) -> None:
+	"""Wrap entity/relation embeddings so pRotatE phases stay in [-pi, pi].
+
+	Matches the original RotatE/pRotatE reference implementation, which maps
+	raw tables through ``embedding / (embedding_range / pi)`` before scoring.
+	Without wrapping, Adagrad can drift embeddings to large values; ``sin(phase)``
+	then oscillates and 1-vs-all ranks stay near random even while negsamp loss falls.
+	"""
+
+	from utils.device import get_model_obj
+
+	model_obj = get_model_obj(model)
+	scorer = getattr(model_obj, 'scorer', None)
+	embedding_range = float(getattr(scorer, 'embedding_range', 0.0) or 0.0)
+	if embedding_range <= 0.0:
+		return
+	phase_scale = embedding_range / math.pi
+
+	for attr in ('ent_embedder', 'rel_embedder'):
+		embedder = getattr(model_obj, attr, None)
+		if embedder is None or not hasattr(embedder, 'weight'):
+			continue
+		embeddings = embedder.weight.data
+		phases = embeddings / phase_scale
+		phases = phases + math.pi
+		phases = torch.remainder(phases, 2.0 * math.pi)
+		phases = phases - math.pi
+		embedder.weight.data[:] = phases * phase_scale
+
+
 class pRotatEScorer(KGEScorer):
 	"""pRotatE score function with explicit 1-to-1 and 1-vs-All tensor paths."""
 
