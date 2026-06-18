@@ -604,6 +604,9 @@ for _name, _default in (('gamma_h', 0.0), ('gamma_ent', 0.0), ('gamma_cross', 0.
     if getattr(args, _name, None) is None:
         setattr(args, _name, _default)
 
+if getattr(args, 'workers', None) is None:
+    args.workers = 0
+
 args.train_path = _resolve_data_path(getattr(args, 'train_path', None) or '')
 args.valid_path = _resolve_data_path(_derive_split_variant(getattr(args, 'valid_path', None) or '', split_name='valid', labeled=False))
 args.test_path = _resolve_data_path(_derive_split_variant(getattr(args, 'test_path', None) or '', split_name='test', labeled=False))
