@@ -113,13 +113,13 @@ def _build_kgau_optimizer(args, model, criterion: KGAULoss, weight_decay: float)
 	if base_group_params:
 		param_groups.append({'params': base_group_params, 'lr': lr, 'weight_decay': weight_decay})
 	if log_tuni_param is not None:
-		log_tuni_lr = float(getattr(args, 'log_uniformity_lr', lr))
+		log_tuni_lr = _config_float(args, 'log_uniformity_lr', lr)
 		param_groups.append({'params': [log_tuni_param], 'lr': log_tuni_lr, 'weight_decay': 0.0})
 	if log_alpha_param is not None:
-		log_alpha_lr = float(getattr(args, 'log_au_alpha_lr', lr))
+		log_alpha_lr = _config_float(args, 'log_au_alpha_lr', lr)
 		param_groups.append({'params': [log_alpha_param], 'lr': log_alpha_lr, 'weight_decay': 0.0})
 	if log_gamma_params:
-		log_gamma_lr = float(getattr(args, 'log_au_gamma_lr', lr))
+		log_gamma_lr = _config_float(args, 'log_au_gamma_lr', lr)
 		param_groups.append({'params': log_gamma_params, 'lr': log_gamma_lr, 'weight_decay': 0.0})
 
 	if not param_groups:
@@ -415,7 +415,7 @@ class KGAUStrategy(Evaluator):
 			logger.info(
 				'Learnable uniformity scale (tuni): initial=%.4f, log_uniformity_lr=%.2e',
 				tuni_val,
-				float(getattr(args, 'log_uniformity_lr', getattr(args, 'lr', 2e-5))),
+				_config_float(args, 'log_uniformity_lr', _config_float(args, 'lr', 2e-5)),
 			)
 		elif config_bool(args, 'tuni_linear_schedule', False):
 			start_scale = _scheduled_tuni_value(args, 0)
@@ -433,7 +433,7 @@ class KGAUStrategy(Evaluator):
 				'Learnable AU alpha: init=%.4f, schedule mult 1.0 -> %.4f, log_au_alpha_lr=%.2e',
 				self.criterion.alpha_value(),
 				float(getattr(args, 'alpha_schedule_end', 10.0)),
-				float(getattr(args, 'log_au_alpha_lr', getattr(args, 'lr', 2e-5))),
+				_config_float(args, 'log_au_alpha_lr', _config_float(args, 'lr', 2e-5)),
 			)
 		if learnable_au_gammas:
 			logger.info(
@@ -445,7 +445,7 @@ class KGAUStrategy(Evaluator):
 				self.criterion._gamma_init_value('ent'),
 				self.criterion._gamma_init_value('cross'),
 				float(getattr(args, 'gamma_schedule_end', 0.1)),
-				float(getattr(args, 'log_au_gamma_lr', getattr(args, 'lr', 2e-5))),
+				_config_float(args, 'log_au_gamma_lr', _config_float(args, 'lr', 2e-5)),
 			)
 		if _gamma_schedule_enabled(args):
 			end_mult = float(getattr(args, 'gamma_schedule_end', 0.1))

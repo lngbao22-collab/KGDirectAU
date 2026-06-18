@@ -6,20 +6,16 @@ from typing import List, TYPE_CHECKING
 
 from configs.config import args
 from data.dict_hub import get_train_triplet_dict, get_entity_dict
-from data.dataset import EntityDict, TripletDict
-entity_dict: EntityDict = get_entity_dict()
-train_triplet_dict: TripletDict = get_train_triplet_dict() if not args.is_test else None
-from data.dict_hub import get_train_triplet_dict, get_entity_dict
 
 if TYPE_CHECKING:
     from data.dataset import EntityDict, TripletDict
 
-entity_dict = get_entity_dict()
-train_triplet_dict = get_train_triplet_dict() if not args.is_test else None
-
 
 def construct_mask(row_exs: List, col_exs: List = None) -> torch.tensor:
     """Construct a mask for in-batch negatives, masking out true neighbors and optionally self-negatives on the diagonal."""
+
+    entity_dict = get_entity_dict()
+    train_triplet_dict = get_train_triplet_dict()
 
     positive_on_diagonal = col_exs is None
     num_row = len(row_exs)
@@ -54,6 +50,8 @@ def construct_mask(row_exs: List, col_exs: List = None) -> torch.tensor:
 
 def construct_self_negative_mask(exs: List) -> torch.tensor:
     """Construct a mask for self-negatives, masking out examples whose head entity is also a neighbor of itself under the same relation."""
+
+    train_triplet_dict = get_train_triplet_dict()
 
     mask = torch.ones(len(exs))
     for idx, ex in enumerate(exs):
