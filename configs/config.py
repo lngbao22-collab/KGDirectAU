@@ -227,6 +227,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--au-uniformity-global-per-batch', '--au_uniformity_global_per_batch',
                         dest='au_uniformity_global_per_batch', action='store_true', default=False,
                         help='KGAU: per-batch optimization with batch alignment and full-dataset uniformity each step')
+    au_deduplicate_group = parser.add_mutually_exclusive_group()
+    au_deduplicate_group.add_argument(
+        '--au-deduplicate', '--au_deduplicate',
+        dest='au_deduplicate',
+        action='store_true',
+        default=None,
+        help='KGAU: deduplicate query/tail/head/entity ids before uniformity loss (default: true)',
+    )
+    au_deduplicate_group.add_argument(
+        '--no-au-deduplicate', '--no_au_deduplicate',
+        dest='au_deduplicate',
+        action='store_false',
+        help='KGAU: use all batch rows for uniformity (DirectAU-style, no id dedup)',
+    )
     normalize_group = parser.add_mutually_exclusive_group()
     normalize_group.add_argument(
         '--normalize-lp-scores', '--normalize_lp_scores',

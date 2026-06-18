@@ -45,6 +45,7 @@
   "gamma_cross": 1.0,
   "gamma_h": 0,
   "gamma_ent": 0,
+  "au_deduplicate": false,
   "tuni": 2,
   "epoch_per_eval": 5,
   "tie_handling": "rounded_mean_rank",

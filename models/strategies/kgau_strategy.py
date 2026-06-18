@@ -314,6 +314,7 @@ class KGAUStrategy(Evaluator):
 			weight_decay = 0.0
 		batch_size = max(getattr(args, 'batch_size', 1), 1)
 		num_batches = max(math.ceil(len(self.train_examples) / batch_size), 1)
+		self.au_deduplicate = config_bool(args, 'au_deduplicate', True)
 		self.au_per_epoch = config_bool(args, 'au_per_epoch', False)
 		self.au_uniformity_per_epoch = config_bool(args, 'au_uniformity_per_epoch', False)
 		self.au_uniformity_global_per_batch = config_bool(args, 'au_uniformity_global_per_batch', False)
@@ -464,10 +465,13 @@ class KGAUStrategy(Evaluator):
 			)
 		self.optimizer = _build_kgau_optimizer(args, self.model, self.criterion, self.weight_decay)
 		self.lr_scheduler = build_lr_scheduler(args, self.optimizer)
+		logger.info('KGAU au_deduplicate: %s', self.au_deduplicate)
 		if self.criterion.gamma_active('ent') and self.uses_text_inputs:
+			ent_mode = 'deduplicated' if self.au_deduplicate else 'all batch'
 			logger.info(
-				'Entity uniformity (text encoder): gamma_ent uses deduplicated batch head+tail vectors '
+				'Entity uniformity (text encoder): gamma_ent uses %s head+tail vectors '
 				'(max_uniformity_samples=%d)',
+				ent_mode,
 				self.criterion.max_uniformity_samples,
 			)
 		self.best_metric = None
@@ -542,15 +546,22 @@ class KGAUStrategy(Evaluator):
 		epoch_number = epoch + 1
 		return epoch_number % interval == 0 or epoch_number >= int(self.args.epochs)
 
+	def _uniformity_row_indices(self, keys: torch.Tensor) -> torch.Tensor:
+		"""Row indices for epoch/global uniformity: unique keys or all rows."""
+
+		if self.au_deduplicate:
+			return distinct_first_indices(keys)
+		return torch.arange(keys.size(0), device=keys.device, dtype=torch.long)
+
 	def _build_epoch_uniformity_representatives(self) -> None:
-		"""Precompute one training-row index per unique query/tail/head key for epoch AU."""
+		"""Precompute training-row indices for epoch AU (unique keys or full set)."""
 
 		q_keys, t_keys, h_keys = self._uniformity_keys(
 			self.train_src, self.train_rel, self.train_dst,
 		)
-		self.epoch_q_rep_idx = distinct_first_indices(q_keys)
-		self.epoch_t_rep_idx = distinct_first_indices(t_keys)
-		self.epoch_h_rep_idx = distinct_first_indices(h_keys)
+		self.epoch_q_rep_idx = self._uniformity_row_indices(q_keys)
+		self.epoch_t_rep_idx = self._uniformity_row_indices(t_keys)
+		self.epoch_h_rep_idx = self._uniformity_row_indices(h_keys)
 
 	def _uniformity_keys(
 		self,
@@ -591,7 +602,12 @@ class KGAUStrategy(Evaluator):
 		t_keys: torch.Tensor,
 		h_keys: torch.Tensor,
 	) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None, int, int]:
-		"""Deduplicate embeddings per uniformity type before AU uniformity loss."""
+		"""Select uniformity rows: deduplicated by id keys, or full batch (DirectAU-style)."""
+
+		n_unique_q = q_raw.size(0) if self.criterion.gamma_active('q') else 0
+		n_unique_t = t_raw.size(0) if self.criterion.gamma_active('t') else 0
+		if not self.au_deduplicate:
+			return None, None, None, n_unique_q, n_unique_t
 
 		q_uni = select_distinct_rows(q_raw, q_keys) if self.criterion.gamma_active('q') else None
 		t_uni = select_distinct_rows(t_raw, t_keys) if self.criterion.gamma_active('t') else None
@@ -624,8 +640,11 @@ class KGAUStrategy(Evaluator):
 
 		if not self.criterion.gamma_active('cross'):
 			return None
-		q_uni = select_distinct_rows(q_raw, q_keys)
-		t_uni = select_distinct_rows(t_raw, t_keys)
+		if self.au_deduplicate:
+			q_uni = select_distinct_rows(q_raw, q_keys)
+			t_uni = select_distinct_rows(t_raw, t_keys)
+		else:
+			q_uni, t_uni = q_raw, t_raw
 		return self._merge_cross_uniformity_vectors(q_uni, t_uni)
 
 	def _count_unique_uniformity_keys(
@@ -634,7 +653,12 @@ class KGAUStrategy(Evaluator):
 		relation_indices: torch.Tensor,
 		tail_indices: torch.Tensor,
 	) -> tuple[int, int]:
-		"""Count unique query/tail keys in a full training batch (logging only; cheap)."""
+		"""Count uniformity rows used for logging (unique keys or batch size)."""
+
+		if not self.au_deduplicate:
+			n_unique_q = int(head_indices.numel()) if self.criterion.gamma_active('q') else 0
+			n_unique_t = int(tail_indices.numel()) if self.criterion.gamma_active('t') else 0
+			return n_unique_q, n_unique_t
 
 		q_keys, t_keys, _ = self._uniformity_keys(head_indices, relation_indices, tail_indices)
 		n_unique_q = int(distinct_first_indices(q_keys).numel()) if self.criterion.gamma_active('q') else 0
@@ -703,15 +727,18 @@ class KGAUStrategy(Evaluator):
 		h_keys: torch.Tensor,
 		t_keys: torch.Tensor,
 	) -> torch.Tensor | None:
-		"""Build entity-uniformity inputs from unique batch heads and tails (SimKGC-style).
+		"""Build entity-uniformity inputs from batch heads and tails (SimKGC-style).
 
-		Matches ``--uniformity-on-entity`` in the standalone SimKGC repo: one pooled
-		uniformity term over deduplicated head/tail entity vectors from the current
-		batch, with gradients flowing through the main forward pass.
+		When ``au_deduplicate`` is enabled, keeps one vector per unique entity id.
+		Otherwise pools all batch head/tail rows (DirectAU-style batch uniformity).
 		"""
 
 		if not self.criterion.gamma_active('ent') or h_raw.size(0) == 0:
 			return None
+
+		if not self.au_deduplicate:
+			ent = torch.cat([h_raw, t_raw], dim=0)
+			return ent if ent.size(0) >= 2 else None
 
 		seen: set[int] = set()
 		rows: list[torch.Tensor] = []

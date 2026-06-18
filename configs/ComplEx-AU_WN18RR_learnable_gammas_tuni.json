@@ -45,6 +45,7 @@
   "gamma_cross": 1,
   "gamma_h": 0,
   "gamma_ent": 0,
+  "au_deduplicate": true,
   "learnable_au_gammas": true,
   "log_au_gamma_lr": 0.1,
   "gamma_linear_schedule": true,
