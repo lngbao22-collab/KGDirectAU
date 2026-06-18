@@ -54,8 +54,10 @@ class KGAULoss(nn.Module):
 		gamma_h=0.0,
 		gamma_ent=0.0,
 		gamma_cross=0.0,
+		alpha: float = 1.0,
 		tuni=2.0,
 		learnable_tuni: bool = False,
+		learnable_au_alpha: bool = False,
 		learnable_au_gammas: bool = False,
 		max_uniformity_samples: int = 1024,
 		additive_margin: float = 0.0,
@@ -63,7 +65,17 @@ class KGAULoss(nn.Module):
 		normalize_uniformity: bool = True,
 	):
 		super().__init__()
+		self.learnable_au_alpha = bool(learnable_au_alpha)
 		self.learnable_au_gammas = bool(learnable_au_gammas)
+		alpha_init = _coalesce_float(alpha, 1.0)
+		self.register_buffer('alpha_init', torch.tensor(alpha_init))
+		if not self.learnable_au_alpha:
+			self._alpha = alpha_init
+		else:
+			# Bounded upward adjustment only: exp(adj) in [1, inf), init at 0.
+			# Unconstrained log-scale alpha falls under alignment loss minimization.
+			self.log_alpha_adj = nn.Parameter(torch.zeros(()))
+		self.register_buffer('alpha_schedule_mult', torch.tensor(1.0))
 		gamma_inits = {
 			'q': _coalesce_float(gamma_q, 1.0),
 			't': _coalesce_float(gamma_t, 1.0),
@@ -105,6 +117,9 @@ class KGAULoss(nn.Module):
 	def gamma_schedule_mult_value(self) -> float:
 		return float(self.gamma_schedule_mult.detach().cpu().item())
 
+	def alpha_schedule_mult_value(self) -> float:
+		return float(self.alpha_schedule_mult.detach().cpu().item())
+
 	def _learnable_gamma_factor(self, name: str) -> torch.Tensor:
 		adj = getattr(self, f'log_gamma_adj_{name}')
 		return torch.exp(torch.clamp(adj, max=0.0))
@@ -114,6 +129,20 @@ class KGAULoss(nn.Module):
 
 	def set_gamma_schedule_mult(self, mult: float) -> None:
 		self.gamma_schedule_mult.fill_(float(mult))
+
+	def set_alpha_schedule_mult(self, mult: float) -> None:
+		self.alpha_schedule_mult.fill_(float(mult))
+
+	def _learnable_alpha_factor(self) -> torch.Tensor:
+		return torch.exp(torch.clamp(self.log_alpha_adj, min=0.0))
+
+	def clamp_learnable_alpha_adj(self) -> None:
+		"""Keep learnable alpha adjustments at or above 0 (effective factor in [1, inf))."""
+
+		if not self.learnable_au_alpha:
+			return
+		with torch.no_grad():
+			self.log_alpha_adj.clamp_(min=0.0)
 
 	def clamp_learnable_gamma_adj(self) -> None:
 		"""Keep learnable gamma adjustments at or below 0 (effective factor in (0, 1])."""
@@ -134,6 +163,20 @@ class KGAULoss(nn.Module):
 				return init * mult
 			return init * mult * self._learnable_gamma_factor(name)
 		return float(getattr(self, f'_gamma_{name}')) * float(mult)
+
+	def _effective_alpha(self) -> torch.Tensor | float:
+		mult = self.alpha_schedule_mult
+		if self.learnable_au_alpha:
+			return self.alpha_init * mult * self._learnable_alpha_factor()
+		return float(self._alpha) * float(mult)
+
+	def alpha_value(self) -> float:
+		"""Scalar effective alignment scale for logging and control flow."""
+
+		value = self._effective_alpha()
+		if torch.is_tensor(value):
+			return float(value.detach().cpu().item())
+		return float(value)
 
 	def gamma_value(self, name: str) -> float:
 		"""Scalar effective gamma for logging and control flow."""
@@ -317,14 +360,12 @@ class KGAULoss(nn.Module):
 		active_frac = float((scaled_dist_sq < geom_margin).float().mean().item())
 		return spread + buffer, active_frac
 
-	def forward_alignment(
+	def _raw_alignment_loss(
 		self,
 		q: torch.Tensor,
 		t: torch.Tensor,
 		external_align: torch.Tensor | None = None,
 	) -> torch.Tensor:
-		"""Alignment term only (mean over rows of ``q`` and ``t``)."""
-
 		if external_align is not None:
 			return external_align
 		if self.alignment_mode == 'sin_phase':
@@ -332,6 +373,17 @@ class KGAULoss(nn.Module):
 		if self.alignment_mode == 'phase_residual':
 			return (q - t).pow(2).sum(dim=-1).mean()
 		return self.alignment_loss(q, t)
+
+	def forward_alignment(
+		self,
+		q: torch.Tensor,
+		t: torch.Tensor,
+		external_align: torch.Tensor | None = None,
+	) -> torch.Tensor:
+		"""Alignment term only (mean over rows of ``q`` and ``t``), scaled by ``alpha``."""
+
+		raw = self._raw_alignment_loss(q, t, external_align=external_align)
+		return self._effective_alpha() * raw
 
 	def forward_uniformity(
 		self,

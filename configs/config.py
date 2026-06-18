@@ -138,6 +138,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help='L2 regularization strength (kgau/softmax; overrides weight_decay when set)')
 
     # KGAU alignment-uniformity hyperparameters (DistMult-AU, ComplEx-AU, etc.).
+    parser.add_argument('--alpha', default=None, type=float,
+                        help='alignment loss scale (default 1.0)')
     parser.add_argument('--gamma-q', '--gamma_q', default=None, type=float,
                         help='uniformity weight for query embeddings')
     parser.add_argument('--gamma-t', '--gamma_t', default=None, type=float,
@@ -148,6 +150,30 @@ def build_parser() -> argparse.ArgumentParser:
                         help='uniformity weight for all entity embeddings')
     parser.add_argument('--gamma-cross', '--gamma_cross', default=None, type=float,
                         help='uniformity weight on pooled query+tail vectors (joint LP space)')
+    parser.add_argument('--learnable-au-scales', '--learnable_au_scales',
+                        dest='learnable_au_scales', action='store_true', default=False,
+                        help='learnable alpha + independent learnable gammas with opposing epoch schedules')
+    parser.add_argument('--learnable-au-alpha', '--learnable_au_alpha',
+                        dest='learnable_au_alpha', action='store_true', default=False,
+                        help='make AU alignment scale alpha learnable (log re-parameterization)')
+    parser.add_argument('--log-au-alpha-lr', '--log_au_alpha_lr', default=None, type=float,
+                        dest='log_au_alpha_lr',
+                        help='learning rate for learnable log-alpha parameter')
+    parser.add_argument('--alpha-linear-schedule', '--alpha_linear_schedule',
+                        dest='alpha_linear_schedule', action='store_true', default=False,
+                        help='linearly increase AU alpha multiplier from 1.0 to alpha_schedule_end')
+    parser.add_argument('--no-alpha-linear-schedule', dest='alpha_linear_schedule',
+                        action='store_false',
+                        help='disable alpha linear schedule (even with learnable_au_alpha)')
+    parser.add_argument('--alpha-schedule-end', '--alpha_schedule_end', default=None, type=float,
+                        dest='alpha_schedule_end',
+                        help='alpha schedule multiplier at the last scheduled epoch')
+    parser.add_argument('--alpha-schedule-start-epoch', '--alpha_schedule_start_epoch', default=None, type=int,
+                        dest='alpha_schedule_start_epoch',
+                        help='epoch index (0-based) to begin alpha linear schedule')
+    parser.add_argument('--alpha-schedule-epochs', '--alpha_schedule_epochs', default=None, type=int,
+                        dest='alpha_schedule_epochs',
+                        help='epochs over which to schedule alpha multiplier (0: full training)')
     parser.add_argument('--learnable-au-gammas', '--learnable_au_gammas',
                         dest='learnable_au_gammas', action='store_true', default=False,
                         help='make AU uniformity gammas learnable (log re-parameterization)')
