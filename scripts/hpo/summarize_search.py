@@ -17,17 +17,28 @@ def _repo_root() -> str:
 
 def main() -> int:
 	parser = argparse.ArgumentParser(description='Summarize ComplEx-AU HPO study')
+	parser.add_argument(
+		'--search-space',
+		default='scripts/hpo/search_space_complex_au_wn18rr.json',
+		help='Search space JSON (relative to repo root; used for study_dir)',
+	)
 	parser.add_argument('--study-name', default='complex_au_wn18rr')
 	parser.add_argument(
 		'--storage',
 		default='',
-		help='Optuna storage URL (default: logs/hpo/ComplEx-AU_WN18RR/optuna.db)',
+		help='Optuna storage URL (default: logs/hpo/<study_dir>/optuna.db)',
 	)
 	parser.add_argument('--top-k', type=int, default=10, help='Number of top trials to list')
 	args = parser.parse_args()
 
 	repo_root = _repo_root()
-	study_root = os.path.join(repo_root, 'logs', 'hpo', 'ComplEx-AU_WN18RR')
+	search_space_path = args.search_space
+	if not os.path.isabs(search_space_path):
+		search_space_path = os.path.join(repo_root, search_space_path)
+	with open(search_space_path, 'r', encoding='utf-8') as handle:
+		search_space = json.load(handle)
+	study_dir = search_space.get('study_dir', 'ComplEx-AU_WN18RR')
+	study_root = os.path.join(repo_root, 'logs', 'hpo', study_dir)
 	storage = args.storage or f'sqlite:///{os.path.join(study_root, "optuna.db")}'
 	study = optuna.load_study(study_name=args.study_name, storage=storage)
 

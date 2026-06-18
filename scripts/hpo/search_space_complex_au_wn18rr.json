@@ -1,14 +1,15 @@
 {
-  "description": "LibKGE-style search space for ComplEx-AU on WN18RR (ICLR 2020 template + AU knobs)",
-  "base_config": "configs/ComplEx-AU_WN18RR.json",
+  "description": "LibKGE-style search for ComplEx-AU with learnable gammas/tuni on WN18RR",
+  "base_config": "configs/ComplEx-AU_WN18RR_learnable_gammas_tuni.json",
+  "study_dir": "ComplEx-AU_WN18RR_learnable_gammas_tuni",
   "objective": "maximize_valid_mrr",
   "fixed_overrides": {
-    "task": "link",
     "epochs": 400,
     "epoch_per_eval": 5,
     "early_stopping_patience": 10,
     "early_stopping_min_epochs": 50,
-    "early_stopping_min_metric": 0.05
+    "early_stopping_min_metric": 0.05,
+    "init_method": "uniform_"
   },
   "screening_overrides": {
     "epochs": 100,
@@ -21,21 +22,13 @@
     "batch_size": {"type": "categorical", "choices": [512, 1024]},
     "optim": {"type": "categorical", "choices": ["adagrad", "adam"]},
     "dim": {"type": "categorical", "choices": [128, 256]},
-    "init_method": {"type": "categorical", "choices": ["uniform_", "xavier_normal_"]},
-    "init_uniform_a": {"type": "uniform", "low": -1.0, "high": -0.01, "when": {"init_method": "uniform_"}},
+    "init_uniform_a": {"type": "uniform", "low": -1.0, "high": -0.01},
     "entity_dropout": {"type": "uniform", "low": 0.0, "high": 0.5},
     "relation_dropout": {"type": "uniform", "low": 0.0, "high": 0.5},
     "entity_regularize_weight": {"type": "loguniform", "low": 1e-8, "high": 1e-3},
     "relation_regularize_weight": {"type": "loguniform", "low": 1e-12, "high": 1e-6},
     "entity_regularize_weighted": {"type": "categorical", "choices": [true, false]},
     "relation_regularize_weighted": {"type": "categorical", "choices": [true, false]},
-    "lr_scheduler_patience": {"type": "int", "low": 3, "high": 10},
-    "gamma_q": {"type": "loguniform", "low": 0.01, "high": 10.0},
-    "gamma_t": {"type": "loguniform", "low": 0.01, "high": 10.0},
-    "gamma_h": {"type": "categorical", "choices": [0.0, 0.1, 0.5, 1.0]},
-    "gamma_ent": {"type": "categorical", "choices": [0.0, 0.1, 0.5, 1.0]},
-    "gamma_cross": {"type": "loguniform", "low": 0.01, "high": 10.0},
-    "tuni": {"type": "loguniform", "low": 0.5, "high": 16.0},
-    "normalize_lp_scores": {"type": "categorical", "choices": [true, false]}
+    "lr_scheduler_patience": {"type": "int", "low": 3, "high": 10}
   }
 }

@@ -49,8 +49,10 @@ def _suggest_from_spec(trial: optuna.Trial, name: str, spec: dict, sampled: dict
 	raise ValueError(f'Unsupported parameter type for {name}: {param_type}')
 
 
-def _uniformity_active(params: dict) -> bool:
-	return any(float(params.get(key, 0.0) or 0.0) > 0.0 for key in ('gamma_q', 'gamma_t', 'gamma_h', 'gamma_ent', 'gamma_cross'))
+def _uniformity_active(params: dict, base_cfg: dict) -> bool:
+	merged = dict(base_cfg)
+	merged.update(params)
+	return any(float(merged.get(key, 0.0) or 0.0) > 0.0 for key in ('gamma_q', 'gamma_t', 'gamma_h', 'gamma_ent', 'gamma_cross'))
 
 
 def _build_trial_config(
@@ -128,7 +130,8 @@ def main() -> int:
 		base_config_path = os.path.join(repo_root, base_config_path)
 	base_cfg = _load_json(base_config_path)
 
-	study_root = os.path.join(repo_root, 'logs', 'hpo', 'ComplEx-AU_WN18RR')
+	study_dir = search_space.get('study_dir', 'ComplEx-AU_WN18RR')
+	study_root = os.path.join(repo_root, 'logs', 'hpo', study_dir)
 	os.makedirs(study_root, exist_ok=True)
 	storage = args.storage or f'sqlite:///{os.path.join(study_root, "optuna.db")}'
 	study = optuna.create_study(
@@ -149,7 +152,7 @@ def main() -> int:
 			if value is not None:
 				sampled[name] = value
 
-		if not _uniformity_active(sampled):
+		if not _uniformity_active(sampled, base_cfg):
 			raise optuna.TrialPruned('at least one gamma_* must be > 0')
 
 		trial_dir = os.path.join(study_root, f'trial_{trial.number:04d}')

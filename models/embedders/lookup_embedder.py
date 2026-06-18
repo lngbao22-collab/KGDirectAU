@@ -153,7 +153,7 @@ def _init_lookup_table(embedder: LookupEmbedder, args, dim: int, role: str) -> N
 def _init_rotate_weight(weight: nn.Parameter, args, *, role: str, hidden_dim: int) -> None:
 	"""Initialize RotatE/pRotatE parameter tables (LibKGE ``lookup_embedder.initialize``)."""
 
-	full_dim = hidden_dim * 2 if role == 'entity' else hidden_dim
+	full_dim = hidden_dim * 2 if role == 'entity' and _is_rotate(args) else hidden_dim
 	if role == 'relation' and _is_rotate(args):
 		low = float(getattr(args, 'init_relation_uniform_a', -math.pi))
 		high = float(getattr(args, 'init_relation_uniform_b', math.pi))
