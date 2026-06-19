@@ -59,7 +59,7 @@ python -m venv .venv
 source .venv/bin/activate
 
 # Windows (PowerShell)
-.venv\Scripts\Activate.ps1
+.venv\Scripts\activate
 ```
 
 1) Install dependencies (recommended inside a virtualenv):
