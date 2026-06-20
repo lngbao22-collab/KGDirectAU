@@ -787,6 +787,9 @@ args.config_path = config_path
 _model_name = (args.model or '').lower()
 _is_text_model = _model_name not in {'distmult', 'distmult-au', 'complex', 'complex-au', 'dabr', 'dabr-au'}
 
+if getattr(args, 'normalize_phases', None) is None and _model_name in {'protate', 'protate-au'}:
+    args.normalize_phases = True
+
 if _is_text_model:
     args.encoder = args.bert_encoder
     args.pretrained_model = args.bert_encoder

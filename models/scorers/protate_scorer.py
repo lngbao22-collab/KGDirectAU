@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 import torch
+import torch.nn as nn
 
 from base.kge_scorer import KGEScorer
 
@@ -58,7 +59,10 @@ class pRotatEScorer(KGEScorer):
 		self.margin = float(6.0 if margin_value is None else margin_value)
 		epsilon = float(getattr(args, "epsilon", 2.0))
 		self.embedding_range = float((self.margin + epsilon) / max(self.dim, 1))
-		self.modulus = float(getattr(args, "modulus", 0.5 * self.embedding_range))
+		modulus_init = getattr(args, 'modulus', None)
+		if modulus_init is None:
+			modulus_init = 0.5 * self.embedding_range
+		self.modulus = nn.Parameter(torch.tensor(float(modulus_init)))
 
 	def _phase(self, embeddings: torch.Tensor) -> torch.Tensor:
 		"""Map raw tensors into the phase space used by pRotatE."""
