@@ -28,7 +28,7 @@
   "relation_regularize_weighted": false,
   "regularize_p": 3,
   "init_method": "uniform_",
-  "init_uniform_a": -0.6208545155431545,
+  "init_uniform_a": -0.8636568121477071,
   "lr_scheduler": "ReduceLROnPlateau",
   "lr_scheduler_mode": "max",
   "lr_scheduler_factor": 0.95,
