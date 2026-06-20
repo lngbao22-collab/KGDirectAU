@@ -19,7 +19,7 @@ from data.dataset import Dataset, load_data
 from data.dict_hub import get_entity_dict, get_relation_id_map
 from models.builder import apply_kge_regularization, build_lr_scheduler, config_bool, load_attr_from_path, step_lr_scheduler
 from base.embeddings import embedding_l3_penalty
-from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, save_checkpoint
+from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, last_model_path, save_checkpoint
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
 from utils.logger import AverageMeter, ProgressMeter, logger
 from utils.memory import PhaseMemoryTracker, format_memory
@@ -1247,7 +1247,14 @@ class KGAUStrategy(Evaluator):
 					if min_metric is None or (best_mrr is not None and best_mrr >= float(min_metric)):
 						bad_counts += 1
 
-			filename = checkpoint_path(self.args.output_dir, epoch)
+			max_to_keep = getattr(self.args, 'max_to_keep', 5)
+			if max_to_keep is None:
+				max_to_keep = 5
+			filename = (
+				last_model_path(self.args.output_dir)
+				if max_to_keep == 0
+				else checkpoint_path(self.args.output_dir, epoch)
+			)
 			saved_checkpoint_path = save_checkpoint({
 				'epoch': epoch,
 				'best_epoch': epoch if is_best else None,
@@ -1259,7 +1266,10 @@ class KGAUStrategy(Evaluator):
 				self.best_checkpoint_path = best_model_path(self.args.output_dir)
 			elif self.best_checkpoint_path is None:
 				self.best_checkpoint_path = saved_checkpoint_path
-			delete_old_ckt(path_pattern='{}/checkpoint_*.mdl'.format(self.args.output_dir), keep=self.args.max_to_keep)
+			delete_old_ckt(
+				path_pattern='{}/checkpoint_*.mdl'.format(self.args.output_dir),
+				keep=max_to_keep,
+			)
 
 			step_lr_scheduler(self.lr_scheduler, metric_dict)
 

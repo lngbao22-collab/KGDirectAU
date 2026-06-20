@@ -119,7 +119,7 @@ def build_parser() -> argparse.ArgumentParser:
                         dest='max_uniformity_pairs',
                         help='maximum random pairwise distances for AU uniformity when full pdist is too large')
     parser.add_argument('--max-to-keep', default=None, type=int,
-                        help='maximum number of checkpoints to keep')
+                        help='max rolling checkpoint_epoch*.mdl files to keep; 0 = only best_model.mdl and last_model.mdl')
     parser.add_argument('--neighbor-weight', default=None, type=float,
                         help='reranking weight')
     parser.add_argument('--pooling', default=None, type=str,

@@ -1,0 +1,36 @@
+{
+  "description": "Stage-2 HPO for log_au_gamma_lr and log_uniformity_lr on WN18RR ComplEx-AU (learnable gammas/tuni). Fixes hyperparameters from HPO trial 27 (valid MRR 0.4624).",
+  "base_config": "configs/ComplEx-AU_WN18RR_learnable_gammas_tuni.json",
+  "study_dir": "ComplEx-AU_WN18RR_learnable_gammas_tuni_lrs",
+  "objective": "maximize_valid_mrr",
+  "fixed_overrides": {
+    "epochs": 400,
+    "epoch_per_eval": 5,
+    "early_stopping_patience": 10,
+    "early_stopping_min_epochs": 50,
+    "early_stopping_min_metric": 0.05,
+    "init_method": "uniform_",
+    "batch_size": 128,
+    "dim": 128,
+    "lr": 0.0960354601024349,
+    "optim": "adagrad",
+    "init_uniform_a": -0.8636568121477071,
+    "entity_dropout": 0.123629106451338,
+    "relation_dropout": 0.04795833334040639,
+    "entity_regularize_weight": 1.9981990187781732e-06,
+    "relation_regularize_weight": 1.6321594850733775e-09,
+    "entity_regularize_weighted": false,
+    "relation_regularize_weighted": false,
+    "lr_scheduler_patience": 7
+  },
+  "screening_overrides": {
+    "epochs": 30,
+    "early_stopping_patience": 5,
+    "early_stopping_min_epochs": 30,
+    "early_stopping_min_metric": 0.03
+  },
+  "parameters": {
+    "log_au_gamma_lr": {"type": "loguniform", "low": 1e-5, "high": 1.0},
+    "log_uniformity_lr": {"type": "loguniform", "low": 1e-5, "high": 0.5}
+  }
+}
