@@ -291,6 +291,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--add-reciprocal-relations', '--add_reciprocal_relations',
                         dest='add_reciprocal_relations', action='store_true',
                         help='train with inverse relations (reciprocal_relations_model)')
+    parser.add_argument('--bidirectional-1vsall', '--bidirectional_1vsall',
+                        dest='bidirectional_1vsall', action='store_true', default=None,
+                        help='train both tail (sp_) and head (po_) 1-vs-all CE losses')
+    parser.add_argument('--sparse-embeddings', '--sparse_embeddings',
+                        dest='sparse_embeddings', action='store_true', default=None,
+                        help='use sparse Embedding tables (kbc-style Adagrad)')
     parser.add_argument('--label-smoothing', '--label_smoothing', default=None, type=float,
                         dest='label_smoothing', help='KvsAll label smoothing')
     parser.add_argument('--loss-arg', '--loss_arg', default=None, type=float,
@@ -305,8 +311,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--relation-regularize-weight', '--relation_regularize_weight',
                         default=None, type=float, dest='relation_regularize_weight',
                         help='L3 relation embedding regularization weight')
+    parser.add_argument('--regularizer', default=None, type=str,
+                        help='regularization backend: n3_kbc (kbc ComplEx N3) or LibKGE L3 (default)')
+    parser.add_argument('--regularize-weight', '--regularize_weight', default=None, type=float,
+                        dest='regularize_weight', help='kbc N3 regularization weight')
     parser.add_argument('--init-method', '--init_method', default=None, type=str,
-                        dest='init_method', help='lookup init: uniform_, xavier_uniform_, scaled')
+                        dest='init_method', help='lookup init: uniform_, xavier_uniform_, scaled, kbc')
+    parser.add_argument('--init-scale', '--init_scale', default=None, type=float,
+                        dest='init_scale', help='kbc init scale applied after default Embedding init')
     parser.add_argument('--init-uniform-a', '--init_uniform_a', default=None, type=float,
                         dest='init_uniform_a', help='uniform_ lower bound (upper defaults to -a)')
     parser.add_argument('--init-uniform-b', '--init_uniform_b', default=None, type=float,

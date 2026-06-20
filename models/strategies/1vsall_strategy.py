@@ -75,7 +75,13 @@ class OneVsAllStrategy:
 		else:
 			loss = loss_sp
 
-		loss = apply_kge_regularization(loss, self.model, self.args)
+		batch_triples = torch.stack([h_idx, r_idx, t_idx], dim=1)
+		loss = apply_kge_regularization(
+			loss,
+			self.model,
+			self.args,
+			batch_triples=batch_triples,
+		)
 		loss.backward()
 		self.optimizer.step()
 		return float(loss.item())

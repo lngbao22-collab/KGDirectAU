@@ -37,7 +37,8 @@ class LookupEmbedder(nn.Module):
 		self.args = args
 		self.role = role
 		self.dropout_rate = _lookup_dropout_rate(args, role)
-		self.embedding = nn.Embedding(self.num_items, self.dim)
+		sparse = bool(getattr(args, 'sparse_embeddings', False))
+		self.embedding = nn.Embedding(self.num_items, self.dim, sparse=sparse)
 		self._reset_parameters()
 
 	def _reset_parameters(self) -> None:

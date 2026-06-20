@@ -13,7 +13,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from base.embeddings import compute_kge_l3_regularization, use_reciprocal_relations
+from base.embeddings import compute_kge_regularization, use_reciprocal_relations
 from base.model import KGEModel, TextKGEModel
 from data.dataset import PointwiseDataset, load_data
 from data.dict_hub import get_entity_dict, get_relation_id_map
@@ -288,7 +288,7 @@ def apply_kge_regularization(
 	*,
 	batch_triples: torch.Tensor | None = None,
 ) -> torch.Tensor:
-	reg_term = compute_kge_l3_regularization(
+	reg_term = compute_kge_regularization(
 		get_model_obj(model),
 		args,
 		batch_triples=batch_triples,

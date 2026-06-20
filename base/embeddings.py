@@ -112,6 +112,9 @@ def init_lookup_embedding(module: nn.Module, args: Any | None, dim: int, role: s
 		nn.init.normal_(weight, mean=mean, std=std)
 	elif init_method == 'scaled':
 		_scaled_init(module, dim)
+	elif init_method == 'kbc':
+		scale = float(getattr(args, 'init_scale', 1e-3))
+		weight.data.mul_(scale)
 	else:
 		nn.init.xavier_uniform_(weight)
 
@@ -192,6 +195,86 @@ def _weighted_lp_penalty(
 		* (parameters ** p * counts.float().view(-1, 1)).sum()
 		/ max(int(num_indexes), 1)
 	)
+
+
+def _complex_batch_factor_norms(
+	ent_embedder: nn.Module,
+	rel_embedder: nn.Module,
+	h_idx: torch.Tensor,
+	r_idx: torch.Tensor,
+	t_idx: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None:
+	"""Return kbc ComplEx N3 factors: L2 norms of complex components per rank."""
+
+	if not (hasattr(ent_embedder, 'ent_re') and hasattr(ent_embedder, 'ent_im')):
+		return None
+	if not (hasattr(rel_embedder, 'rel_re') and hasattr(rel_embedder, 'rel_im')):
+		return None
+
+	def _entity_norms(indexes: torch.Tensor) -> torch.Tensor:
+		re = ent_embedder.ent_re.embedding(indexes.long())
+		im = ent_embedder.ent_im.embedding(indexes.long())
+		return torch.sqrt(re ** 2 + im ** 2)
+
+	def _relation_norms(indexes: torch.Tensor) -> torch.Tensor:
+		re = rel_embedder.rel_re.embedding(indexes.long())
+		im = rel_embedder.rel_im.embedding(indexes.long())
+		return torch.sqrt(re ** 2 + im ** 2)
+
+	return _entity_norms(h_idx), _relation_norms(r_idx), _entity_norms(t_idx)
+
+
+def compute_kbc_n3_regularization(
+	model: nn.Module,
+	args: Any | None,
+	*,
+	batch_triples: torch.Tensor,
+) -> torch.Tensor | None:
+	"""kbc-style N3 on batch ComplEx factors: sum_i w |f_i|^3 / batch_size."""
+
+	weight = float(getattr(args, 'regularize_weight', None) or 0.0)
+	if weight == 0.0:
+		weight = float(getattr(args, 'entity_regularize_weight', 0.0) or 0.0)
+	if weight == 0.0:
+		return None
+
+	ent_embedder = getattr(model, 'ent_embedder', None)
+	rel_embedder = getattr(model, 'rel_embedder', None)
+	if ent_embedder is None or rel_embedder is None:
+		return None
+
+	h_idx = batch_triples[:, 0]
+	r_idx = batch_triples[:, 1]
+	t_idx = batch_triples[:, 2]
+	factors = _complex_batch_factor_norms(ent_embedder, rel_embedder, h_idx, r_idx, t_idx)
+	if factors is None:
+		return None
+
+	batch_size = max(int(factors[0].shape[0]), 1)
+	norm = torch.zeros((), device=factors[0].device, dtype=factors[0].dtype)
+	for factor in factors:
+		norm = norm + weight * torch.sum(torch.abs(factor) ** 3)
+	return norm / batch_size
+
+
+def _uses_kbc_n3_regularization(args: Any | None) -> bool:
+	regularizer = str(getattr(args, 'regularizer', '') or '').lower()
+	return regularizer in {'n3_kbc', 'kbc_n3'}
+
+
+def compute_kge_regularization(
+	model: nn.Module,
+	args: Any | None,
+	*,
+	batch_triples: torch.Tensor | None = None,
+) -> torch.Tensor | None:
+	"""Dispatch LibKGE Lp or kbc N3 regularization based on ``args.regularizer``."""
+
+	if _uses_kbc_n3_regularization(args):
+		if batch_triples is None:
+			return None
+		return compute_kbc_n3_regularization(model, args, batch_triples=batch_triples)
+	return compute_kge_l3_regularization(model, args, batch_triples=batch_triples)
 
 
 def compute_kge_l3_regularization(
