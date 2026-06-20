@@ -10,3 +10,6 @@ data/**/preprocessed/
 *.txt.json
 *.pdf
 models/losses/LOSS_RELATIONSHIPS.md
+# Local TUNI trial configs (machine-specific paths)
+configs/ComplEx-AU_WN18RR_learnable_gammas_tuni.json
+configs/ComplEx-AU_WN18RR_learnable_tuni.json
