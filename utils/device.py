@@ -21,6 +21,9 @@ def init_hardware(args) -> int:
 
     ngpus_per_node = torch.cuda.device_count()
     cudnn.benchmark = True
+    if torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
     return ngpus_per_node
 
 

@@ -275,6 +275,22 @@ def _concat_complex_table_weight(embedder: nn.Module) -> torch.Tensor | None:
 	return None
 
 
+def _complex_table_l3_penalty(embedder: nn.Module, p: int = 3) -> torch.Tensor | None:
+	"""Sum |w|^p over ComplEx re/im tables without concatenating weights."""
+
+	if hasattr(embedder, 'ent_re') and hasattr(embedder, 'ent_im'):
+		return (
+			embedder.ent_re.embedding.weight.abs().pow(p).sum()
+			+ embedder.ent_im.embedding.weight.abs().pow(p).sum()
+		)
+	if hasattr(embedder, 'rel_re') and hasattr(embedder, 'rel_im'):
+		return (
+			embedder.rel_re.embedding.weight.abs().pow(p).sum()
+			+ embedder.rel_im.embedding.weight.abs().pow(p).sum()
+		)
+	return None
+
+
 def rotate_style_embedding_l3_penalty(model: nn.Module, p: int = 3) -> torch.Tensor | None:
 	"""RotatE global L3: ``||E||_p^p + ||R||_p^p`` over full entity/relation weight matrices."""
 
@@ -282,13 +298,13 @@ def rotate_style_embedding_l3_penalty(model: nn.Module, p: int = 3) -> torch.Ten
 	for embedder in (getattr(model, 'ent_embedder', None), getattr(model, 'rel_embedder', None)):
 		if embedder is None:
 			continue
-		weight = _concat_complex_table_weight(embedder)
-		if weight is None and hasattr(embedder, 'embedding'):
-			weight = embedder.embedding.weight
-		elif weight is None and hasattr(embedder, 'weight'):
-			weight = embedder.weight
-		if weight is not None:
-			terms.append(weight.norm(p=p) ** p)
+		term = _complex_table_l3_penalty(embedder, p=p)
+		if term is None and hasattr(embedder, 'embedding'):
+			term = embedder.embedding.weight.abs().pow(p).sum()
+		elif term is None and hasattr(embedder, 'weight'):
+			term = embedder.weight.abs().pow(p).sum()
+		if term is not None:
+			terms.append(term)
 	if not terms:
 		return None
 	return sum(terms)

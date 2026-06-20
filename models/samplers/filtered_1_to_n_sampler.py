@@ -101,19 +101,28 @@ class FilteredSubsampler:
     ) -> np.ndarray:
         """Draw filtered negatives for one row, resampling only when the first pass is short."""
 
-        blocked = filter_dict.get(key, np.array([], dtype=np.int64))
-        collected = []
-        remaining = num_negatives
+        blocked = filter_dict.get(key)
+        if blocked is None or blocked.size == 0:
+            return np.random.randint(self.nentity, size=num_negatives, dtype=np.int64)
+
+        pool_size = max(oversample, num_negatives + blocked.size, num_negatives * 2)
+        candidates = np.random.randint(self.nentity, size=pool_size, dtype=np.int64)
+        valid = candidates[~np.isin(candidates, blocked, assume_unique=True)]
+        if valid.size >= num_negatives:
+            return valid[:num_negatives]
+
+        collected = [valid] if valid.size else []
+        remaining = num_negatives - sum(part.size for part in collected)
         attempts = 0
-        while remaining > 0 and attempts < 4:
-            candidate = np.random.randint(self.nentity, size=max(oversample, remaining * 2))
-            valid = candidate[~np.isin(candidate, blocked, assume_unique=True)]
-            if valid.size:
-                collected.append(valid)
-                remaining -= valid.size
+        while remaining > 0 and attempts < 3:
+            candidate = np.random.randint(self.nentity, size=max(oversample, remaining * 2), dtype=np.int64)
+            extra = candidate[~np.isin(candidate, blocked, assume_unique=True)]
+            if extra.size:
+                collected.append(extra)
+                remaining -= extra.size
             attempts += 1
         if not collected:
-            return np.random.randint(self.nentity, size=num_negatives)
+            return np.random.randint(self.nentity, size=num_negatives, dtype=np.int64)
         return np.concatenate(collected)[:num_negatives]
 
     def sample(self, batch_triples, mode: str) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, str]:

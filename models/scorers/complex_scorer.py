@@ -52,7 +52,10 @@ class ComplExScorer(KGEScorer):
 		t_re, t_im = self._split_complex(t_emb)
 		query_re = h_re * r_re - h_im * r_im
 		query_im = h_re * r_im + h_im * r_re
-		return (query_re.unsqueeze(1) * t_re + query_im.unsqueeze(1) * t_im).sum(dim=-1)
+		return (
+			torch.bmm(query_re.unsqueeze(1), t_re.transpose(1, 2)).squeeze(1)
+			+ torch.bmm(query_im.unsqueeze(1), t_im.transpose(1, 2)).squeeze(1)
+		)
 
 	def score_po_candidates(
 		self,
@@ -67,7 +70,10 @@ class ComplExScorer(KGEScorer):
 		t_re, t_im = self._split_complex(t_emb)
 		query_re = r_re * t_re + r_im * t_im
 		query_im = r_re * t_im - r_im * t_re
-		return (query_re.unsqueeze(1) * h_re + query_im.unsqueeze(1) * h_im).sum(dim=-1)
+		return (
+			torch.bmm(query_re.unsqueeze(1), h_re.transpose(1, 2)).squeeze(1)
+			+ torch.bmm(query_im.unsqueeze(1), h_im.transpose(1, 2)).squeeze(1)
+		)
 
 	def score_sp_(self, h_emb: torch.Tensor, r_emb: torch.Tensor, all_t_embs: torch.Tensor) -> torch.Tensor:
 		"""Return ComplEx scores using LibKGE-style sp_ broadcasting."""

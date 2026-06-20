@@ -72,12 +72,29 @@ class NegSampStrategy:
 				self._normalize_phases_fn = normalize_protate_phases
 		if self._normalize_phases_fn is not None:
 			self._normalize_phases_fn(self.model)
+		self._prefetch_future = None
+		self._next_batch_for_prefetch = None
+		self._neg_sample_executor = None
+		if (
+			not self._pointwise_mode
+			and config_bool(args, 'prefetch_filtered_negs', True)
+			and hasattr(self.sampler, 'sample')
+		):
+			from concurrent.futures import ThreadPoolExecutor
+
+			self._neg_sample_executor = ThreadPoolExecutor(max_workers=1)
+		if self.train_triples is not None and torch.cuda.is_available():
+			self.train_triples = self.train_triples.pin_memory()
 
 	def _neg_score_chunk_size(self, num_neg: int) -> int | None:
 		raw = config_int(self.args, 'neg_score_chunk_size', None)
 		if raw is not None and int(raw) <= 0:
 			return None
-		chunk_size = int(raw) if raw is not None else 128
+		model_obj = get_model_obj(self.model)
+		uses_batched = self._supports_batched_candidate_scoring(model_obj)
+		if raw is None:
+			return None if uses_batched else 128
+		chunk_size = int(raw)
 		if num_neg <= chunk_size:
 			return None
 		return chunk_size
@@ -157,19 +174,26 @@ class NegSampStrategy:
 
 	def iter_training_batches(self, epoch: int, dataloader=None):
 		if dataloader is not None:
-			yield from dataloader
+			yield from self._lookahead_training_batches(dataloader)
 			return
 		yield from self._iter_train_batches(epoch)
 
 	def train_batch(self, batch, epoch: int) -> float:
 		del epoch
 		self.model.train()
-		self.optimizer.zero_grad()
+		self.optimizer.zero_grad(set_to_none=True)
 		current_mode = None if self._pointwise_mode else self._slot_modes[self._slot_step % 2]
 		if not self._pointwise_mode:
 			self._slot_step += 1
 
-		sample_result = self.sampler.sample(batch, current_mode)
+		if (
+			self._prefetch_future is not None
+			and not self._pointwise_mode
+		):
+			sample_result = self._prefetch_future.result()
+			self._prefetch_future = None
+		else:
+			sample_result = self.sampler.sample(batch, current_mode)
 		if len(sample_result) == 4:
 			pos_batch, neg_batch, weights, mode = sample_result
 		else:
@@ -182,11 +206,11 @@ class NegSampStrategy:
 					batch[key] = batch[key].to(self.device)
 
 		if torch.is_tensor(pos_batch):
-			pos_batch = pos_batch.to(self.device)
+			pos_batch = pos_batch.to(self.device, non_blocking=True)
 		if torch.is_tensor(neg_batch):
-			neg_batch = neg_batch.to(self.device)
+			neg_batch = neg_batch.to(self.device, non_blocking=True)
 		if weights is not None and torch.is_tensor(weights):
-			weights = weights.to(self.device)
+			weights = weights.to(self.device, non_blocking=True)
 
 		with torch.autocast(device_type='cuda', enabled=self.use_amp):
 			if self._pointwise_mode:
@@ -245,11 +269,21 @@ class NegSampStrategy:
 		if self._normalize_phases_fn is not None:
 			self._normalize_phases_fn(self.model)
 
+		self._schedule_negative_prefetch()
+
 		return float(loss.item())
+
+	def _schedule_negative_prefetch(self) -> None:
+		next_batch = getattr(self, '_next_batch_for_prefetch', None)
+		executor = getattr(self, '_neg_sample_executor', None)
+		if next_batch is None or executor is None or self._pointwise_mode:
+			return
+		mode = self._slot_modes[self._slot_step % 2]
+		self._prefetch_future = executor.submit(self.sampler.sample, next_batch, mode)
 
 	def _iter_train_batches(self, epoch: int):
 		if self.train_dataloader is not None:
-			yield from self.train_dataloader
+			yield from self._lookahead_training_batches(self.train_dataloader)
 			return
 
 		batch_size = max(getattr(self.args, 'batch_size', 1024), 1)
@@ -259,8 +293,28 @@ class NegSampStrategy:
 			generator.manual_seed(int(getattr(self.args, 'seed', 0) or 0) + int(epoch))
 			permutation = torch.randperm(triples.size(0), generator=generator)
 			triples = triples[permutation]
-		for start in range(0, len(triples), batch_size):
-			yield triples[start:start + batch_size]
+		batches = (
+			triples[start:start + batch_size]
+			for start in range(0, len(triples), batch_size)
+		)
+		yield from self._lookahead_training_batches(batches)
+
+	def _lookahead_training_batches(self, batches):
+		iterator = iter(batches)
+		try:
+			current = next(iterator)
+		except StopIteration:
+			return
+		while True:
+			try:
+				next_batch = next(iterator)
+			except StopIteration:
+				self._next_batch_for_prefetch = None
+				yield current
+				return
+			self._next_batch_for_prefetch = next_batch
+			yield current
+			current = next_batch
 
 	def _score_triple(
 		self,
