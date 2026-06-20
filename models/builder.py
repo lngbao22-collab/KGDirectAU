@@ -725,18 +725,42 @@ def run_step_based_kge_train_loop(trainer, dataloader=None) -> dict:
 
 		trainer.memory_tracker.end_phase('train')
 		trainer.train_time += time.time() - train_start
+		current_step = get_trainer_global_step(trainer)
 		if batch_count > 0:
 			logger.info(
 				'[EPOCH %s] Train | Loss: %.4f | Step: %s',
 				epoch + 1,
 				loss_total / batch_count,
-				get_trainer_global_step(trainer),
+				current_step,
 			)
 
-		if should_stop_at_step(trainer, get_trainer_global_step(trainer)):
+		stopping = should_stop_at_step(trainer, current_step)
+		validated = _kge_should_validate(trainer.args, epoch) or stopping
+		metric_dict = {}
+		is_best = False
+		if validated:
+			eval_start = time.time()
+			trainer.memory_tracker.begin_phase()
+			metric_dict = eval_index_kge_epoch(trainer, epoch, step=current_step)
+			trainer.memory_tracker.end_phase('eval')
+			trainer.valid_time += time.time() - eval_start
+			is_best = _update_index_kge_best_metric(trainer, metric_dict, epoch, step=current_step)
+
+		if batch_count > 0:
+			_save_index_kge_checkpoint(trainer, epoch, is_best, step=current_step)
+
+		if stopping:
 			logger.info('[STOP] Reached max_steps=%d at epoch %d', max_steps, epoch + 1)
 			break
 		epoch += 1
+
+	if trainer.best_checkpoint_path is None and get_trainer_global_step(trainer) > 0:
+		_save_index_kge_checkpoint(
+			trainer,
+			max(epoch, 0),
+			is_best=False,
+			step=get_trainer_global_step(trainer),
+		)
 
 	trainer.total_time = time.time() - total_start
 	return _kge_train_loop_result(trainer)

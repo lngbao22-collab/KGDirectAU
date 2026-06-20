@@ -171,7 +171,17 @@ def main():
         train_summary = trainer.train_loop(train_dataloader)
     else:
         train_summary = trainer.train_loop()
-    eval_model_path = train_summary.get('best_checkpoint_path') or best_model_path(args.output_dir)
+    eval_model_path = train_summary.get('best_checkpoint_path')
+    if not eval_model_path or not os.path.exists(eval_model_path):
+        for candidate in (best_model_path(args.output_dir), last_model_path(args.output_dir)):
+            if os.path.exists(candidate):
+                eval_model_path = candidate
+                break
+    if not eval_model_path or not os.path.exists(eval_model_path):
+        raise FileNotFoundError(
+            f'No checkpoint found under {args.output_dir}. '
+            'Training must save at least last_model.mdl before test evaluation.'
+        )
     del trainer
     _release_gpu_memory()
     evaluator = Evaluator(args)
