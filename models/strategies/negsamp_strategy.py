@@ -12,12 +12,18 @@ from models.builder import (
 	build_optimizer,
 	config_bool,
 	config_float,
+	config_int,
 	init_index_kge_trainer,
 	load_loss_fn_for_paradigm,
 	load_sampler,
 	run_index_kge_train_loop,
 )
 from base.embeddings import rotate_style_embedding_l3_penalty
+from models.losses.bce_loss import bce_logit_offset, uses_bce_logit_offset
+from models.losses.loss_utilities import (
+	compute_adversarial_negsamp_losses_chunked,
+	compute_standard_negsamp_losses_chunked,
+)
 from models.scorers.protate_scorer import normalize_protate_phases
 from models.scorers.rotate_scorer import normalize_rotate_phases
 from utils.device import get_model_obj
@@ -67,6 +73,44 @@ class NegSampStrategy:
 		if self._normalize_phases_fn is not None:
 			self._normalize_phases_fn(self.model)
 
+	def _neg_score_chunk_size(self, num_neg: int) -> int | None:
+		raw = config_int(self.args, 'neg_score_chunk_size', None)
+		if raw is not None and int(raw) <= 0:
+			return None
+		chunk_size = int(raw) if raw is not None else 128
+		if num_neg <= chunk_size:
+			return None
+		return chunk_size
+
+	def _uses_adversarial_bce(self) -> bool:
+		path = str(getattr(self.args, 'model_loss_path', '') or '').lower()
+		return 'adversarial_bce' in path
+
+	def _adversarial_temperature(self) -> float:
+		return float(
+			getattr(self.args, 'adversarial_temp', None)
+			or getattr(self.args, 'adversarial_temperature', 1.0)
+			or 1.0
+		)
+
+	def _backward_loss(self, loss: torch.Tensor) -> None:
+		if self.use_amp:
+			self.scaler.scale(loss).backward()
+		else:
+			loss.backward()
+
+	def _optimizer_step(self) -> None:
+		if self.use_amp:
+			if self._pointwise_mode:
+				self.scaler.unscale_(self.optimizer)
+				torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
+			self.scaler.step(self.optimizer)
+			self.scaler.update()
+		else:
+			if self._pointwise_mode:
+				torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
+			self.optimizer.step()
+
 	def _maybe_decay_learning_rate(self) -> None:
 		maybe_decay_lr_at_step(self, self.global_step)
 
@@ -110,31 +154,51 @@ class NegSampStrategy:
 				dabr_reg = self._dabr_regularization(pos_batch)
 				if dabr_reg is not None:
 					loss = loss + dabr_reg
+				self._backward_loss(loss)
 			else:
-				pos_scores, neg_scores = self._score_filtered_negatives(pos_batch, neg_batch, mode)
-				loss = self._compute_loss(pos_scores, neg_scores, weights)
-				loss = apply_kge_regularization(
-					loss,
-					self.model,
-					self.args,
-					batch_triples=pos_batch,
-				)
-				reg_term = self._regularization_term()
-				if reg_term is not None:
-					loss = loss + reg_term
+				chunk_size = self._neg_score_chunk_size(int(neg_batch.size(1)))
+				if chunk_size is None:
+					pos_scores, neg_scores = self._score_filtered_negatives(pos_batch, neg_batch, mode)
+					loss = self._compute_loss(pos_scores, neg_scores, weights)
+					loss = apply_kge_regularization(
+						loss,
+						self.model,
+						self.args,
+						batch_triples=pos_batch,
+					)
+					reg_term = self._regularization_term()
+					if reg_term is not None:
+						loss = loss + reg_term
+					self._backward_loss(loss)
+				else:
+					loss_parts = self._filtered_negsamp_loss_parts_chunked(
+						pos_batch,
+						neg_batch,
+						mode,
+						weights,
+						chunk_size,
+					)
+					for loss_part in loss_parts:
+						self._backward_loss(loss_part)
+					anchor = loss_parts[0].new_zeros(())
+					kge_reg = apply_kge_regularization(
+						anchor,
+						self.model,
+						self.args,
+						batch_triples=pos_batch,
+					)
+					if kge_reg is not anchor:
+						self._backward_loss(kge_reg)
+					reg_term = self._regularization_term()
+					if reg_term is not None:
+						self._backward_loss(reg_term)
+					loss = sum((part.detach() for part in loss_parts), start=anchor)
+					if kge_reg is not anchor:
+						loss = loss + kge_reg.detach()
+					if reg_term is not None:
+						loss = loss + reg_term.detach()
 
-		if self.use_amp:
-			self.scaler.scale(loss).backward()
-			if self._pointwise_mode:
-				self.scaler.unscale_(self.optimizer)
-				torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
-			self.scaler.step(self.optimizer)
-			self.scaler.update()
-		else:
-			loss.backward()
-			if self._pointwise_mode:
-				torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
-			self.optimizer.step()
+		self._optimizer_step()
 
 		if self._normalize_phases_fn is not None:
 			self._normalize_phases_fn(self.model)
@@ -195,6 +259,68 @@ class NegSampStrategy:
 			raise ValueError(f'Unsupported negative-sampling mode: {mode}')
 
 		return pos_scores, neg_scores
+
+	def _score_negatives_slice(
+		self,
+		h: torch.Tensor,
+		r: torch.Tensor,
+		t: torch.Tensor,
+		neg_entity_ids: torch.Tensor,
+		mode: str,
+		col_start: int,
+		col_end: int,
+	) -> torch.Tensor:
+		neg_slice = neg_entity_ids[:, col_start:col_end]
+		chunk_neg = neg_slice.size(1)
+		if mode == 'tail-batch':
+			h_exp = h.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
+			r_exp = r.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
+			t_neg = neg_slice.reshape(-1)
+			return self.model.score_spo(h_exp, r_exp, t_neg).view(h.size(0), chunk_neg)
+		if mode == 'head-batch':
+			h_neg = neg_slice.reshape(-1)
+			r_exp = r.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
+			t_exp = t.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
+			return self.model.score_po(r_exp, t_exp, s=h_neg).view(h.size(0), chunk_neg)
+		raise ValueError(f'Unsupported negative-sampling mode: {mode}')
+
+	def _filtered_negsamp_loss_parts_chunked(
+		self,
+		pos_triples: torch.Tensor,
+		neg_entity_ids: torch.Tensor,
+		mode: str,
+		weights,
+		chunk_size: int,
+	) -> list[torch.Tensor]:
+		h = pos_triples[:, 0]
+		r = pos_triples[:, 1]
+		t = pos_triples[:, 2]
+		predict_head = mode == 'head-batch'
+		pos_scores = self._score_triple(h, r, t, predict_head=predict_head)
+		num_neg = int(neg_entity_ids.size(1))
+
+		def score_neg_columns(start: int, end: int) -> torch.Tensor:
+			return self._score_negatives_slice(h, r, t, neg_entity_ids, mode, start, end)
+
+		if self._uses_adversarial_bce():
+			return compute_adversarial_negsamp_losses_chunked(
+				pos_scores,
+				score_neg_columns,
+				num_neg=num_neg,
+				adversarial_temp=self._adversarial_temperature(),
+				weights=weights,
+				chunk_size=chunk_size,
+			)
+
+		offset = bce_logit_offset(self.args) if uses_bce_logit_offset(self.args) else 0.0
+		return compute_standard_negsamp_losses_chunked(
+			pos_scores,
+			score_neg_columns,
+			num_neg=num_neg,
+			weights=weights,
+			chunk_size=chunk_size,
+			offset=offset,
+		)
 
 	def _score_pointwise_batch(
 		self,

@@ -154,6 +154,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help='negative sampling frequency')
     parser.add_argument('-ns', '--n-sample', '--n_sample', default=None, type=int,
                         help='number of negative samples per positive')
+    parser.add_argument('--neg-score-chunk-size', '--neg_score_chunk_size', default=None, type=int,
+                        dest='neg_score_chunk_size',
+                        help='Score negatives in chunks of this size to reduce GPU memory (0: disable chunking)')
     parser.add_argument('--lam', default=None, type=float,
                         help='L2 regularization strength (kgau/softmax; overrides weight_decay when set)')
 
