@@ -303,6 +303,9 @@ class NegSampStrategy:
 			return self._score_negatives_slice(h, r, t, neg_entity_ids, mode, start, end)
 
 		if self._uses_adversarial_bce():
+			weight_chunk_size = config_int(self.args, 'neg_weight_chunk_size', None)
+			if weight_chunk_size is not None and int(weight_chunk_size) <= 0:
+				weight_chunk_size = None
 			return compute_adversarial_negsamp_losses_chunked(
 				pos_scores,
 				score_neg_columns,
@@ -310,6 +313,7 @@ class NegSampStrategy:
 				adversarial_temp=self._adversarial_temperature(),
 				weights=weights,
 				chunk_size=chunk_size,
+				weight_chunk_size=weight_chunk_size,
 			)
 
 		offset = bce_logit_offset(self.args) if uses_bce_logit_offset(self.args) else 0.0

@@ -122,19 +122,17 @@ def compute_adversarial_negsamp_losses_chunked(
     adversarial_temp: float,
     weights: torch.Tensor | None = None,
     chunk_size: int,
+    weight_chunk_size: int | None = None,
 ) -> list[torch.Tensor]:
     """Exact adversarial BCE with chunked negative scoring and gradient-friendly partial losses."""
 
     pos_scores = pos_scores.reshape(-1)
     chunk_size = max(int(chunk_size), 1)
-    neg_score_chunks: list[torch.Tensor] = []
-
-    with torch.no_grad():
-        for start in range(0, num_neg, chunk_size):
-            end = min(start + chunk_size, num_neg)
-            neg_score_chunks.append(score_neg_columns(start, end))
-
-    neg_scores_full = torch.cat(neg_score_chunks, dim=1)
+    neg_scores_full = _score_negatives_for_adversarial_weights(
+        score_neg_columns,
+        num_neg=num_neg,
+        weight_chunk_size=weight_chunk_size,
+    )
     neg_weights = F.softmax(neg_scores_full * float(adversarial_temp), dim=-1).detach()
 
     pos_loss = -F.logsigmoid(pos_scores)
@@ -147,6 +145,26 @@ def compute_adversarial_negsamp_losses_chunked(
         loss_parts.append(_weighted_mean(neg_loss / 2.0, weights))
 
     return loss_parts
+
+
+def _score_negatives_for_adversarial_weights(
+    score_neg_columns,
+    *,
+    num_neg: int,
+    weight_chunk_size: int | None,
+) -> torch.Tensor:
+    """Score all negative columns once under no_grad to build adversarial softmax weights."""
+
+    with torch.no_grad():
+        if weight_chunk_size is None or int(weight_chunk_size) >= num_neg:
+            return score_neg_columns(0, num_neg)
+
+        weight_chunk_size = max(int(weight_chunk_size), 1)
+        neg_score_chunks: list[torch.Tensor] = []
+        for start in range(0, num_neg, weight_chunk_size):
+            end = min(start + weight_chunk_size, num_neg)
+            neg_score_chunks.append(score_neg_columns(start, end))
+        return torch.cat(neg_score_chunks, dim=1)
 
 
 def compute_standard_negsamp_losses_chunked(

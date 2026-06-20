@@ -157,6 +157,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--neg-score-chunk-size', '--neg_score_chunk_size', default=None, type=int,
                         dest='neg_score_chunk_size',
                         help='Score negatives in chunks of this size to reduce GPU memory (0: disable chunking)')
+    parser.add_argument('--neg-weight-chunk-size', '--neg_weight_chunk_size', default=None, type=int,
+                        dest='neg_weight_chunk_size',
+                        help='Optional chunk size for no-grad adversarial weight scoring (default: one full pass)')
     parser.add_argument('--lam', default=None, type=float,
                         help='L2 regularization strength (kgau/softmax; overrides weight_decay when set)')
 
