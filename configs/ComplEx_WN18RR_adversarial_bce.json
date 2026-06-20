@@ -15,8 +15,6 @@
   "output_dir_prefix": "logs/ComplEx_WN18RR_adversarial_bce",
   "add_reciprocal_relations": false,
   "adversarial_training": true,
-  "double_entity_embedding": true,
-  "double_relation_embedding": true,
   "training_cadence": "step",
   "dim": 500,
   "margin": 200.0,
