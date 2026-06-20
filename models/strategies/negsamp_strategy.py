@@ -134,11 +134,11 @@ class NegSampStrategy:
 			or 1.0
 		)
 
-	def _backward_loss(self, loss: torch.Tensor) -> None:
+	def _backward_loss(self, loss: torch.Tensor, *, retain_graph: bool = False) -> None:
 		if self.use_amp:
-			self.scaler.scale(loss).backward()
+			self.scaler.scale(loss).backward(retain_graph=retain_graph)
 		else:
-			loss.backward()
+			loss.backward(retain_graph=retain_graph)
 
 	def _optimizer_step(self) -> None:
 		if self.use_amp:
@@ -222,8 +222,11 @@ class NegSampStrategy:
 					reg_term = self._regularization_term()
 					if reg_term is not None:
 						loss_parts[-1] = loss_parts[-1] + reg_term
-					for loss_part in loss_parts:
-						self._backward_loss(loss_part)
+					for idx, loss_part in enumerate(loss_parts):
+						self._backward_loss(
+							loss_part,
+							retain_graph=idx < len(loss_parts) - 1,
+						)
 					anchor = loss_parts[0].new_zeros(())
 					kge_reg = apply_kge_regularization(
 						anchor,
