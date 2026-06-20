@@ -72,17 +72,6 @@ class NegSampStrategy:
 				self._normalize_phases_fn = normalize_protate_phases
 		if self._normalize_phases_fn is not None:
 			self._normalize_phases_fn(self.model)
-		self._prefetch_future = None
-		self._next_batch_for_prefetch = None
-		self._neg_sample_executor = None
-		if (
-			not self._pointwise_mode
-			and config_bool(args, 'prefetch_filtered_negs', True)
-			and hasattr(self.sampler, 'sample')
-		):
-			from concurrent.futures import ThreadPoolExecutor
-
-			self._neg_sample_executor = ThreadPoolExecutor(max_workers=1)
 		if self.train_triples is not None and torch.cuda.is_available():
 			self.train_triples = self.train_triples.pin_memory()
 
@@ -174,7 +163,7 @@ class NegSampStrategy:
 
 	def iter_training_batches(self, epoch: int, dataloader=None):
 		if dataloader is not None:
-			yield from self._lookahead_training_batches(dataloader)
+			yield from dataloader
 			return
 		yield from self._iter_train_batches(epoch)
 
@@ -186,14 +175,7 @@ class NegSampStrategy:
 		if not self._pointwise_mode:
 			self._slot_step += 1
 
-		if (
-			self._prefetch_future is not None
-			and not self._pointwise_mode
-		):
-			sample_result = self._prefetch_future.result()
-			self._prefetch_future = None
-		else:
-			sample_result = self.sampler.sample(batch, current_mode)
+		sample_result = self.sampler.sample(batch, current_mode)
 		if len(sample_result) == 4:
 			pos_batch, neg_batch, weights, mode = sample_result
 		else:
@@ -269,21 +251,11 @@ class NegSampStrategy:
 		if self._normalize_phases_fn is not None:
 			self._normalize_phases_fn(self.model)
 
-		self._schedule_negative_prefetch()
-
 		return float(loss.item())
-
-	def _schedule_negative_prefetch(self) -> None:
-		next_batch = getattr(self, '_next_batch_for_prefetch', None)
-		executor = getattr(self, '_neg_sample_executor', None)
-		if next_batch is None or executor is None or self._pointwise_mode:
-			return
-		mode = self._slot_modes[self._slot_step % 2]
-		self._prefetch_future = executor.submit(self.sampler.sample, next_batch, mode)
 
 	def _iter_train_batches(self, epoch: int):
 		if self.train_dataloader is not None:
-			yield from self._lookahead_training_batches(self.train_dataloader)
+			yield from self.train_dataloader
 			return
 
 		batch_size = max(getattr(self.args, 'batch_size', 1024), 1)
@@ -293,28 +265,8 @@ class NegSampStrategy:
 			generator.manual_seed(int(getattr(self.args, 'seed', 0) or 0) + int(epoch))
 			permutation = torch.randperm(triples.size(0), generator=generator)
 			triples = triples[permutation]
-		batches = (
-			triples[start:start + batch_size]
-			for start in range(0, len(triples), batch_size)
-		)
-		yield from self._lookahead_training_batches(batches)
-
-	def _lookahead_training_batches(self, batches):
-		iterator = iter(batches)
-		try:
-			current = next(iterator)
-		except StopIteration:
-			return
-		while True:
-			try:
-				next_batch = next(iterator)
-			except StopIteration:
-				self._next_batch_for_prefetch = None
-				yield current
-				return
-			self._next_batch_for_prefetch = next_batch
-			yield current
-			current = next_batch
+		for start in range(0, len(triples), batch_size):
+			yield triples[start:start + batch_size]
 
 	def _score_triple(
 		self,
