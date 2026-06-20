@@ -30,6 +30,7 @@
   "max_steps": 80000,
   "valid_steps": 10000,
   "save_checkpoint_steps": 10000,
+  "epoch_per_eval": 5,
   "warm_up_steps": 40000,
   "lr_decay_factor": 0.1,
   "epochs": 1000,

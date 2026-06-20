@@ -387,10 +387,19 @@ def init_index_kge_trainer(trainer, model: nn.Module, args) -> None:
 
 def _kge_validation_interval(args) -> int:
 	raw = getattr(args, 'epoch_per_eval', None)
-	interval = int(raw) if raw is not None else 0
-	if interval <= 0 or interval > int(getattr(args, 'epochs', 1)):
-		return 1
-	return interval
+	if raw is not None:
+		interval = int(raw)
+		if interval <= 0:
+			return max(int(getattr(args, 'epochs', 1)), 1)
+		if interval > int(getattr(args, 'epochs', 1)):
+			return max(int(getattr(args, 'epochs', 1)), 1)
+		return interval
+	# Step-based runs iterate epochs only for shuffling; avoid implicit every-epoch eval.
+	from utils.training_cadence import resolve_valid_steps, uses_step_cadence
+
+	if uses_step_cadence(args) and resolve_valid_steps(args) is not None:
+		return max(int(getattr(args, 'epochs', 1)), 1)
+	return 1
 
 
 def _kge_should_validate(args, epoch: int) -> bool:
@@ -398,6 +407,20 @@ def _kge_should_validate(args, epoch: int) -> bool:
 	epoch_number = epoch + 1
 	max_epochs = max(int(getattr(args, 'epochs', 1)), 1)
 	return epoch_number % interval == 0 or epoch_number >= max_epochs
+
+
+def _kge_should_validate_at_epoch_end(args, epoch: int, *, stopping: bool = False) -> bool:
+	"""Epoch-boundary validation during step-based training (honors ``epoch_per_eval`` only)."""
+
+	if stopping:
+		return True
+	raw = getattr(args, 'epoch_per_eval', None)
+	if raw is None:
+		return False
+	interval = int(raw)
+	if interval <= 0:
+		return False
+	return (epoch + 1) % interval == 0
 
 
 def _kge_get_valid_examples(trainer):
@@ -735,13 +758,13 @@ def run_step_based_kge_train_loop(trainer, dataloader=None) -> dict:
 			)
 
 		stopping = should_stop_at_step(trainer, current_step)
-		validated = _kge_should_validate(trainer.args, epoch) or stopping
+		validated = _kge_should_validate_at_epoch_end(trainer.args, epoch, stopping=stopping)
 		metric_dict = {}
 		is_best = False
 		if validated:
 			eval_start = time.time()
 			trainer.memory_tracker.begin_phase()
-			metric_dict = eval_index_kge_epoch(trainer, epoch, step=current_step)
+			metric_dict = eval_index_kge_epoch(trainer, epoch)
 			trainer.memory_tracker.end_phase('eval')
 			trainer.valid_time += time.time() - eval_start
 			is_best = _update_index_kge_best_metric(trainer, metric_dict, epoch, step=current_step)
