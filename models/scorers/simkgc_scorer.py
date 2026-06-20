@@ -1,333 +1,92 @@
-"""Encoder BERT for models: SimKGC."""
+"""Pure cosine scorer and contrastive training state for SimKGC."""
 
-from abc import ABC
-from copy import deepcopy
-from typing import List, Optional
+from __future__ import annotations
+
+from typing import Any
 
 import torch
 import torch.nn as nn
-import tqdm
-from transformers import AutoConfig, AutoModel
 
-from base.model import BaseModel
-from data.dataloader import collate
-from data.dataset import Dataset, Example
-from data.dict_hub import build_tokenizer, get_entity_dict, get_relation_id_map
-from models.losses.infonce_loss import compute_infonce_logits
-from utils.device import move_to_cuda
+from base.kge_scorer import KGEScorer
 
 
-def build_model(args) -> nn.Module:
-    """Factory function to build the BERT-based model."""
+class ContrastiveTrainingState(nn.Module):
+	"""Training-only InfoNCE parameters and pre-batch memory (not used at LP eval)."""
 
-    return CustomBertModel(args)
-
-
-class CustomBertModel(BaseModel, ABC):
-    """BERT-based model architecture for SimKGC, supporting various pooling strategies and negative sampling techniques."""
-
-    def __init__(self, args):
-        super().__init__()
-        self.args = args
-        self.config = AutoConfig.from_pretrained(args.bert_encoder)
-        info_nce_t = getattr(args, 'infonce_t', getattr(args, 't', 0.05))
-        self.log_inv_t = torch.nn.Parameter(torch.tensor(1.0 / info_nce_t).log(), requires_grad=args.finetune_t)
-        self.add_margin = args.additive_margin
-        self.batch_size = args.batch_size
-        self.pre_batch = args.pre_batch
-        num_pre_batch_vectors = max(1, self.pre_batch) * self.batch_size
-        random_vector = torch.randn(num_pre_batch_vectors, self.config.hidden_size)
-        self.register_buffer('pre_batch_vectors', nn.functional.normalize(random_vector, dim=1), persistent=False)
-        self.offset = 0
-        self.pre_batch_exs = [None for _ in range(num_pre_batch_vectors)]
-
-        self.hr_bert = AutoModel.from_pretrained(args.bert_encoder)
-        self.tail_bert = deepcopy(self.hr_bert)
-        self._full_entity_predict_loader = None
-
-    def _encode(self, encoder, token_ids, mask, token_type_ids) -> torch.Tensor:
-        """Encode input sequences using the specified BERT encoder and pooling strategy."""
-
-        outputs = encoder(
-            input_ids=token_ids,
-            attention_mask=mask,
-            token_type_ids=token_type_ids,
-            return_dict=True,
-        )
-
-        last_hidden_state = outputs.last_hidden_state
-        cls_output = last_hidden_state[:, 0, :]
-        cls_output = _pool_output(self.args.pooling, cls_output, mask, last_hidden_state)
-        return cls_output
-
-    def forward(
-        self,
-        hr_token_ids,
-        hr_mask,
-        hr_token_type_ids,
-        tail_token_ids,
-        tail_mask,
-        tail_token_type_ids,
-        head_token_ids,
-        head_mask,
-        head_token_type_ids,
-        only_ent_embedding=False,
-        **kwargs,
-    ) -> dict:
-        """Forward pass to compute entity representations and optionally predict entity embeddings directly."""
-
-        if only_ent_embedding:
-            return self.predict_ent_embedding(
-                tail_token_ids=tail_token_ids,
-                tail_mask=tail_mask,
-                tail_token_type_ids=tail_token_type_ids,
-            )
-
-        hr_vector = self._encode(
-            self.hr_bert,
-            token_ids=hr_token_ids,
-            mask=hr_mask,
-            token_type_ids=hr_token_type_ids,
-        )
-
-        tail_vector = self._encode(
-            self.tail_bert,
-            token_ids=tail_token_ids,
-            mask=tail_mask,
-            token_type_ids=tail_token_type_ids,
-        )
-
-        head_vector = self._encode(
-            self.tail_bert,
-            token_ids=head_token_ids,
-            mask=head_mask,
-        token_type_ids=head_token_type_ids,
-        )
-
-        return {
-            'hr_vector': hr_vector,
-            'tail_vector': tail_vector,
-            'head_vector': head_vector,
-        }
-
-    def compute_logits(self, output_dict: dict, batch_dict: dict) -> dict:
-        """Compute logits for contrastive learning based on the encoded representations and the specified loss configuration."""
-
-        hr_vector, tail_vector = output_dict['hr_vector'], output_dict['tail_vector']
-        batch_size = hr_vector.size(0)
-        labels = torch.arange(batch_size, device=hr_vector.device)
-
-        logits = compute_infonce_logits(
-            query_vec=hr_vector,
-            candidate_vec=tail_vector,
-            temp=self.log_inv_t,
-            margin=self.add_margin if self.training else 0.0,
-        )
-
-        return {
-            'logits': logits,
-            'labels': labels,
-            'inv_t': self.log_inv_t.detach().exp(),
-            'hr_vector': hr_vector.detach(),
-            'tail_vector': tail_vector.detach(),
-        }
-
-    def get_queries_targets(self, head_indices, relation_indices, tail_indices) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Build query, target, and head representations from indexed triples via the encoder forward path."""
-
-        entity_dict = get_entity_dict()
-        relation_id_map = get_relation_id_map() or {}
-        idx_to_relation = {int(value): key for key, value in relation_id_map.items()}
-
-        examples = []
-        for head_idx, relation_idx, tail_idx in zip(head_indices.tolist(), relation_indices.tolist(), tail_indices.tolist()):
-            head_entity = entity_dict.get_entity_by_idx(int(head_idx))
-            tail_entity = entity_dict.get_entity_by_idx(int(tail_idx))
-            relation = idx_to_relation.get(int(relation_idx), str(int(relation_idx)))
-            examples.append(Example(head_id=head_entity.entity_id, relation=relation, tail_id=tail_entity.entity_id))
-
-        batch_dict = collate([example.vectorize() for example in examples])
-        if torch.cuda.is_available():
-            batch_dict = move_to_cuda(batch_dict)
-
-        outputs = self(**batch_dict)
-        return outputs['hr_vector'], outputs['tail_vector'], outputs['head_vector']
-
-    def _resolve_entity_loader_workers(self, num_workers: Optional[int], entity_count: int) -> int:
-        """Pick DataLoader worker count; subsampled entity passes stay in-process."""
-
-        if num_workers is not None:
-            return int(num_workers)
-        total_entities = len(get_entity_dict().entity_exs)
-        if entity_count < total_entities:
-            return 0
-        return int(getattr(self.args, 'workers', 0))
-
-    def _ensure_full_entity_predict_loader(self, batch_size: int, num_workers: int) -> torch.utils.data.DataLoader:
-        """Reuse one persistent DataLoader for full-catalog entity encoding."""
-
-        if self._full_entity_predict_loader is not None:
-            return self._full_entity_predict_loader
-
-        from data.dict_hub import init_dataloader_worker
-
-        examples = []
-        for entity_ex in get_entity_dict().entity_exs:
-            entity_id = getattr(entity_ex, 'entity_id', None)
-            if entity_id is None:
-                entity_id = getattr(entity_ex, 'tail_id', None)
-            if entity_id is None:
-                raise AttributeError('Expected entity examples with an entity_id or tail_id attribute')
-            examples.append(Example(head_id='', relation='', tail_id=entity_id))
-
-        loader_kwargs = {
-            'dataset': Dataset(path='', examples=examples, task=self.args.dataset),
-            'batch_size': batch_size,
-            'collate_fn': collate,
-            'shuffle': False,
-            'num_workers': num_workers,
-            'pin_memory': torch.cuda.is_available(),
-        }
-        if num_workers > 0:
-            loader_kwargs['worker_init_fn'] = init_dataloader_worker
-            loader_kwargs['persistent_workers'] = True
-
-        self._full_entity_predict_loader = torch.utils.data.DataLoader(**loader_kwargs)
-        return self._full_entity_predict_loader
-
-    @torch.no_grad()
-    def entity_embeddings(
-        self,
-        device: torch.device | None = None,
-        batch_size: Optional[int] = None,
-        num_workers: Optional[int] = None,
-        max_samples: int | None = None,
-    ) -> torch.Tensor:
-        """Encode entity embeddings for optional entity-level uniformity."""
-
-        entity_exs = get_entity_dict().entity_exs
-        if max_samples is not None and int(max_samples) > 0 and len(entity_exs) > int(max_samples):
-            indices = torch.randperm(len(entity_exs))[: int(max_samples)].tolist()
-            entity_exs = [entity_exs[i] for i in indices]
-
-        loader_workers = self._resolve_entity_loader_workers(num_workers, len(entity_exs))
-        entity_embeddings = self.predict_by_entities(
-            entity_exs,
-            batch_size=batch_size,
-            num_workers=loader_workers,
-            show_progress=False,
-        )
-        if device is not None:
-            entity_embeddings = entity_embeddings.to(device)
-        return entity_embeddings
-
-    @torch.no_grad()
-    def predict_ent_embedding(self, tail_token_ids, tail_mask, tail_token_type_ids, **kwargs) -> dict:
-        """Predict entity embeddings directly from tail entity inputs, used for efficient inference."""
-        
-        ent_vectors = self._encode(
-            self.tail_bert,
-            token_ids=tail_token_ids,
-            mask=tail_mask,
-            token_type_ids=tail_token_type_ids,
-        )
-        return {'ent_vectors': ent_vectors.detach()}
-
-    @torch.no_grad()
-    def predict_by_examples(self, examples: List[Example], batch_size: Optional[int] = None, num_workers: int = 1) -> tuple[torch.Tensor, torch.Tensor]:
-        """Predict head-relation and tail entity vectors for a list of examples, used for evaluation."""
-
-        if batch_size is None:
-            batch_size = max(self.args.batch_size, 512)
-
-        data_loader = torch.utils.data.DataLoader(
-            Dataset(path='', examples=examples, task=self.args.dataset),
-            num_workers=num_workers,
-            batch_size=batch_size,
-            collate_fn=collate,
-            shuffle=False,
-        )
-
-        hr_tensor_list, tail_tensor_list = [], []
-        use_cuda = torch.cuda.is_available()
-        for _, batch_dict in enumerate(data_loader):
-            if use_cuda:
-                batch_dict = move_to_cuda(batch_dict)
-            outputs = self(**batch_dict)
-            hr_tensor_list.append(outputs['hr_vector'])
-            tail_tensor_list.append(outputs['tail_vector'])
-
-        return torch.cat(hr_tensor_list, dim=0), torch.cat(tail_tensor_list, dim=0)
-
-    @torch.no_grad()
-    def predict_by_entities(
-        self,
-        entity_exs,
-        batch_size: Optional[int] = None,
-        num_workers: Optional[int] = None,
-        show_progress: bool | None = None,
-    ) -> torch.Tensor:
-        """Predict entity embeddings for a list of entity examples."""
-
-        if batch_size is None:
-            batch_size = max(self.args.batch_size, 1024)
-
-        total_entities = len(get_entity_dict().entity_exs)
-        loader_workers = self._resolve_entity_loader_workers(num_workers, len(entity_exs))
-        use_full_catalog_loader = len(entity_exs) == total_entities
-
-        if use_full_catalog_loader:
-            data_loader = self._ensure_full_entity_predict_loader(batch_size, loader_workers)
-        else:
-            examples = []
-            for entity_ex in entity_exs:
-                entity_id = getattr(entity_ex, 'entity_id', None)
-                if entity_id is None:
-                    entity_id = getattr(entity_ex, 'tail_id', None)
-                if entity_id is None:
-                    raise AttributeError('Expected entity examples with an entity_id or tail_id attribute')
-                examples.append(Example(head_id='', relation='', tail_id=entity_id))
-            data_loader = torch.utils.data.DataLoader(
-                Dataset(path='', examples=examples, task=self.args.dataset),
-                num_workers=0,
-                batch_size=batch_size,
-                collate_fn=collate,
-                shuffle=False,
-                pin_memory=torch.cuda.is_available(),
-            )
-
-        if show_progress is None:
-            show_progress = not self.training
-
-        ent_tensor_list = []
-        use_cuda = torch.cuda.is_available()
-        iterator = tqdm.tqdm(data_loader) if show_progress else data_loader
-        for _, batch_dict in enumerate(iterator):
-            batch_dict['only_ent_embedding'] = True
-            if use_cuda:
-                batch_dict = move_to_cuda(batch_dict)
-            outputs = self(**batch_dict)
-            ent_tensor_list.append(outputs['ent_vectors'])
-
-        return torch.cat(ent_tensor_list, dim=0)
+	def __init__(self, args: Any, hidden_size: int):
+		super().__init__()
+		self.args = args
+		info_nce_t = getattr(args, 'infonce_t', getattr(args, 't', 0.05))
+		self.log_inv_t = nn.Parameter(
+			torch.tensor(1.0 / info_nce_t).log(),
+			requires_grad=bool(getattr(args, 'finetune_t', True)),
+		)
+		self.add_margin = float(getattr(args, 'additive_margin', 0.0))
+		self.batch_size = int(getattr(args, 'batch_size', 512))
+		self.pre_batch = int(getattr(args, 'pre_batch', 0))
+		num_pre_batch_vectors = max(1, self.pre_batch) * self.batch_size
+		random_vector = torch.randn(num_pre_batch_vectors, hidden_size)
+		self.register_buffer(
+			'pre_batch_vectors',
+			nn.functional.normalize(random_vector, dim=1),
+			persistent=False,
+		)
+		self.offset = 0
+		self.pre_batch_exs: list = [None for _ in range(num_pre_batch_vectors)]
 
 
-def _pool_output(pooling: str, cls_output: torch.Tensor, mask: torch.Tensor, last_hidden_state: torch.Tensor) -> torch.Tensor:
-    """Pool the output of the BERT encoder according to the specified pooling strategy."""
+def build_contrastive_state(args, hidden_size: int) -> ContrastiveTrainingState:
+	return ContrastiveTrainingState(args, hidden_size)
 
-    if pooling == 'cls':
-        output_vector = cls_output
-    elif pooling == 'max':
-        input_mask_expanded = mask.unsqueeze(-1).expand(last_hidden_state.size()).long()
-        last_hidden_state[input_mask_expanded == 0] = -1e4
-        output_vector = torch.max(last_hidden_state, 1)[0]
-    elif pooling == 'mean':
-        input_mask_expanded = mask.unsqueeze(-1).expand(last_hidden_state.size()).float()
-        sum_embeddings = torch.sum(last_hidden_state * input_mask_expanded, 1)
-        sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-4)
-        output_vector = sum_embeddings / sum_mask
-    else:
-        assert False, 'Unknown pooling mode: {}'.format(pooling)
 
-    output_vector = nn.functional.normalize(output_vector, dim=1)
-    return output_vector
+class SimKGCScorer(KGEScorer):
+	"""Cosine similarity scorer on L2-normalized query and entity vectors."""
+
+	kgau_alignment_mode = 'cosine'
+
+	def __init__(self, args=None):
+		super().__init__()
+		self.args = args
+
+	def score_spo(
+		self,
+		q_emb: torch.Tensor,
+		_r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+	) -> torch.Tensor:
+		return torch.sum(q_emb * t_emb, dim=-1)
+
+	def score_sp_(
+		self,
+		q_emb: torch.Tensor,
+		_r_emb: torch.Tensor,
+		all_t_embs: torch.Tensor,
+	) -> torch.Tensor:
+		return torch.mm(q_emb, all_t_embs.t())
+
+	def build_query(self, q_emb: torch.Tensor, _r_emb: torch.Tensor) -> torch.Tensor:
+		return q_emb
+
+	def au_representations(
+		self,
+		q_emb: torch.Tensor,
+		_r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+		head_emb: torch.Tensor | None = None,
+		**kwargs,
+	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+		if head_emb is None:
+			head_emb = t_emb
+		return q_emb, t_emb, head_emb
+
+
+def build_scorer(args) -> SimKGCScorer:
+	return SimKGCScorer(args)
+
+
+def build_model(args):
+	"""Backward-compatible factory delegating to the unified builder."""
+
+	from models.builder import build_model as assemble_model
+
+	return assemble_model(args)

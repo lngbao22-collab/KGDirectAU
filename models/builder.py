@@ -14,9 +14,10 @@ import torch
 import torch.nn as nn
 
 from base.embeddings import compute_kge_l3_regularization, use_reciprocal_relations
-from base.model import KGEModel
+from base.model import KGEModel, TextKGEModel
 from data.dataset import PointwiseDataset, load_data
 from data.dict_hub import get_entity_dict, get_relation_id_map
+from models.embedders.base import embedder_input_mode
 from utils.device import get_model_obj
 
 
@@ -71,13 +72,9 @@ _INDEX_KGE_MODELS = frozenset({
 
 
 def is_index_kge_model(args) -> bool:
-	"""Return True for lookup-table KGE models (not SimKGC / text encoders)."""
+	"""Return True for lookup-table KGE models (not token-input KGE)."""
 
 	return str(getattr(args, 'model', '') or '').lower() in _INDEX_KGE_MODELS
-
-
-def _is_text_model(args) -> bool:
-	return not is_index_kge_model(args) and 'simkgc' in str(getattr(args, 'model', '') or '').lower()
 
 
 def _strategy_paradigm(strategy_path: str) -> str:
@@ -116,6 +113,13 @@ def build_scorer_module(args) -> nn.Module:
 	return load_attr_from_path(scorer_path, 'build_scorer')(args)
 
 
+def _is_token_embedder_model(args, ent_embedder: nn.Module | None = None) -> bool:
+	if ent_embedder is not None:
+		return embedder_input_mode(ent_embedder) == 'tokens'
+	embedder_path = _config_path(args, 'model_embedder_path')
+	return embedder_path.replace('\\', '/').endswith('text_embedder.py')
+
+
 def bind_model(
 	args,
 	ent_embedder: nn.Module,
@@ -123,7 +127,15 @@ def bind_model(
 	scorer: nn.Module,
 	aux_embedders: dict[str, nn.Module] | None = None,
 ) -> nn.Module:
-	"""Bind embedders and scorer into ``KGEModel``."""
+	"""Bind embedders and scorer into ``KGEModel`` or ``TextKGEModel``."""
+
+	if embedder_input_mode(ent_embedder) == 'tokens':
+		from copy import deepcopy
+
+		from models.embedders.text_embedder import TextQueryEmbedder
+
+		query_embedder = TextQueryEmbedder(args, shared_encoder=deepcopy(ent_embedder.encoder))
+		return TextKGEModel(ent_embedder, query_embedder, scorer, args)
 
 	return KGEModel(ent_embedder, rel_embedder, scorer, args, aux_embedders=aux_embedders)
 
@@ -137,11 +149,7 @@ def _build_aux_embedders(args) -> dict[str, nn.Module] | None:
 
 
 def build_model(args) -> nn.Module:
-	"""Assemble the model pillar (embedder + scorer bound by ``KGEModel``)."""
-
-	if _is_text_model(args):
-		scorer_path = _config_path(args, 'model_scorer_path', 'model_encoder_path')
-		return load_attr_from_path(scorer_path, 'build_model')(args)
+	"""Assemble the model pillar (embedder + scorer bound by ``KGEModel`` / ``TextKGEModel``)."""
 
 	ent_embedder = build_entity_embedder(args)
 	rel_embedder = build_relation_embedder(args)
@@ -585,6 +593,45 @@ def run_index_kge_train_loop(trainer, dataloader=None) -> dict:
 	}
 
 
+def run_kge_train_loop(trainer) -> dict:
+	"""Shared epoch shell for in-batch / contrastive trainers (SimKGC-style cadence)."""
+
+	import time
+
+	from utils.logger import logger
+	from utils.memory import format_memory
+
+	if getattr(trainer.args, 'use_amp', False) and not hasattr(trainer, 'scaler'):
+		trainer.scaler = torch.cuda.amp.GradScaler()
+
+	total_start = time.time()
+	for epoch in range(trainer.args.epochs):
+		epoch_train_start = time.time()
+		trainer.memory_tracker.begin_phase()
+		trainer.train_epoch(epoch)
+		trainer.memory_tracker.end_phase('train')
+		trainer.train_time += time.time() - epoch_train_start
+		trainer._run_eval(epoch=epoch)
+
+	trainer.total_time = time.time() - total_start
+	logger.info(f"[Timing] Training time (s): {round(trainer.train_time, 2)}")
+	logger.info(f"[Timing] Valid time (s): {round(trainer.valid_time, 2)}")
+	logger.info(f"[Timing] Total run time (s): {round(trainer.total_time, 2)}")
+	logger.info('[Memory] Training peak: %s', format_memory(trainer.memory_tracker.train_peak_mb))
+	logger.info('[Memory] Eval peak: %s', format_memory(trainer.memory_tracker.eval_peak_mb))
+	logger.info('[Memory] Peak memory: %s', format_memory(trainer.memory_tracker.peak_memory_mb))
+
+	return {
+		'best_epoch': None if trainer.best_metric is None else trainer.best_metric.get('epoch'),
+		'best_mrr': None if trainer.best_metric is None else trainer.best_metric.get('score'),
+		'train_time': trainer.train_time,
+		'valid_time': trainer.valid_time,
+		'total_time': trainer.total_time,
+		'best_checkpoint_path': trainer.best_checkpoint_path,
+		**trainer.memory_tracker.to_dict(),
+	}
+
+
 def load_strategy_class(args):
 	strategy_path = getattr(args, 'model_strategy_path', '') or ''
 	for attr in ('Strategy', 'NegSampStrategy', 'OneVsAllStrategy', 'KvsAllStrategy', 'KGAUStrategy', 'InBatchStrategy', 'SimKGCStrategy'):
@@ -700,11 +747,6 @@ def build_pipeline(args, ngpus_per_node: int = 1):
 	paradigm = _strategy_paradigm(strategy_path)
 	StrategyClass = load_strategy_class(args)
 
-	if paradigm == 'inbatch':
-		loss_fn = load_loss_fn(args)
-		sampler = load_sampler(args)
-		return StrategyClass(None, sampler, loss_fn, args, ngpus_per_node=ngpus_per_node)
-
 	ent_embedder = build_entity_embedder(args)
 	rel_embedder = build_relation_embedder(args)
 	scorer = build_scorer_module(args)
@@ -712,13 +754,15 @@ def build_pipeline(args, ngpus_per_node: int = 1):
 	if torch.cuda.is_available():
 		model.cuda()
 
-	if paradigm in ('negsamp', 'kvsall', '1vsall'):
+	if paradigm in ('negsamp', 'kvsall', '1vsall', 'inbatch'):
 		loss_fn = load_loss_fn_for_paradigm(args, paradigm)
 	else:
 		loss_fn = load_loss_fn(args)
 	train_triples = _prepare_train_triples(args, model) if paradigm in ('negsamp', 'kvsall') else None
 	if paradigm in ('kvsall', '1vsall', 'kgau'):
 		sampler = None
+	elif paradigm == 'inbatch':
+		sampler = load_sampler(args)
 	else:
 		sampler = load_sampler(args, model, train_triples)
 	strategy_kwargs = _strategy_init_kwargs(args, strategy_path, model, train_triples)
@@ -726,4 +770,4 @@ def build_pipeline(args, ngpus_per_node: int = 1):
 	if paradigm == 'kgau':
 		return StrategyClass(model, sampler, loss_fn, args, ngpus_per_node=ngpus_per_node, **strategy_kwargs)
 
-	return StrategyClass(model, sampler, loss_fn, args, **strategy_kwargs)
+	return StrategyClass(model, sampler, loss_fn, args, ngpus_per_node=ngpus_per_node, **strategy_kwargs)

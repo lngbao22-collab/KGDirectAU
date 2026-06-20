@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import torch
 import tqdm
 
-from base.model import KGEModel
+from base.model import KGEModel, TextKGEModel
 from utils.logger import logger
 from utils.device import get_model_obj, move_to_cuda
 
@@ -36,10 +36,17 @@ class ModelInterfaceError(RuntimeError):
 	pass
 
 
+def _model_uses_token_inputs(model) -> bool:
+	"""Return True when the model expects tokenized training/eval inputs."""
+
+	model_obj = get_model_obj(model)
+	return getattr(model_obj, 'training_input_mode', 'indices') == 'tokens'
+
+
 def _supports_kge_1vsall_eval(model) -> bool:
 	"""Return True when the model exposes LibKGE-style 1-vs-all tail/head scoring."""
 
-	return hasattr(model, 'predict_tail_sp_') or isinstance(model, KGEModel)
+	return hasattr(model, 'predict_tail_sp_') or isinstance(model, (KGEModel, TextKGEModel))
 
 
 def _resolve_relation_index(relation: str, relation_to_idx: dict) -> int:
@@ -647,16 +654,10 @@ class Evaluator:
 
         from models.builder import build_model
 
-        model_name = str(getattr(self.train_args, 'model', '') or '').lower()
-        scorer_path = (
-            getattr(self.train_args, 'model_scorer_path', '')
-            or getattr(self.train_args, 'model_encoder_path', '')
-            or ''
-        )
-        if 'simkgc' in model_name or scorer_path.endswith('simkgc_scorer.py'):
+        self.model = build_model(self.train_args)
+        if _model_uses_token_inputs(self.model):
             build_tokenizer(self.train_args)
 
-        self.model = build_model(self.train_args)
         load_state_dict_clean(self.model, ckt_path)
         self.model.eval()
 

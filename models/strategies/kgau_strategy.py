@@ -32,8 +32,13 @@ def _load_encoder(args) -> torch.nn.Module:
 	return build_model(args)
 
 
-def _uses_text_inputs(args) -> bool:
-	if 'simkgc' in str(getattr(args, 'model', '') or '').lower():
+def _uses_text_inputs(args, model=None) -> bool:
+	if model is not None:
+		from utils.device import get_model_obj
+
+		return getattr(get_model_obj(model), 'training_input_mode', 'indices') == 'tokens'
+	embedder_path = str(getattr(args, 'model_embedder_path', '') or '').replace('\\', '/')
+	if embedder_path.endswith('text_embedder.py'):
 		return True
 	scorer_path = str(getattr(args, 'model_scorer_path', '') or getattr(args, 'model_encoder_path', '') or '')
 	return os.path.basename(scorer_path) in {'bert_encoder.py', 'simkgc_scorer.py'}
@@ -277,7 +282,7 @@ class KGAUStrategy(Evaluator):
 		del sampler, loss_fn
 		super().__init__(args)
 		self.ngpus_per_node = ngpus_per_node
-		self.uses_text_inputs = _uses_text_inputs(args)
+		self.uses_text_inputs = _uses_text_inputs(args, model)
 		# Text encoders (SimKGC) already encode both directions in one forward triplet.
 		# Index KGE with reciprocal relations needs explicit inverse triplets so
 		# inverse-relation embeddings are trained (backward LP eval uses them).
@@ -290,6 +295,7 @@ class KGAUStrategy(Evaluator):
 		)
 		self.entity_dict = get_entity_dict()
 		self.model = model if model is not None else _load_encoder(args)
+		self.uses_text_inputs = _uses_text_inputs(args, self.model)
 		logger.info(self.model)
 		self.relation_to_idx = _build_relation_to_idx()
 		if not self.uses_text_inputs:

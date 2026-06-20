@@ -284,6 +284,223 @@ class KGEModel(nn.Module):
 		return self.score_spo(src, rel, dst)
 
 
+class TextKGEModel(KGEModel):
+	"""KGEModel binder for token-input encoders with joint (head, relation) queries."""
+
+	training_input_mode = 'tokens'
+
+	def __init__(
+		self,
+		ent_embedder: nn.Module,
+		query_embedder: nn.Module,
+		scorer: nn.Module,
+		args: Any | None = None,
+		contrastive_state: nn.Module | None = None,
+	):
+		super().__init__(ent_embedder, query_embedder, scorer, args)
+		self.query_embedder = query_embedder
+		if contrastive_state is not None:
+			self.contrastive_state = contrastive_state
+		elif args is not None:
+			from models.scorers.simkgc_scorer import build_contrastive_state
+
+			hidden_size = int(getattr(ent_embedder, 'config', None).hidden_size) if hasattr(ent_embedder, 'config') else int(getattr(args, 'dim', 768))
+			self.contrastive_state = build_contrastive_state(args, hidden_size)
+		else:
+			self.contrastive_state = None
+
+	@property
+	def log_inv_t(self) -> torch.Tensor:
+		return self.contrastive_state.log_inv_t
+
+	@property
+	def add_margin(self) -> float:
+		return self.contrastive_state.add_margin
+
+	@property
+	def batch_size(self) -> int:
+		return self.contrastive_state.batch_size
+
+	@property
+	def pre_batch(self) -> int:
+		return self.contrastive_state.pre_batch
+
+	@property
+	def pre_batch_vectors(self) -> torch.Tensor:
+		return self.contrastive_state.pre_batch_vectors
+
+	@property
+	def pre_batch_exs(self) -> list:
+		return self.contrastive_state.pre_batch_exs
+
+	@property
+	def offset(self) -> int:
+		return self.contrastive_state.offset
+
+	@offset.setter
+	def offset(self, value: int) -> None:
+		self.contrastive_state.offset = value
+
+	def _tail_query_vectors(self, s: torch.Tensor, p: torch.Tensor) -> torch.Tensor:
+		return self.query_embedder.embed_sp(s, p)
+
+	def score_spo(
+		self,
+		s: torch.Tensor,
+		p: torch.Tensor,
+		o: torch.Tensor,
+		**kwargs: Any,
+	) -> torch.Tensor:
+		query = self._tail_query_vectors(s, p)
+		tail = self.embed_o(o)
+		if self.normalize_lp_scores:
+			return self._cosine_similarity_scores(query, tail).diag()
+		return self.scorer.score_spo(query, p, tail, **{**self._scorer_kwargs(p), **kwargs})
+
+	def score_sp_(
+		self,
+		s: torch.Tensor,
+		p: torch.Tensor,
+		all_o_embs: torch.Tensor | None = None,
+		**kwargs: Any,
+	) -> torch.Tensor:
+		if all_o_embs is None:
+			all_o_embs = self.embed_all_entities()
+		query = self._tail_query_vectors(s, p)
+		if self.normalize_lp_scores:
+			return self._cosine_similarity_scores(query, all_o_embs)
+		scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
+		return self.scorer.score_sp_(query, p, all_o_embs, **scorer_kwargs)
+
+	def get_queries_targets(self, s: torch.Tensor, p: torch.Tensor, o: torch.Tensor):
+		from data.dataloader import collate
+		from data.dataset import Example
+		from data.dict_hub import get_relation_id_map
+		from utils.device import move_to_cuda
+
+		entity_dict = get_entity_dict()
+		relation_id_map = get_relation_id_map() or {}
+		idx_to_relation = {int(value): key for key, value in relation_id_map.items()}
+
+		examples = []
+		for head_idx, relation_idx, tail_idx in zip(s.tolist(), p.tolist(), o.tolist()):
+			head_entity = entity_dict.get_entity_by_idx(int(head_idx))
+			tail_entity = entity_dict.get_entity_by_idx(int(tail_idx))
+			relation = idx_to_relation.get(int(relation_idx), str(int(relation_idx)))
+			examples.append(Example(head_id=head_entity.entity_id, relation=relation, tail_id=tail_entity.entity_id))
+
+		batch_dict = collate([example.vectorize() for example in examples])
+		if torch.cuda.is_available():
+			batch_dict = move_to_cuda(batch_dict)
+		outputs = self.forward(**batch_dict)
+		query, tail, head = outputs['hr_vector'], outputs['tail_vector'], outputs['head_vector']
+		if self.normalize_au_vectors:
+			query = self._normalize_au_vector(query)
+			tail = self._normalize_au_vector(tail)
+			head = self._normalize_au_vector(head)
+		return query, tail, head
+
+	def forward(
+		self,
+		hr_token_ids=None,
+		hr_mask=None,
+		hr_token_type_ids=None,
+		tail_token_ids=None,
+		tail_mask=None,
+		tail_token_type_ids=None,
+		head_token_ids=None,
+		head_mask=None,
+		head_token_type_ids=None,
+		only_ent_embedding=False,
+		src: torch.Tensor | None = None,
+		rel: torch.Tensor | None = None,
+		dst: torch.Tensor | None = None,
+		**kwargs,
+	):
+		if src is not None and rel is not None and dst is not None:
+			return self.score_spo(src, rel, dst)
+
+		if only_ent_embedding:
+			ent_vectors = self.ent_embedder.encode(
+				tail_token_ids,
+				tail_mask,
+				tail_token_type_ids,
+			)
+			return {'ent_vectors': ent_vectors.detach()}
+
+		hr_vector = self.query_embedder.encode(hr_token_ids, hr_mask, hr_token_type_ids)
+		tail_vector = self.ent_embedder.encode(tail_token_ids, tail_mask, tail_token_type_ids)
+		head_vector = self.ent_embedder.encode(head_token_ids, head_mask, head_token_type_ids)
+		return {
+			'hr_vector': hr_vector,
+			'tail_vector': tail_vector,
+			'head_vector': head_vector,
+		}
+
+	def entity_embeddings(
+		self,
+		device: torch.device | None = None,
+		batch_size: int | None = None,
+		num_workers: int | None = None,
+		max_samples: int | None = None,
+	) -> torch.Tensor:
+		entity_exs = get_entity_dict().entity_exs
+		if max_samples is not None and int(max_samples) > 0 and len(entity_exs) > int(max_samples):
+			indices = torch.randperm(len(entity_exs))[: int(max_samples)].tolist()
+			entity_exs = [entity_exs[i] for i in indices]
+
+		loader_workers = self.ent_embedder._resolve_entity_loader_workers(num_workers, len(entity_exs))
+		vectors = self.ent_embedder._encode_entity_exs(
+			entity_exs,
+			batch_size=batch_size,
+			num_workers=loader_workers,
+			show_progress=False,
+		)
+		return vectors.to(device) if device is not None else vectors
+
+	def predict_by_examples(self, examples, batch_size=None, num_workers: int = 1):
+		"""Deprecated: use ``score_sp_`` / index-based LP eval."""
+
+		from data.dataset import Dataset
+		from utils.device import move_to_cuda
+
+		if batch_size is None:
+			batch_size = max(self.args.batch_size, 512)
+
+		data_loader = torch.utils.data.DataLoader(
+			Dataset(path='', examples=examples, task=self.args.dataset),
+			num_workers=num_workers,
+			batch_size=batch_size,
+			collate_fn=__import__('data.dataloader', fromlist=['collate']).collate,
+			shuffle=False,
+		)
+
+		hr_tensor_list, tail_tensor_list = [], []
+		use_cuda = torch.cuda.is_available()
+		for _, batch_dict in data_loader:
+			if use_cuda:
+				batch_dict = move_to_cuda(batch_dict)
+			outputs = self(**batch_dict)
+			hr_tensor_list.append(outputs['hr_vector'])
+			tail_tensor_list.append(outputs['tail_vector'])
+		return torch.cat(hr_tensor_list, dim=0), torch.cat(tail_tensor_list, dim=0)
+
+	def predict_by_entities(self, entity_exs, batch_size=None, num_workers=None, show_progress=None):
+		"""Deprecated: use ``embed_all_entities``."""
+
+		if batch_size is None:
+			batch_size = max(self.args.batch_size, 1024)
+		if show_progress is None:
+			show_progress = not self.training
+		loader_workers = self.ent_embedder._resolve_entity_loader_workers(num_workers, len(entity_exs))
+		return self.ent_embedder._encode_entity_exs(
+			entity_exs,
+			batch_size=batch_size,
+			num_workers=loader_workers,
+			show_progress=show_progress,
+		)
+
+
 def resolve_relation_index(relation: str, relation_to_idx: dict[str, int]) -> int:
 	if relation in relation_to_idx:
 		return relation_to_idx[relation]

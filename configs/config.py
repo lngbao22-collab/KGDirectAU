@@ -11,7 +11,30 @@ from types import SimpleNamespace
 
 import torch
 import torch.backends.cudnn as cudnn
-from typing import Dict, Any
+from typing import Dict, Any, Sequence
+
+
+def _normalize_argv(argv: Sequence[str] | None = None) -> list[str]:
+    """Expand ``@path/to/config.json`` tokens into ``--config-path path/to/config.json``."""
+
+    src = list(sys.argv if argv is None else argv)
+    if not src:
+        return src
+
+    normalized: list[str] = [src[0]]
+    index = 1
+    while index < len(src):
+        token = src[index]
+        if token.startswith('@') and len(token) > 1:
+            normalized.extend(['--config-path', token[1:]])
+        else:
+            normalized.append(token)
+        index += 1
+    return normalized
+
+
+def _snake_to_kebab(name: str) -> str:
+    return name.replace('_', '-')
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -308,6 +331,95 @@ def build_parser() -> argparse.ArgumentParser:
                         dest='lr_scheduler_step_size',
                         help='StepLR: multiply LR by factor every this many epochs')
 
+    # RotatE / pRotatE and adversarial negative sampling.
+    parser.add_argument('--margin', default=None, type=float,
+                        help='RotatE/pRotatE embedding margin')
+    parser.add_argument('--l-norm', '--l_norm', default=None, type=float, dest='l_norm',
+                        help='RotatE distance Lp norm')
+    parser.add_argument('--adversarial-temperature', '--adversarial_temperature',
+                        default=None, type=float, dest='adversarial_temperature',
+                        help='Adversarial BCE temperature (pRotatE)')
+    parser.add_argument('--test-batch-size', '--test_batch_size', default=None, type=int,
+                        dest='test_batch_size', help='Test evaluation batch size')
+    normalize_phases_group = parser.add_mutually_exclusive_group()
+    normalize_phases_group.add_argument(
+        '--normalize-phases', '--normalize_phases',
+        dest='normalize_phases',
+        action='store_true',
+        default=None,
+        help='Keep relation phases in [-pi, pi] after each step (RotatE/pRotatE)',
+    )
+    normalize_phases_group.add_argument(
+        '--no-normalize-phases', '--no_normalize_phases',
+        dest='normalize_phases',
+        action='store_false',
+        help='Disable relation phase normalization',
+    )
+
+    # Training cadence, optimizer, and KvsAll query layout.
+    parser.add_argument('--epoch-per-eval', '--epoch_per_eval', default=None, type=int,
+                        dest='epoch_per_eval', help='Run validation every N epochs')
+    parser.add_argument('--optim', default=None, type=str,
+                        help='Optimizer: adam, adagrad, or sgd')
+    parser.add_argument('--kvsall-query-types', '--kvsall_query_types', default=None,
+                        nargs='+', type=str, dest='kvsall_query_types',
+                        help='KvsAll query types (e.g. sp_ _po)')
+
+    # DaBR-specific hyperparameters.
+    parser.add_argument('--lmbda', default=None, type=float,
+                        help='DaBR primary lambda')
+    parser.add_argument('--lmbda-two', '--lmbda_two', default=None, type=float,
+                        dest='lmbda_two', help='DaBR secondary lambda')
+
+    # L3 regularization and weighted LibKGE-style flags.
+    parser.add_argument('--regularize-p', '--regularize_p', default=None, type=int,
+                        dest='regularize_p', help='L3 regularization norm order')
+    entity_regularize_weighted_group = parser.add_mutually_exclusive_group()
+    entity_regularize_weighted_group.add_argument(
+        '--entity-regularize-weighted', '--entity_regularize_weighted',
+        dest='entity_regularize_weighted',
+        action='store_true',
+        default=None,
+        help='Scale entity L3 regularization by embedding dimension',
+    )
+    entity_regularize_weighted_group.add_argument(
+        '--no-entity-regularize-weighted', '--no_entity_regularize_weighted',
+        dest='entity_regularize_weighted',
+        action='store_false',
+        help='Use unweighted entity L3 regularization',
+    )
+    relation_regularize_weighted_group = parser.add_mutually_exclusive_group()
+    relation_regularize_weighted_group.add_argument(
+        '--relation-regularize-weighted', '--relation_regularize_weighted',
+        dest='relation_regularize_weighted',
+        action='store_true',
+        default=None,
+        help='Scale relation L3 regularization by embedding dimension',
+    )
+    relation_regularize_weighted_group.add_argument(
+        '--no-relation-regularize-weighted', '--no_relation_regularize_weighted',
+        dest='relation_regularize_weighted',
+        action='store_false',
+        help='Use unweighted relation L3 regularization',
+    )
+
+    # Separate object/subject negative sample counts (RotatE, etc.).
+    parser.add_argument('--n-sample-o', '--n_sample_o', default=None, type=int,
+                        dest='n_sample_o', help='Number of object negative samples per positive')
+    parser.add_argument('--n-sample-s', '--n_sample_s', default=None, type=int,
+                        dest='n_sample_s', help='Number of subject negative samples per positive')
+
+    # Link-prediction evaluation.
+    parser.add_argument('--eval-entity-chunk-size', '--eval_entity_chunk_size',
+                        default=None, type=int, dest='eval_entity_chunk_size',
+                        help='Entity chunk size for chunked RotatE evaluation')
+    parser.add_argument('--tie-handling', '--tie_handling', default=None, type=str,
+                        dest='tie_handling', help='Rank tie handling strategy')
+    parser.add_argument('--tie-rtol', '--tie_rtol', default=None, type=float,
+                        dest='tie_rtol', help='Relative tolerance for rank ties')
+    parser.add_argument('--tie-atol', '--tie_atol', default=None, type=float,
+                        dest='tie_atol', help='Absolute tolerance for rank ties')
+
     return parser
 
 
@@ -573,16 +685,45 @@ def _apply_extra_cli_tokens(parser, args, tokens) -> list:
     return parser.parse_known_args(list(tokens), namespace=args)[1]
 
 
+def _register_dynamic_json_args(parser: argparse.ArgumentParser, config_defaults: Dict[str, Any]) -> None:
+    """Register argparse options for JSON keys not yet on the parser (future-proof CLI overrides)."""
+
+    registered = {action.dest for action in parser._actions if action.dest != argparse.SUPPRESS}
+    for key, value in config_defaults.items():
+        if key in registered or key == 'unparsed_args':
+            continue
+        flag = f'--{_snake_to_kebab(key)}'
+        snake_flag = f'--{key}'
+        if isinstance(value, bool):
+            group = parser.add_mutually_exclusive_group()
+            group.add_argument(flag, snake_flag, dest=key, action='store_true', default=None)
+            group.add_argument(f'--no-{_snake_to_kebab(key)}', f'--no_{key}',
+                               dest=key, action='store_false')
+        elif isinstance(value, int):
+            parser.add_argument(flag, snake_flag, dest=key, default=None, type=int)
+        elif isinstance(value, float):
+            parser.add_argument(flag, snake_flag, dest=key, default=None, type=float)
+        elif isinstance(value, list):
+            parser.add_argument(flag, snake_flag, dest=key, default=None, nargs='+')
+        elif value is None:
+            parser.add_argument(flag, snake_flag, dest=key, default=None)
+        else:
+            parser.add_argument(flag, snake_flag, dest=key, default=None, type=str)
+
+
+_cli_argv = _normalize_argv()[1:]
+
 parser = build_parser()
-args, unknown_args = parser.parse_known_args()
+args, unknown_args = parser.parse_known_args(_cli_argv)
 
 config_path = _resolve_config_path()
 config_defaults = _load_json_defaults(config_path)
 json_cli_tokens: list = []
 if config_defaults:
     config_defaults, json_cli_tokens = _filter_json_defaults(config_defaults)
+    _register_dynamic_json_args(parser, config_defaults)
     parser.set_defaults(**config_defaults)
-    args, unknown_args = parser.parse_known_args()
+    args, unknown_args = parser.parse_known_args(_cli_argv)
 
 extra_cli_tokens = list(unknown_args) + list(json_cli_tokens)
 args.unparsed_args = _apply_extra_cli_tokens(parser, args, extra_cli_tokens)

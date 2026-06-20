@@ -21,6 +21,8 @@ from data.dict_hub import get_entity_dict
 class LookupEmbedder(nn.Module):
 	"""Lightweight embedding table with LibKGE-style init and optional dropout."""
 
+	input_mode = 'indices'
+
 	def __init__(
 		self,
 		num_items: int,

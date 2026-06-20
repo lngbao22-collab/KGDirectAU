@@ -71,6 +71,17 @@ def build_1vsall_loss_fn(args):
 	return loss_fn
 
 
+def build_inbatch_loss_fn(args):
+	"""Factory for symmetric InfoNCE CE used by in-batch contrastive training."""
+
+	ce_loss_fn = build_1vsall_loss_fn(args)
+
+	def loss_fn(logits: torch.Tensor, labels: torch.Tensor, **_kwargs) -> torch.Tensor:
+		return ce_loss_fn(logits, labels)
+
+	return loss_fn
+
+
 build_loss_fn = build_1vsall_loss_fn
 
 

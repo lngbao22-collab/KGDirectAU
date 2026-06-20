@@ -4,39 +4,80 @@ import json
 import os
 
 import torch
+from torch.optim import AdamW
+from transformers import get_cosine_schedule_with_warmup, get_linear_schedule_with_warmup
 
 from base.evaluator import Evaluator
-from base.trainer import Trainer
+from data.dataset import Dataset
+from data.dataloader import collate
 from data.dict_hub import build_tokenizer, get_entity_dict
 from metrics.ranking import topk_accuracy as accuracy
-from models.builder import import_module_from_path, load_attr_from_path, load_loss_fn
-from utils.device import get_model_obj, move_to_cuda
+from models.builder import import_module_from_path, init_index_kge_trainer, load_attr_from_path, load_loss_fn, run_kge_train_loop
+from utils.checkpoint import best_model_path, last_model_path, save_checkpoint
+from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
 from utils.logger import AverageMeter, ProgressMeter, logger
+from utils.memory import PhaseMemoryTracker, format_memory
 
 
-class InBatchStrategy(Trainer, Evaluator):
+class InBatchStrategy(Evaluator):
 	"""Train with in-batch negatives: broadcast queries against batch targets only."""
 
 	def __init__(self, model, sampler, loss_fn, args, ngpus_per_node=1, **_kwargs):
-		del model, sampler
+		del sampler
 		Evaluator.__init__(self)
 		self.args = args
 		self.ngpus_per_node = ngpus_per_node
 		build_tokenizer(args)
 
-		scorer_path = getattr(args, 'model_scorer_path', '') or getattr(args, 'model_encoder_path', '') or 'models/scorers/simkgc_scorer.py'
-		try:
-			build_model = load_attr_from_path(scorer_path, 'build_model')
-		except Exception:
-			mod = import_module_from_path(scorer_path)
-			build_model = getattr(mod, 'build_model')
+		if model is None:
+			from models.builder import build_model
 
-		model_obj = build_model(args)
-		logger.info(model_obj)
+			model = build_model(args)
+		logger.info(model)
 
-		self.loss_fn = loss_fn if loss_fn is not None else load_loss_fn(args)
-		super().__init__(args, ngpus_per_node, model=model_obj, criterion=self.loss_fn)
+		init_index_kge_trainer(self, model, args)
+		self.criterion = loss_fn if loss_fn is not None else load_loss_fn(args)
+		self._load_loss_and_sampler_helpers(args)
 
+		self.optimizer = AdamW(
+			[p for p in self.model.parameters() if p.requires_grad],
+			lr=args.lr,
+			weight_decay=float(args.weight_decay) if args.weight_decay is not None else 0.0,
+		)
+		report_num_trainable_parameters(self.model)
+
+		train_dataset = Dataset(path=args.train_path, task=args.dataset)
+		valid_dataset = Dataset(path=args.valid_path, task=args.dataset) if args.valid_path else None
+		num_training_steps = args.epochs * len(train_dataset) // max(args.batch_size, 1)
+		args.warmup = min(args.warmup, num_training_steps // 10)
+		logger.info('Total training steps: {}, warmup steps: {}'.format(num_training_steps, args.warmup))
+		self.scheduler = self._create_lr_scheduler(num_training_steps)
+
+		self.train_loader = torch.utils.data.DataLoader(
+			train_dataset,
+			batch_size=args.batch_size,
+			shuffle=True,
+			collate_fn=collate,
+			num_workers=args.workers,
+			pin_memory=True,
+			drop_last=True,
+		)
+
+		self.valid_loader = None
+		if valid_dataset:
+			self.valid_loader = torch.utils.data.DataLoader(
+				valid_dataset,
+				batch_size=args.batch_size * 2,
+				shuffle=True,
+				collate_fn=collate,
+				num_workers=args.workers,
+				pin_memory=True,
+			)
+
+		if args.use_amp:
+			self.scaler = torch.cuda.amp.GradScaler()
+
+	def _load_loss_and_sampler_helpers(self, args) -> None:
 		loss_path = getattr(args, 'model_loss_path', '') or 'models/losses/infonce_loss.py'
 		try:
 			self.ModelOutput = load_attr_from_path(loss_path, 'ModelOutput')
@@ -52,6 +93,24 @@ class InBatchStrategy(Trainer, Evaluator):
 		except Exception:
 			sampler_mod = import_module_from_path(sampler_path)
 			self.construct_mask = getattr(sampler_mod, 'construct_mask')
+
+	def _create_lr_scheduler(self, num_training_steps):
+		if self.args.lr_scheduler == 'linear':
+			return get_linear_schedule_with_warmup(
+				optimizer=self.optimizer,
+				num_warmup_steps=self.args.warmup,
+				num_training_steps=num_training_steps,
+			)
+		if self.args.lr_scheduler == 'cosine':
+			return get_cosine_schedule_with_warmup(
+				optimizer=self.optimizer,
+				num_warmup_steps=self.args.warmup,
+				num_training_steps=num_training_steps,
+			)
+		raise ValueError(f'Unknown lr scheduler: {self.args.lr_scheduler}')
+
+	def train_loop(self) -> dict:
+		return run_kge_train_loop(self)
 
 	def _compute_logits(self, output_dict: dict, batch_dict: dict) -> dict:
 		model = get_model_obj(self.model)
@@ -116,11 +175,9 @@ class InBatchStrategy(Trainer, Evaluator):
 		*,
 		symmetric: bool,
 	) -> torch.Tensor:
-		"""Mean CE on (h,r)->tail logits; optionally add symmetric tail->(h,r) term."""
-
-		loss = self.loss_fn(logits, labels)
+		loss = self.criterion(logits, labels)
 		if symmetric:
-			loss = loss + self.loss_fn(logits[:, :batch_size].t(), labels)
+			loss = loss + self.criterion(logits[:, :batch_size].t(), labels)
 		return loss
 
 	def train_epoch(self, epoch) -> None:
@@ -242,6 +299,45 @@ class InBatchStrategy(Trainer, Evaluator):
 		if metric_dict:
 			logger.info('Epoch {}, valid metric: {}'.format(epoch, json.dumps(metric_dict)))
 		return metric_dict
+
+	@torch.no_grad()
+	def _run_eval(self, epoch, step=0) -> dict:
+		eval_start = __import__('time').time()
+		self.memory_tracker.begin_phase()
+		metric_dict = self.eval_epoch(epoch)
+		self.memory_tracker.end_phase('eval')
+		self.valid_time += __import__('time').time() - eval_start
+		monitor_value = self._extract_monitor_value(metric_dict)
+		is_best = monitor_value is not None and (
+			self.best_metric is None or monitor_value > self.best_metric.get('score', float('-inf'))
+		)
+		if is_best:
+			self.best_metric = {'score': monitor_value, 'metrics': metric_dict, 'epoch': epoch}
+
+		saved_checkpoint_path = save_checkpoint({
+			'epoch': epoch,
+			'best_epoch': epoch if is_best else None,
+			'best_metric': self.best_metric,
+			'args': self.args.__dict__,
+			'state_dict': get_model_obj(self.model).state_dict(),
+		}, is_best=is_best, filename=last_model_path(self.args.output_dir))
+		if is_best:
+			self.best_checkpoint_path = best_model_path(self.args.output_dir)
+		elif self.best_checkpoint_path is None:
+			self.best_checkpoint_path = saved_checkpoint_path
+		return metric_dict
+
+	def _extract_monitor_value(self, metric_dict, valid_metric='mrr'):
+		if not metric_dict:
+			return None
+		if valid_metric in metric_dict:
+			return metric_dict[valid_metric]
+		if 'loss' in metric_dict:
+			return -metric_dict['loss']
+		for value in metric_dict.values():
+			if isinstance(value, (int, float)):
+				return value
+		return None
 
 
 SimKGCStrategy = InBatchStrategy

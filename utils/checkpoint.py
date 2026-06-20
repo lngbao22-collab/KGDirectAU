@@ -135,5 +135,11 @@ def load_state_dict_clean(model: torch.nn.Module, ckt_path: str, map_location: O
             new_key = k
         new_state_dict[new_key] = v
 
-    model.load_state_dict(new_state_dict, strict=strict)
+    from utils.checkpoint_migration import migrate_simkgc_state_dict
+
+    migrated_state_dict, migrated = migrate_simkgc_state_dict(new_state_dict)
+    if migrated:
+        logger.warning('Applied legacy SimKGC checkpoint key migration')
+
+    model.load_state_dict(migrated_state_dict, strict=strict)
     return checkpoint
