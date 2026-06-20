@@ -18,7 +18,7 @@ from models.builder import (
 	load_sampler,
 	run_index_kge_train_loop,
 )
-from base.embeddings import embedding_l3_penalty
+from base.embeddings import rotate_style_embedding_l3_penalty
 from models.scorers.protate_scorer import normalize_protate_phases
 from models.scorers.rotate_scorer import normalize_rotate_phases
 from utils.device import get_model_obj
@@ -170,14 +170,9 @@ class NegSampStrategy:
 		if reg_coef <= 0.0:
 			return None
 		model_obj = get_model_obj(self.model)
-		l3_term = embedding_l3_penalty(model_obj)
+		l3_term = rotate_style_embedding_l3_penalty(model_obj)
 		if l3_term is not None:
 			return reg_coef * l3_term
-		if hasattr(model_obj, 'entity_embedding') and hasattr(model_obj, 'relation_embedding'):
-			return reg_coef * (
-				model_obj.entity_embedding.norm(p=3) ** 3
-				+ model_obj.relation_embedding.norm(p=3) ** 3
-			)
 		return None
 
 	def _aux_relation_embedding(self, model_obj, relation_indices: torch.Tensor):

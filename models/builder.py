@@ -152,8 +152,10 @@ def build_model(args) -> nn.Module:
 	"""Assemble the model pillar (embedder + scorer bound by ``KGEModel`` / ``TextKGEModel``)."""
 
 	ent_embedder = build_entity_embedder(args)
-	rel_embedder = build_relation_embedder(args)
 	scorer = build_scorer_module(args)
+	if embedder_input_mode(ent_embedder) == 'tokens':
+		return bind_model(args, ent_embedder, None, scorer, aux_embedders=_build_aux_embedders(args))
+	rel_embedder = build_relation_embedder(args)
 	return bind_model(args, ent_embedder, rel_embedder, scorer, aux_embedders=_build_aux_embedders(args))
 
 
@@ -297,7 +299,13 @@ def apply_kge_regularization(
 
 
 def _eval_batch_size(args) -> int:
-	return max(int(getattr(args, 'eval_batch_size', 128) or 128), 1)
+	eval_batch_size = getattr(args, 'eval_batch_size', None)
+	if eval_batch_size is not None:
+		return max(int(eval_batch_size), 1)
+	test_batch_size = getattr(args, 'test_batch_size', None)
+	if test_batch_size is not None:
+		return max(int(test_batch_size), 1)
+	return 128
 
 
 def load_loss_fn_for_paradigm(args, paradigm: str):
@@ -541,12 +549,22 @@ def run_index_kge_train_loop(trainer, dataloader=None) -> dict:
 	if patience is not None and patience <= 0:
 		patience = None
 
+	max_steps = config_int(trainer.args, 'max_steps', None)
+
 	for epoch in range(max_epochs):
+		if max_steps is not None and getattr(trainer, 'global_step', 0) >= max_steps:
+			logger.info('[STOP] Reached max_steps=%d at epoch %d', max_steps, epoch + 1)
+			break
+
 		train_start = time.time()
 		trainer.memory_tracker.begin_phase()
 		train_loss = trainer.train_epoch(dataloader, epoch)
 		trainer.memory_tracker.end_phase('train')
 		trainer.train_time += time.time() - train_start
+
+		if max_steps is not None and getattr(trainer, 'global_step', 0) >= max_steps:
+			logger.info('[STOP] Reached max_steps=%d after epoch %d', max_steps, epoch + 1)
+			break
 
 		validated = _kge_should_validate(trainer.args, epoch)
 		metric_dict = {}
@@ -748,9 +766,12 @@ def build_pipeline(args, ngpus_per_node: int = 1):
 	StrategyClass = load_strategy_class(args)
 
 	ent_embedder = build_entity_embedder(args)
-	rel_embedder = build_relation_embedder(args)
 	scorer = build_scorer_module(args)
-	model = bind_model(args, ent_embedder, rel_embedder, scorer, aux_embedders=_build_aux_embedders(args))
+	if embedder_input_mode(ent_embedder) == 'tokens':
+		model = bind_model(args, ent_embedder, None, scorer, aux_embedders=_build_aux_embedders(args))
+	else:
+		rel_embedder = build_relation_embedder(args)
+		model = bind_model(args, ent_embedder, rel_embedder, scorer, aux_embedders=_build_aux_embedders(args))
 	if torch.cuda.is_available():
 		model.cuda()
 

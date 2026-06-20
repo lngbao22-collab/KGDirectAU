@@ -138,12 +138,35 @@ def _embedding_range(args, dim: int) -> float:
 	return (margin + 2.0) / max(1, dim)
 
 
+def _adversarial_gamma(args) -> float:
+	"""RotatE-style gamma/margin used for adversarial embedding init (default 200)."""
+
+	raw = getattr(args, 'margin', None)
+	if raw is None:
+		raw = getattr(args, 'gamma', 200.0)
+	return float(raw)
+
+
+def _adversarial_uniform_init(embedder: LookupEmbedder, args, dim: int) -> None:
+	"""Uniform init with range ``(gamma + 2) / dim`` (RotatE adversarial training)."""
+
+	epsilon = 2.0
+	embedding_range = (_adversarial_gamma(args) + epsilon) / max(dim, 1)
+	nn.init.uniform_(embedder.embedding.weight, a=-embedding_range, b=embedding_range)
+
+
+def _complex_part_dim(args, dim: int, *, role: str) -> int:
+	"""Per-component ComplEx table width (RotatE ``-de`` / ``-dr``); default ON preserves existing ComplEx."""
+
+	flag = 'double_entity_embedding' if role == 'entity' else 'double_relation_embedding'
+	if bool(getattr(args, flag, True)):
+		return dim
+	return max(dim // 2, 1)
+
+
 def _init_lookup_table(embedder: LookupEmbedder, args, dim: int, role: str) -> None:
 	if bool(getattr(args, 'adversarial_training', False)):
-		epsilon = 2.0
-		margin = float(getattr(args, 'margin', 200.0))
-		embedding_range = (margin + epsilon) / dim
-		nn.init.uniform_(embedder.embedding.weight, a=-embedding_range, b=embedding_range)
+		_adversarial_uniform_init(embedder, args, dim)
 	elif getattr(args, 'init_method', None):
 		init_lookup_embedding(embedder, args, dim, role=role)
 	elif _model_name(args) in {'distmult', 'distmult-au', 'complex', 'complex-au'}:
@@ -179,11 +202,15 @@ def build_entity_embedder(args) -> nn.Module:
 	dim = int(getattr(args, 'dim', 200))
 
 	if _is_complex(args):
-		ent_re = LookupEmbedder(n_ent, dim, args, role='entity')
-		ent_im = LookupEmbedder(n_ent, dim, args, role='entity')
-		if getattr(args, 'init_scaled', True) and not getattr(args, 'init_method', None):
+		entity_dim = _complex_part_dim(args, dim, role='entity')
+		ent_re = LookupEmbedder(n_ent, entity_dim, args, role='entity')
+		ent_im = LookupEmbedder(n_ent, entity_dim, args, role='entity')
+		if bool(getattr(args, 'adversarial_training', False)):
 			for module in (ent_re, ent_im):
-				_scaled_init(module, dim)
+				_adversarial_uniform_init(module, args, dim)
+		elif getattr(args, 'init_scaled', True) and not getattr(args, 'init_method', None):
+			for module in (ent_re, ent_im):
+				_scaled_init(module, entity_dim)
 		return ComplExEntityEmbedder(ent_re, ent_im)
 
 	if _is_rotate(args):
@@ -216,11 +243,15 @@ def build_relation_embedder(args) -> nn.Module:
 	dim = int(getattr(args, 'dim', 200))
 
 	if _is_complex(args):
-		rel_re = LookupEmbedder(n_rel, dim, args, role='relation')
-		rel_im = LookupEmbedder(n_rel, dim, args, role='relation')
-		if getattr(args, 'init_scaled', True) and not getattr(args, 'init_method', None):
+		relation_dim = _complex_part_dim(args, dim, role='relation')
+		rel_re = LookupEmbedder(n_rel, relation_dim, args, role='relation')
+		rel_im = LookupEmbedder(n_rel, relation_dim, args, role='relation')
+		if bool(getattr(args, 'adversarial_training', False)):
 			for module in (rel_re, rel_im):
-				_scaled_init(module, dim)
+				_adversarial_uniform_init(module, args, dim)
+		elif getattr(args, 'init_scaled', True) and not getattr(args, 'init_method', None):
+			for module in (rel_re, rel_im):
+				_scaled_init(module, relation_dim)
 		return ComplExRelationEmbedder(rel_re, rel_im)
 
 	if _is_rotate(args) or _is_protate(args):

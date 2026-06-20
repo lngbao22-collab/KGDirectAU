@@ -641,7 +641,13 @@ class Evaluator:
     def _eval_batch_size(self, batch_size: int | None = None) -> int:
         if batch_size is not None:
             return max(int(batch_size), 1)
-        return max(int(getattr(self.args, 'eval_batch_size', 128) or 128), 1)
+        eval_batch_size = getattr(self.args, 'eval_batch_size', None)
+        if eval_batch_size is not None:
+            return max(int(eval_batch_size), 1)
+        test_batch_size = getattr(self.args, 'test_batch_size', None)
+        if test_batch_size is not None:
+            return max(int(test_batch_size), 1)
+        return 128
 
     def load(self, ckt_path: str, use_data_parallel: bool = False) -> None:
         """Load checkpoint, apply training args, build tokenizer and model, and load weights."""

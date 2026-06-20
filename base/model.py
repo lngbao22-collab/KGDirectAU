@@ -298,16 +298,19 @@ class TextKGEModel(KGEModel):
 		contrastive_state: nn.Module | None = None,
 	):
 		super().__init__(ent_embedder, query_embedder, scorer, args)
-		self.query_embedder = query_embedder
 		if contrastive_state is not None:
 			self.contrastive_state = contrastive_state
 		elif args is not None:
 			from models.scorers.simkgc_scorer import build_contrastive_state
 
-			hidden_size = int(getattr(ent_embedder, 'config', None).hidden_size) if hasattr(ent_embedder, 'config') else int(getattr(args, 'dim', 768))
+			hidden_size = int(getattr(getattr(ent_embedder, 'config', None), 'hidden_size', getattr(args, 'dim', 768)))
 			self.contrastive_state = build_contrastive_state(args, hidden_size)
 		else:
 			self.contrastive_state = None
+
+	@property
+	def query_embedder(self) -> nn.Module:
+		return self.rel_embedder
 
 	@property
 	def log_inv_t(self) -> torch.Tensor:
@@ -435,6 +438,28 @@ class TextKGEModel(KGEModel):
 			'hr_vector': hr_vector,
 			'tail_vector': tail_vector,
 			'head_vector': head_vector,
+		}
+
+	def compute_logits(self, output_dict: dict, batch_dict: dict) -> dict:
+		"""InfoNCE logits for triple classification eval (legacy interface)."""
+
+		from models.losses.infonce_loss import compute_infonce_logits
+
+		hr_vector, tail_vector = output_dict['hr_vector'], output_dict['tail_vector']
+		batch_size = hr_vector.size(0)
+		labels = torch.arange(batch_size, device=hr_vector.device)
+		logits = compute_infonce_logits(
+			query_vec=hr_vector,
+			candidate_vec=tail_vector,
+			temp=self.log_inv_t,
+			margin=self.add_margin if self.training else 0.0,
+		)
+		return {
+			'logits': logits,
+			'labels': labels,
+			'inv_t': self.log_inv_t.detach().exp(),
+			'hr_vector': hr_vector.detach(),
+			'tail_vector': tail_vector.detach(),
 		}
 
 	def entity_embeddings(

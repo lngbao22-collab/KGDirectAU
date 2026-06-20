@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import Any, Optional
 
 import torch
@@ -222,6 +221,8 @@ class TextQueryEmbedder(_BertTextEncoder):
 
 	def __init__(self, args: Any, *, shared_encoder: nn.Module | None = None):
 		super().__init__(args, shared_encoder=shared_encoder)
+
+	def embed_sp(self, head_indices: torch.Tensor, relation_indices: torch.Tensor) -> torch.Tensor:
 		"""Encode tail-prediction queries ``(s, p)`` from integer indices."""
 
 		entity_dict = get_entity_dict()

@@ -35,6 +35,9 @@ class InBatchStrategy(Evaluator):
 			model = build_model(args)
 		logger.info(model)
 
+		from data.dict_hub import warmup_data_structures
+
+		warmup_data_structures()
 		init_index_kge_trainer(self, model, args)
 		self.criterion = loss_fn if loss_fn is not None else load_loss_fn(args)
 		self._load_loss_and_sampler_helpers(args)

@@ -265,6 +265,35 @@ def embedding_l3_penalty(model: nn.Module, p: int = 3) -> torch.Tensor | None:
 	return sum(terms)
 
 
+def _concat_complex_table_weight(embedder: nn.Module) -> torch.Tensor | None:
+	"""Return one weight matrix for ComplEx re/im tables (RotatE ``-de`` / ``-dr`` layout)."""
+
+	if hasattr(embedder, 'ent_re') and hasattr(embedder, 'ent_im'):
+		return torch.cat([embedder.ent_re.embedding.weight, embedder.ent_im.embedding.weight], dim=1)
+	if hasattr(embedder, 'rel_re') and hasattr(embedder, 'rel_im'):
+		return torch.cat([embedder.rel_re.embedding.weight, embedder.rel_im.embedding.weight], dim=1)
+	return None
+
+
+def rotate_style_embedding_l3_penalty(model: nn.Module, p: int = 3) -> torch.Tensor | None:
+	"""RotatE global L3: ``||E||_p^p + ||R||_p^p`` over full entity/relation weight matrices."""
+
+	terms: list[torch.Tensor] = []
+	for embedder in (getattr(model, 'ent_embedder', None), getattr(model, 'rel_embedder', None)):
+		if embedder is None:
+			continue
+		weight = _concat_complex_table_weight(embedder)
+		if weight is None and hasattr(embedder, 'embedding'):
+			weight = embedder.embedding.weight
+		elif weight is None and hasattr(embedder, 'weight'):
+			weight = embedder.weight
+		if weight is not None:
+			terms.append(weight.norm(p=p) ** p)
+	if not terms:
+		return None
+	return sum(terms)
+
+
 class ParameterEmbedder(nn.Module):
 	"""Wrap a shared ``nn.Parameter`` matrix as a LibKGE-style embedder."""
 

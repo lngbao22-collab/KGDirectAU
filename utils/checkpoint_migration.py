@@ -6,7 +6,7 @@ from collections import OrderedDict
 
 
 _LEGACY_PREFIX_MAP = {
-	'hr_bert.': 'query_embedder.encoder.',
+	'hr_bert.': 'rel_embedder.encoder.',
 	'tail_bert.': 'ent_embedder.encoder.',
 	'log_inv_t': 'contrastive_state.log_inv_t',
 	'pre_batch_vectors': 'contrastive_state.pre_batch_vectors',
