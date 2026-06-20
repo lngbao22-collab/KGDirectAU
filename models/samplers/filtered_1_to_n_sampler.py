@@ -125,9 +125,14 @@ class FilteredSubsampler:
         positive_sample = self._ensure_tensor_triples(batch_triples)
         batch_size = positive_sample.size(0)
 
-        head = positive_sample[:, 0].cpu().numpy()
-        relation = positive_sample[:, 1].cpu().numpy()
-        tail = positive_sample[:, 2].cpu().numpy()
+        if positive_sample.is_cuda:
+            head = positive_sample[:, 0].detach().cpu().numpy()
+            relation = positive_sample[:, 1].detach().cpu().numpy()
+            tail = positive_sample[:, 2].detach().cpu().numpy()
+        else:
+            head = positive_sample[:, 0].numpy()
+            relation = positive_sample[:, 1].numpy()
+            tail = positive_sample[:, 2].numpy()
 
         subsampling_weight = self._subsampling_weights(head, relation, tail)
         if mode == "head-batch":
@@ -137,26 +142,21 @@ class FilteredSubsampler:
         else:
             raise ValueError(f"Training batch mode {mode} not supported")
         oversample = max(num_negatives * 2, 64)
-        negative_rows = []
+        negative_sample = np.empty((batch_size, num_negatives), dtype=np.int64)
         if mode == "head-batch":
-            for r, t in zip(relation, tail):
-                negative_rows.append(
-                    self._sample_filtered_negatives_row(
-                        (int(r), int(t)), self.true_head, oversample, num_negatives=num_negatives
-                    )
+            for i, (r, t) in enumerate(zip(relation, tail)):
+                negative_sample[i] = self._sample_filtered_negatives_row(
+                    (int(r), int(t)), self.true_head, oversample, num_negatives=num_negatives
                 )
         elif mode == "tail-batch":
-            for h, r in zip(head, relation):
-                negative_rows.append(
-                    self._sample_filtered_negatives_row(
-                        (int(h), int(r)), self.true_tail, oversample, num_negatives=num_negatives
-                    )
+            for i, (h, r) in enumerate(zip(head, relation)):
+                negative_sample[i] = self._sample_filtered_negatives_row(
+                    (int(h), int(r)), self.true_tail, oversample, num_negatives=num_negatives
                 )
         else:
             raise ValueError(f"Training batch mode {mode} not supported")
 
-        negative_sample = torch.from_numpy(np.stack(negative_rows, axis=0)).long()
-        return positive_sample, negative_sample, subsampling_weight, mode
+        return positive_sample, torch.from_numpy(negative_sample).long(), subsampling_weight, mode
 
 
 def build_sampler(args, train_triples, model):

@@ -86,6 +86,47 @@ class NegSampStrategy:
 		path = str(getattr(self.args, 'model_loss_path', '') or '').lower()
 		return 'adversarial_bce' in path
 
+	def _supports_batched_candidate_scoring(self, model_obj) -> bool:
+		scorer = getattr(model_obj, 'scorer', None)
+		return scorer is not None and hasattr(scorer, 'score_spo_candidates') and hasattr(scorer, 'score_po_candidates')
+
+	def _candidate_scoring_context(
+		self,
+		h: torch.Tensor,
+		r: torch.Tensor,
+		t: torch.Tensor,
+		mode: str,
+	):
+		model_obj = get_model_obj(self.model)
+		if not self._supports_batched_candidate_scoring(model_obj):
+			return None
+
+		scorer = model_obj.scorer
+		if mode == 'tail-batch':
+			h_emb = model_obj.embed_s(h)
+			r_emb = model_obj.embed_p(r)
+			t_emb = model_obj.embed_o(t)
+			pos_scores = scorer.score_spo(h_emb, r_emb, t_emb)
+			return {
+				'mode': mode,
+				'h_emb': h_emb,
+				'r_emb': r_emb,
+				't_emb': t_emb,
+				'pos_scores': pos_scores,
+			}
+
+		h_emb = model_obj.embed_s(h)
+		r_emb = model_obj.embed_p(r)
+		t_emb = model_obj.embed_o(t)
+		pos_scores = scorer.score_po(h_emb, r_emb, t_emb)
+		return {
+			'mode': mode,
+			'h_emb': h_emb,
+			'r_emb': r_emb,
+			't_emb': t_emb,
+			'pos_scores': pos_scores,
+		}
+
 	def _adversarial_temperature(self) -> float:
 		return float(
 			getattr(self.args, 'adversarial_temp', None)
@@ -178,6 +219,9 @@ class NegSampStrategy:
 						weights,
 						chunk_size,
 					)
+					reg_term = self._regularization_term()
+					if reg_term is not None:
+						loss_parts[-1] = loss_parts[-1] + reg_term
 					for loss_part in loss_parts:
 						self._backward_loss(loss_part)
 					anchor = loss_parts[0].new_zeros(())
@@ -189,14 +233,9 @@ class NegSampStrategy:
 					)
 					if kge_reg is not anchor:
 						self._backward_loss(kge_reg)
-					reg_term = self._regularization_term()
-					if reg_term is not None:
-						self._backward_loss(reg_term)
 					loss = sum((part.detach() for part in loss_parts), start=anchor)
 					if kge_reg is not anchor:
 						loss = loss + kge_reg.detach()
-					if reg_term is not None:
-						loss = loss + reg_term.detach()
 
 		self._optimizer_step()
 
@@ -241,6 +280,21 @@ class NegSampStrategy:
 		h = pos_triples[:, 0]
 		r = pos_triples[:, 1]
 		t = pos_triples[:, 2]
+		context = self._candidate_scoring_context(h, r, t, mode)
+		if context is not None:
+			batch_size, num_neg = neg_entity_ids.shape
+			model_obj = get_model_obj(self.model)
+			scorer = model_obj.scorer
+			if mode == 'tail-batch':
+				t_emb = model_obj.embed_o(neg_entity_ids.reshape(-1)).view(batch_size, num_neg, -1)
+				neg_scores = scorer.score_spo_candidates(context['h_emb'], context['r_emb'], t_emb)
+			elif mode == 'head-batch':
+				h_emb = model_obj.embed_s(neg_entity_ids.reshape(-1)).view(batch_size, num_neg, -1)
+				neg_scores = scorer.score_po_candidates(h_emb, context['r_emb'], context['t_emb'])
+			else:
+				raise ValueError(f'Unsupported negative-sampling mode: {mode}')
+			return context['pos_scores'], neg_scores
+
 		predict_head = mode == 'head-batch'
 		pos_scores = self._score_triple(h, r, t, predict_head=predict_head)
 
@@ -269,9 +323,23 @@ class NegSampStrategy:
 		mode: str,
 		col_start: int,
 		col_end: int,
+		*,
+		context=None,
 	) -> torch.Tensor:
 		neg_slice = neg_entity_ids[:, col_start:col_end]
 		chunk_neg = neg_slice.size(1)
+		if context is not None:
+			model_obj = get_model_obj(self.model)
+			scorer = model_obj.scorer
+			batch_size = h.size(0)
+			if mode == 'tail-batch':
+				t_emb = model_obj.embed_o(neg_slice.reshape(-1)).view(batch_size, chunk_neg, -1)
+				return scorer.score_spo_candidates(context['h_emb'], context['r_emb'], t_emb)
+			if mode == 'head-batch':
+				h_emb = model_obj.embed_s(neg_slice.reshape(-1)).view(batch_size, chunk_neg, -1)
+				return scorer.score_po_candidates(h_emb, context['r_emb'], context['t_emb'])
+			raise ValueError(f'Unsupported negative-sampling mode: {mode}')
+
 		if mode == 'tail-batch':
 			h_exp = h.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
 			r_exp = r.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
@@ -295,12 +363,25 @@ class NegSampStrategy:
 		h = pos_triples[:, 0]
 		r = pos_triples[:, 1]
 		t = pos_triples[:, 2]
-		predict_head = mode == 'head-batch'
-		pos_scores = self._score_triple(h, r, t, predict_head=predict_head)
+		context = self._candidate_scoring_context(h, r, t, mode)
+		if context is not None:
+			pos_scores = context['pos_scores']
+		else:
+			predict_head = mode == 'head-batch'
+			pos_scores = self._score_triple(h, r, t, predict_head=predict_head)
 		num_neg = int(neg_entity_ids.size(1))
 
 		def score_neg_columns(start: int, end: int) -> torch.Tensor:
-			return self._score_negatives_slice(h, r, t, neg_entity_ids, mode, start, end)
+			return self._score_negatives_slice(
+				h,
+				r,
+				t,
+				neg_entity_ids,
+				mode,
+				start,
+				end,
+				context=context,
+			)
 
 		if self._uses_adversarial_bce():
 			weight_chunk_size = config_int(self.args, 'neg_weight_chunk_size', None)

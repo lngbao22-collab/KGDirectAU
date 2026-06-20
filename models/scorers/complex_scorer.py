@@ -39,6 +39,36 @@ class ComplExScorer(KGEScorer):
 
 		return self.score_spo(h_emb, r_emb, t_emb)
 
+	def score_spo_candidates(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+	) -> torch.Tensor:
+		"""Score many tail candidates per row: ``h_emb,r_emb`` are [B, D], ``t_emb`` is [B, C, D]."""
+
+		h_re, h_im = self._split_complex(h_emb)
+		r_re, r_im = self._split_complex(r_emb)
+		t_re, t_im = self._split_complex(t_emb)
+		query_re = h_re * r_re - h_im * r_im
+		query_im = h_re * r_im + h_im * r_re
+		return (query_re.unsqueeze(1) * t_re + query_im.unsqueeze(1) * t_im).sum(dim=-1)
+
+	def score_po_candidates(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+	) -> torch.Tensor:
+		"""Score many head candidates per row: ``h_emb`` is [B, C, D], ``r_emb,t_emb`` are [B, D]."""
+
+		h_re, h_im = self._split_complex(h_emb)
+		r_re, r_im = self._split_complex(r_emb)
+		t_re, t_im = self._split_complex(t_emb)
+		query_re = r_re * t_re + r_im * t_im
+		query_im = r_re * t_im - r_im * t_re
+		return (query_re.unsqueeze(1) * h_re + query_im.unsqueeze(1) * h_im).sum(dim=-1)
+
 	def score_sp_(self, h_emb: torch.Tensor, r_emb: torch.Tensor, all_t_embs: torch.Tensor) -> torch.Tensor:
 		"""Return ComplEx scores using LibKGE-style sp_ broadcasting."""
 
