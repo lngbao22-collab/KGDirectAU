@@ -158,8 +158,10 @@ class KvsAllStrategy:
 		args,
 		train_triples: torch.Tensor | None = None,
 		grouped_train_data: list[dict[str, Any]] | None = None,
+		ngpus_per_node: int = 1,
+		**_kwargs,
 	):
-		del sampler
+		del sampler, ngpus_per_node, _kwargs
 		init_index_kge_trainer(self, model, args)
 
 		self.query_types = resolve_kvsall_query_types(args)

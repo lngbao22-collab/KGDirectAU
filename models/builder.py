@@ -13,7 +13,12 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from base.embeddings import compute_kge_regularization, use_reciprocal_relations
+from base.embeddings import (
+	compute_kge_regularization,
+	kbc_forward_relation_count,
+	use_kbc_reciprocal_relations,
+	use_reciprocal_relations,
+)
 from base.model import KGEModel, TextKGEModel
 from data.dataset import PointwiseDataset, load_data
 from data.dict_hub import get_entity_dict, get_relation_id_map
@@ -884,7 +889,7 @@ def _relation_index_map(model: nn.Module | None) -> dict[str, int]:
 
 def _load_train_examples(args, model: nn.Module | None = None):
 	del model
-	add_backward = use_reciprocal_relations(args)
+	add_backward = use_reciprocal_relations(args) and not use_kbc_reciprocal_relations(args)
 	strategy_path = (getattr(args, 'model_strategy_path', '') or '').replace('\\', '/').lower()
 	if 'kvsall' in strategy_path:
 		from models.strategies.kvsall_strategy import kvsall_uses_po_training
@@ -901,6 +906,37 @@ def _examples_to_tensors(examples, entity_dict, relation_to_idx):
 	)
 	tail_indices = torch.tensor([entity_dict.entity_to_idx(example.tail_id) for example in examples], dtype=torch.long)
 	return head_indices, relation_indices, tail_indices
+
+
+def _augment_kbc_1vsall_train_tensors(
+	src: torch.Tensor,
+	rel: torch.Tensor,
+	dst: torch.Tensor,
+	relation_to_idx: dict[str, int],
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+	"""Stack forward triples with swapped (t, r + n_forward, h) copies (kbc ``get_train``)."""
+
+	n_forward = kbc_forward_relation_count(relation_to_idx)
+	if n_forward <= 0:
+		return src, rel, dst
+	return (
+		torch.cat([src, dst]),
+		torch.cat([rel, rel + n_forward]),
+		torch.cat([dst, src]),
+	)
+
+
+def _prepare_1vsall_train_data(
+	args,
+	model: nn.Module | None,
+	train_examples,
+	entity_dict,
+	relation_to_idx: dict[str, int],
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+	src, rel, dst = _examples_to_tensors(train_examples, entity_dict, relation_to_idx)
+	if use_kbc_reciprocal_relations(args):
+		src, rel, dst = _augment_kbc_1vsall_train_tensors(src, rel, dst, relation_to_idx)
+	return src, rel, dst
 
 
 def _prepare_train_triples(args, model: nn.Module) -> torch.Tensor:
@@ -949,7 +985,9 @@ def _strategy_init_kwargs(args, strategy_path: str, model: nn.Module, train_trip
 		entity_dict = get_entity_dict()
 		train_examples = _load_train_examples(args, model)
 		rel_map = _relation_index_map(model)
-		kwargs['train_data'] = _examples_to_tensors(train_examples, entity_dict, rel_map)
+		kwargs['train_data'] = _prepare_1vsall_train_data(
+			args, model, train_examples, entity_dict, rel_map,
+		)
 
 	return kwargs
 

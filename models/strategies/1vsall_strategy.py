@@ -21,8 +21,8 @@ from utils.logger import logger
 class OneVsAllStrategy:
 	"""Train by broadcasting (h, r) and (r, t) against all entities with cross-entropy."""
 
-	def __init__(self, model, sampler, loss_fn, args, train_data=None):
-		del sampler
+	def __init__(self, model, sampler, loss_fn, args, train_data=None, ngpus_per_node: int = 1, **_kwargs):
+		del sampler, ngpus_per_node, _kwargs
 		init_index_kge_trainer(self, model, args)
 		if train_data is None:
 			raise ValueError('OneVsAllStrategy requires train_data from build_pipeline')

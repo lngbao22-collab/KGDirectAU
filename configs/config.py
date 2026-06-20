@@ -291,6 +291,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--add-reciprocal-relations', '--add_reciprocal_relations',
                         dest='add_reciprocal_relations', action='store_true',
                         help='train with inverse relations (reciprocal_relations_model)')
+    parser.add_argument('--kbc-reciprocal-relations', '--kbc_reciprocal_relations',
+                        dest='kbc_reciprocal_relations', action='store_true', default=None,
+                        help='kbc-style reciprocal relations: inverse id = forward id + n_forward, doubled train triples')
     parser.add_argument('--bidirectional-1vsall', '--bidirectional_1vsall',
                         dest='bidirectional_1vsall', action='store_true', default=None,
                         help='train both tail (sp_) and head (po_) 1-vs-all CE losses')

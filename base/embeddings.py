@@ -26,7 +26,38 @@ def _relation_path_candidates(args) -> list[str]:
 
 
 def use_reciprocal_relations(args: Any | None) -> bool:
-	return bool(getattr(args, 'add_reciprocal_relations', False))
+	return bool(getattr(args, 'add_reciprocal_relations', False)) or use_kbc_reciprocal_relations(args)
+
+
+def use_kbc_reciprocal_relations(args: Any | None) -> bool:
+	return bool(getattr(args, 'kbc_reciprocal_relations', False))
+
+
+def kbc_forward_relation_count(relation_to_idx: dict[str, int]) -> int:
+	"""Number of forward relation slots (kbc ``n_predicates // 2`` after doubling)."""
+
+	forward_values = [
+		int(value)
+		for key, value in relation_to_idx.items()
+		if not str(key).startswith('inverse ')
+	]
+	if not forward_values:
+		return 0
+	return max(forward_values) + 1
+
+
+def add_kbc_inverse_relations(relation_to_idx: dict[str, int]) -> dict[str, int]:
+	"""Assign inverse relation id = forward_id + n_forward (kbc reciprocal layout)."""
+
+	updated = dict(relation_to_idx)
+	n_forward = kbc_forward_relation_count(updated)
+	for relation, idx in list(updated.items()):
+		if str(relation).startswith('inverse '):
+			continue
+		inverse_relation = f'inverse {relation}'
+		if inverse_relation not in updated:
+			updated[inverse_relation] = int(idx) + n_forward
+	return updated
 
 
 def add_inverse_relations(relation_to_idx: dict[str, int]) -> dict[str, int]:
@@ -52,7 +83,9 @@ def load_relation_to_idx(args) -> dict[str, int]:
 			mapping = json.load(handle)
 		if isinstance(mapping, dict):
 			relation_to_idx = {str(key): int(value) for key, value in mapping.items()}
-			if use_reciprocal_relations(args):
+			if use_kbc_reciprocal_relations(args):
+				relation_to_idx = add_kbc_inverse_relations(relation_to_idx)
+			elif use_reciprocal_relations(args):
 				relation_to_idx = add_inverse_relations(relation_to_idx)
 			return relation_to_idx
 
@@ -63,7 +96,9 @@ def load_relation_to_idx(args) -> dict[str, int]:
 			seen.add(example.relation)
 			relations.append(example.relation)
 	relation_to_idx = {relation: idx for idx, relation in enumerate(relations)}
-	if use_reciprocal_relations(args):
+	if use_kbc_reciprocal_relations(args):
+		relation_to_idx = add_kbc_inverse_relations(relation_to_idx)
+	elif use_reciprocal_relations(args):
 		relation_to_idx = add_inverse_relations(relation_to_idx)
 	return relation_to_idx
 
