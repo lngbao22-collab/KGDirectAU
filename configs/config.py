@@ -357,6 +357,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # Training cadence, optimizer, and KvsAll query layout.
+    parser.add_argument('--training-cadence', '--training_cadence', default=None, type=str,
+                        dest='training_cadence', help='Training cadence: step or epoch (default: step if max_steps set)')
+    parser.add_argument('--max-steps', '--max_steps', default=None, type=int,
+                        dest='max_steps', help='Stop training after this many optimizer steps')
+    parser.add_argument('--valid-steps', '--valid_steps', default=None, type=int,
+                        dest='valid_steps', help='Validate every N optimizer steps (alias: eval_every_n_step)')
+    parser.add_argument('--save-checkpoint-steps', '--save_checkpoint_steps', default=None, type=int,
+                        dest='save_checkpoint_steps', help='Save checkpoint every N optimizer steps')
+    parser.add_argument('--warm-up-steps', '--warm_up_steps', default=None, type=int,
+                        dest='warm_up_steps', help='Decay LR by lr_decay_factor at this step (default: max_steps // 2)')
+    parser.add_argument('--lr-decay-factor', '--lr_decay_factor', default=None, type=float,
+                        dest='lr_decay_factor', help='LR multiplier applied at warm_up_steps (default: 0.1)')
     parser.add_argument('--epoch-per-eval', '--epoch_per_eval', default=None, type=int,
                         dest='epoch_per_eval', help='Run validation every N epochs')
     parser.add_argument('--optim', default=None, type=str,

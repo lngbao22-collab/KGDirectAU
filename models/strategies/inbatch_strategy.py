@@ -15,7 +15,7 @@ from metrics.ranking import topk_accuracy as accuracy
 from models.builder import import_module_from_path, init_index_kge_trainer, load_attr_from_path, load_loss_fn, run_kge_train_loop
 from utils.checkpoint import best_model_path, last_model_path, save_checkpoint
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
-from utils.logger import AverageMeter, ProgressMeter, logger
+from utils.training_cadence import init_step_cadence_state
 from utils.memory import PhaseMemoryTracker, format_memory
 
 
@@ -79,6 +79,8 @@ class InBatchStrategy(Evaluator):
 
 		if args.use_amp:
 			self.scaler = torch.cuda.amp.GradScaler()
+
+		init_step_cadence_state(self)
 
 	def _load_loss_and_sampler_helpers(self, args) -> None:
 		loss_path = getattr(args, 'model_loss_path', '') or 'models/losses/infonce_loss.py'
@@ -194,6 +196,18 @@ class InBatchStrategy(Evaluator):
 			prefix='Epoch: [{}]'.format(epoch),
 		)
 
+		from utils.training_cadence import (
+			increment_trainer_global_step,
+			maybe_decay_lr_at_step,
+			resolve_max_steps,
+			resolve_valid_steps,
+			should_stop_at_step,
+		)
+
+		eval_interval = resolve_valid_steps(self.args)
+		if eval_interval is None:
+			eval_interval = getattr(self.args, 'eval_every_n_step', None)
+
 		for i, batch_dict in enumerate(self.train_loader):
 			self.model.train()
 
@@ -236,10 +250,16 @@ class InBatchStrategy(Evaluator):
 				self.optimizer.step()
 			self.scheduler.step()
 
+			step = increment_trainer_global_step(self)
+			maybe_decay_lr_at_step(self, step)
+
 			if i % self.args.print_freq == 0:
 				progress.display(i)
-			if (i + 1) % self.args.eval_every_n_step == 0:
-				self._run_eval(epoch=epoch, step=i + 1)
+			if eval_interval and step % int(eval_interval) == 0:
+				self._run_eval(epoch=epoch, step=step)
+			if resolve_max_steps(self.args) is not None and should_stop_at_step(self, step):
+				self._stop_training = True
+				break
 
 		logger.info('Learning rate: {}'.format(self.scheduler.get_last_lr()[0]))
 		log_str = f"[EPOCH {epoch}] Loss: {losses.avg:.4f} | Acc@1: {top1.avg:.2f} | Acc@3: {top3.avg:.2f}"

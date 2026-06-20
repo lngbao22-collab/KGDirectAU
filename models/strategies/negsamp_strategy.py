@@ -12,7 +12,6 @@ from models.builder import (
 	build_optimizer,
 	config_bool,
 	config_float,
-	config_int,
 	init_index_kge_trainer,
 	load_loss_fn_for_paradigm,
 	load_sampler,
@@ -23,6 +22,7 @@ from models.scorers.protate_scorer import normalize_protate_phases
 from models.scorers.rotate_scorer import normalize_rotate_phases
 from utils.device import get_model_obj
 from utils.logger import logger
+from utils.training_cadence import init_step_cadence_state, maybe_decay_lr_at_step, uses_step_cadence
 
 
 class NegSampStrategy:
@@ -49,10 +49,7 @@ class NegSampStrategy:
 		weight_decay = config_float(args, 'weight_decay', 0.0)
 		self.optimizer = build_optimizer(args, self.model.parameters(), weight_decay)
 		self.lr_scheduler = build_lr_scheduler(args, self.optimizer)
-		self.global_step = 0
-		self.next_lr_decay_step = config_int(args, 'warm_up_steps', None)
-		self.lr_decay_factor = config_float(args, 'lr_decay_factor', 0.1)
-		self.max_steps = config_int(args, 'max_steps', None)
+		init_step_cadence_state(self)
 		self.shuffle_train = config_bool(args, 'shuffle_train', False)
 		self.use_amp = bool(getattr(args, 'use_amp', False)) and torch.cuda.is_available()
 		device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -71,14 +68,78 @@ class NegSampStrategy:
 			self._normalize_phases_fn(self.model)
 
 	def _maybe_decay_learning_rate(self) -> None:
-		if self.next_lr_decay_step is None or self.global_step < self.next_lr_decay_step:
+		maybe_decay_lr_at_step(self, self.global_step)
+
+	def iter_training_batches(self, epoch: int, dataloader=None):
+		if dataloader is not None:
+			yield from dataloader
 			return
-		decay_factor = max(self.lr_decay_factor, 0.0)
-		new_lr = self.optimizer.param_groups[0]['lr'] * decay_factor
-		for param_group in self.optimizer.param_groups:
-			param_group['lr'] = new_lr
-		logger.info('Change learning rate to %.8f at step %d', new_lr, self.global_step)
-		self.next_lr_decay_step = int(self.next_lr_decay_step * 3)
+		yield from self._iter_train_batches(epoch)
+
+	def train_batch(self, batch, epoch: int) -> float:
+		del epoch
+		self.model.train()
+		self.optimizer.zero_grad()
+		current_mode = None if self._pointwise_mode else self._slot_modes[self._slot_step % 2]
+		if not self._pointwise_mode:
+			self._slot_step += 1
+
+		sample_result = self.sampler.sample(batch, current_mode)
+		if len(sample_result) == 4:
+			pos_batch, neg_batch, weights, mode = sample_result
+		else:
+			pos_batch, neg_batch, weights = sample_result
+			mode = current_mode
+
+		if isinstance(batch, dict):
+			for key in batch:
+				if torch.is_tensor(batch[key]):
+					batch[key] = batch[key].to(self.device)
+
+		if torch.is_tensor(pos_batch):
+			pos_batch = pos_batch.to(self.device)
+		if torch.is_tensor(neg_batch):
+			neg_batch = neg_batch.to(self.device)
+		if weights is not None and torch.is_tensor(weights):
+			weights = weights.to(self.device)
+
+		with torch.autocast(device_type='cuda', enabled=self.use_amp):
+			if self._pointwise_mode:
+				pos_scores, neg_scores = self._score_pointwise_batch(pos_batch, neg_batch)
+				loss = self._compute_loss(pos_scores, neg_scores, weights)
+				dabr_reg = self._dabr_regularization(pos_batch)
+				if dabr_reg is not None:
+					loss = loss + dabr_reg
+			else:
+				pos_scores, neg_scores = self._score_filtered_negatives(pos_batch, neg_batch, mode)
+				loss = self._compute_loss(pos_scores, neg_scores, weights)
+				loss = apply_kge_regularization(
+					loss,
+					self.model,
+					self.args,
+					batch_triples=pos_batch,
+				)
+				reg_term = self._regularization_term()
+				if reg_term is not None:
+					loss = loss + reg_term
+
+		if self.use_amp:
+			self.scaler.scale(loss).backward()
+			if self._pointwise_mode:
+				self.scaler.unscale_(self.optimizer)
+				torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
+			self.scaler.step(self.optimizer)
+			self.scaler.update()
+		else:
+			loss.backward()
+			if self._pointwise_mode:
+				torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
+			self.optimizer.step()
+
+		if self._normalize_phases_fn is not None:
+			self._normalize_phases_fn(self.model)
+
+		return float(loss.item())
 
 	def _iter_train_batches(self, epoch: int):
 		if self.train_dataloader is not None:
@@ -205,78 +266,17 @@ class NegSampStrategy:
 		return (entity_reg_weight * reg_ent) + (relation_reg_weight * reg_rel)
 
 	def train_epoch(self, dataloader: Iterable | None, epoch: int) -> float:
+		if uses_step_cadence(self.args):
+			raise RuntimeError('train_epoch should not be called directly under step-based training cadence')
+
 		self.model.train()
 		total_loss = 0.0
 		step = 0
-		data_source = dataloader if dataloader is not None else self._iter_train_batches(epoch)
-
-		for batch in data_source:
-			if self.max_steps is not None and self.global_step >= self.max_steps:
-				break
-
-			self.optimizer.zero_grad()
-			current_mode = None if self._pointwise_mode else self._slot_modes[self._slot_step % 2]
-			if not self._pointwise_mode:
-				self._slot_step += 1
-
-			sample_result = self.sampler.sample(batch, current_mode)
-			if len(sample_result) == 4:
-				pos_batch, neg_batch, weights, mode = sample_result
-			else:
-				pos_batch, neg_batch, weights = sample_result
-				mode = current_mode
-
-			if isinstance(batch, dict):
-				for key in batch:
-					if torch.is_tensor(batch[key]):
-						batch[key] = batch[key].to(self.device)
-
-			if torch.is_tensor(pos_batch):
-				pos_batch = pos_batch.to(self.device)
-			if torch.is_tensor(neg_batch):
-				neg_batch = neg_batch.to(self.device)
-			if weights is not None and torch.is_tensor(weights):
-				weights = weights.to(self.device)
-
-			with torch.autocast(device_type='cuda', enabled=self.use_amp):
-				if self._pointwise_mode:
-					pos_scores, neg_scores = self._score_pointwise_batch(pos_batch, neg_batch)
-					loss = self._compute_loss(pos_scores, neg_scores, weights)
-					dabr_reg = self._dabr_regularization(pos_batch)
-					if dabr_reg is not None:
-						loss = loss + dabr_reg
-				else:
-					pos_scores, neg_scores = self._score_filtered_negatives(pos_batch, neg_batch, mode)
-					loss = self._compute_loss(pos_scores, neg_scores, weights)
-					loss = apply_kge_regularization(
-						loss,
-						self.model,
-						self.args,
-						batch_triples=pos_batch,
-					)
-					reg_term = self._regularization_term()
-					if reg_term is not None:
-						loss = loss + reg_term
-
-			if self.use_amp:
-				self.scaler.scale(loss).backward()
-				if self._pointwise_mode:
-					self.scaler.unscale_(self.optimizer)
-					torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
-				self.scaler.step(self.optimizer)
-				self.scaler.update()
-			else:
-				loss.backward()
-				if self._pointwise_mode:
-					torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
-				self.optimizer.step()
-
-			if self._normalize_phases_fn is not None:
-				self._normalize_phases_fn(self.model)
-
+		for batch in self.iter_training_batches(epoch, dataloader):
+			loss = self.train_batch(batch, epoch)
 			self.global_step += 1
 			self._maybe_decay_learning_rate()
-			total_loss += float(loss.item())
+			total_loss += loss
 			step += 1
 
 		avg_loss = total_loss / max(step, 1)

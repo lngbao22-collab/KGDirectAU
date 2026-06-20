@@ -467,7 +467,7 @@ def _kge_extract_monitor_value(metric_dict: dict, train_loss: float | None = Non
 	return None
 
 
-def eval_index_kge_epoch(trainer, epoch: int) -> dict:
+def eval_index_kge_epoch(trainer, epoch: int, *, step: int | None = None) -> dict:
 	"""Run validation link prediction for index-based KGE strategies."""
 
 	from utils.logger import logger
@@ -497,29 +497,49 @@ def eval_index_kge_epoch(trainer, epoch: int) -> dict:
 	)
 	if forward_metrics and backward_metrics:
 		metric_dict.update(_kge_average_metric_dict(forward_metrics, backward_metrics))
-		logger.info(
-			'[EPOCH %s] Valid | MRR: %.4f | H@10: %.4f',
-			epoch + 1,
-			metric_dict.get('mrr', 0.0),
-			metric_dict.get('hit@10', metric_dict.get('hits@10', 0.0)),
-		)
+		if step is not None:
+			logger.info(
+				'[STEP %s] Valid | MRR: %.4f | H@10: %.4f',
+				step,
+				metric_dict.get('mrr', 0.0),
+				metric_dict.get('hit@10', metric_dict.get('hits@10', 0.0)),
+			)
+		else:
+			logger.info(
+				'[EPOCH %s] Valid | MRR: %.4f | H@10: %.4f',
+				epoch + 1,
+				metric_dict.get('mrr', 0.0),
+				metric_dict.get('hit@10', metric_dict.get('hits@10', 0.0)),
+			)
 	return metric_dict
 
 
-def _save_index_kge_checkpoint(trainer, epoch: int, is_best: bool) -> str:
-	from utils.checkpoint import best_model_path, delete_old_ckt, last_model_path, save_checkpoint
+def _save_index_kge_checkpoint(
+	trainer,
+	epoch: int,
+	is_best: bool,
+	*,
+	step: int | None = None,
+) -> str:
+	from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, last_model_path, save_checkpoint
 	from utils.device import get_model_obj
 
+	filename = (
+		checkpoint_path(trainer.args.output_dir, epoch, step)
+		if step is not None
+		else last_model_path(trainer.args.output_dir)
+	)
 	saved_checkpoint_path = save_checkpoint(
 		{
 			'epoch': epoch,
+			'step': step,
 			'best_epoch': epoch if is_best else None,
 			'best_metric': trainer.best_metric,
 			'args': trainer.args.__dict__,
 			'state_dict': get_model_obj(trainer.model).state_dict(),
 		},
 		is_best=is_best,
-		filename=last_model_path(trainer.args.output_dir),
+		filename=filename,
 	)
 	if is_best:
 		trainer.best_checkpoint_path = best_model_path(trainer.args.output_dir)
@@ -532,13 +552,78 @@ def _save_index_kge_checkpoint(trainer, epoch: int, is_best: bool) -> str:
 	return saved_checkpoint_path
 
 
-def run_index_kge_train_loop(trainer, dataloader=None) -> dict:
-	"""Shared epoch loop for index-based KGE strategies."""
+def _kge_train_loop_result(trainer) -> dict:
+	from utils.memory import format_memory
+	from utils.logger import logger
+
+	logger.info('[Memory] Training peak: %s', format_memory(trainer.memory_tracker.train_peak_mb))
+	logger.info('[Memory] Eval peak: %s', format_memory(trainer.memory_tracker.eval_peak_mb))
+	logger.info('[Memory] Peak memory: %s', format_memory(trainer.memory_tracker.peak_memory_mb))
+	return {
+		'best_epoch': None if trainer.best_metric is None else trainer.best_metric.get('epoch', 0) + 1,
+		'best_step': None if trainer.best_metric is None else trainer.best_metric.get('step'),
+		'best_mrr': None if trainer.best_metric is None else trainer.best_metric.get('score'),
+		'train_time': trainer.train_time,
+		'valid_time': trainer.valid_time,
+		'total_time': trainer.total_time,
+		'best_checkpoint_path': trainer.best_checkpoint_path,
+		**trainer.memory_tracker.to_dict(),
+	}
+
+
+def _update_index_kge_best_metric(trainer, metric_dict: dict, epoch: int, step: int | None = None) -> bool:
+	if not metric_dict or 'mrr' not in metric_dict:
+		return False
+	monitor_value = metric_dict['mrr']
+	is_best = trainer.best_metric is None or monitor_value > trainer.best_metric.get('score', float('-inf'))
+	if is_best:
+		payload = {'score': monitor_value, 'metrics': metric_dict, 'epoch': epoch}
+		if step is not None:
+			payload['step'] = step
+		trainer.best_metric = payload
+	return is_best
+
+
+def on_index_kge_training_step(trainer, epoch: int) -> int:
+	"""Advance global step counter and run step-cadence validation, checkpoints, and LR decay."""
+
+	import time
+
+	from utils.training_cadence import (
+		increment_trainer_global_step,
+		maybe_decay_lr_at_step,
+		should_save_checkpoint_at_step,
+		should_stop_at_step,
+		should_validate_at_step,
+	)
+
+	step = increment_trainer_global_step(trainer)
+	maybe_decay_lr_at_step(trainer, step)
+
+	is_best = False
+	if should_validate_at_step(step, trainer.args):
+		eval_start = time.time()
+		trainer.memory_tracker.begin_phase()
+		metric_dict = eval_index_kge_epoch(trainer, epoch, step=step)
+		trainer.memory_tracker.end_phase('eval')
+		trainer.valid_time += time.time() - eval_start
+		is_best = _update_index_kge_best_metric(trainer, metric_dict, epoch, step=step)
+
+	if should_save_checkpoint_at_step(step, trainer.args) or is_best:
+		_save_index_kge_checkpoint(trainer, epoch, is_best, step=step)
+
+	if should_stop_at_step(trainer, step):
+		trainer._stop_training = True
+
+	return step
+
+
+def run_epoch_based_kge_train_loop(trainer, dataloader=None) -> dict:
+	"""Epoch-driven training with optional early stopping (LibKGE-style index KGE)."""
 
 	import time
 
 	from utils.logger import logger
-	from utils.memory import format_memory
 
 	total_start = time.time()
 	max_epochs = max(int(getattr(trainer.args, 'epochs', 1)), 1)
@@ -549,22 +634,12 @@ def run_index_kge_train_loop(trainer, dataloader=None) -> dict:
 	if patience is not None and patience <= 0:
 		patience = None
 
-	max_steps = config_int(trainer.args, 'max_steps', None)
-
 	for epoch in range(max_epochs):
-		if max_steps is not None and getattr(trainer, 'global_step', 0) >= max_steps:
-			logger.info('[STOP] Reached max_steps=%d at epoch %d', max_steps, epoch + 1)
-			break
-
 		train_start = time.time()
 		trainer.memory_tracker.begin_phase()
 		train_loss = trainer.train_epoch(dataloader, epoch)
 		trainer.memory_tracker.end_phase('train')
 		trainer.train_time += time.time() - train_start
-
-		if max_steps is not None and getattr(trainer, 'global_step', 0) >= max_steps:
-			logger.info('[STOP] Reached max_steps=%d after epoch %d', max_steps, epoch + 1)
-			break
 
 		validated = _kge_should_validate(trainer.args, epoch)
 		metric_dict = {}
@@ -577,10 +652,8 @@ def run_index_kge_train_loop(trainer, dataloader=None) -> dict:
 
 		is_best = False
 		if validated and metric_dict and 'mrr' in metric_dict:
-			monitor_value = metric_dict['mrr']
-			is_best = trainer.best_metric is None or monitor_value > trainer.best_metric.get('score', float('-inf'))
+			is_best = _update_index_kge_best_metric(trainer, metric_dict, epoch)
 			if is_best:
-				trainer.best_metric = {'score': monitor_value, 'metrics': metric_dict, 'epoch': epoch}
 				bad_counts = 0
 			else:
 				best_mrr = None if trainer.best_metric is None else trainer.best_metric.get('score')
@@ -597,18 +670,86 @@ def run_index_kge_train_loop(trainer, dataloader=None) -> dict:
 			break
 
 	trainer.total_time = time.time() - total_start
-	logger.info('[Memory] Training peak: %s', format_memory(trainer.memory_tracker.train_peak_mb))
-	logger.info('[Memory] Eval peak: %s', format_memory(trainer.memory_tracker.eval_peak_mb))
-	logger.info('[Memory] Peak memory: %s', format_memory(trainer.memory_tracker.peak_memory_mb))
-	return {
-		'best_epoch': None if trainer.best_metric is None else trainer.best_metric.get('epoch', 0) + 1,
-		'best_mrr': None if trainer.best_metric is None else trainer.best_metric.get('score'),
-		'train_time': trainer.train_time,
-		'valid_time': trainer.valid_time,
-		'total_time': trainer.total_time,
-		'best_checkpoint_path': trainer.best_checkpoint_path,
-		**trainer.memory_tracker.to_dict(),
-	}
+	return _kge_train_loop_result(trainer)
+
+
+def run_step_based_kge_train_loop(trainer, dataloader=None) -> dict:
+	"""Step-driven training (RotatE-style max_steps / valid_steps / save_checkpoint_steps)."""
+
+	import time
+
+	from utils.logger import logger
+	from utils.training_cadence import (
+		get_trainer_global_step,
+		init_step_cadence_state,
+		resolve_max_steps,
+		should_stop_at_step,
+		trainer_supports_step_batches,
+		uses_step_cadence,
+	)
+
+	if not uses_step_cadence(trainer.args):
+		raise ValueError('run_step_based_kge_train_loop requires step-based training cadence')
+	if not trainer_supports_step_batches(trainer):
+		raise ValueError(
+			f'{type(trainer).__name__} does not implement iter_training_batches/train_batch '
+			'required for step-based training'
+		)
+
+	init_step_cadence_state(trainer)
+	max_steps = resolve_max_steps(trainer.args)
+	if max_steps is None:
+		raise ValueError('step-based training requires max_steps')
+
+	total_start = time.time()
+	epoch = 0
+	max_epochs = max(int(getattr(trainer.args, 'epochs', 1)), 1)
+
+	while get_trainer_global_step(trainer) < max_steps and epoch < max_epochs:
+		if getattr(trainer, '_stop_training', False):
+			break
+
+		train_start = time.time()
+		trainer.memory_tracker.begin_phase()
+		loss_total = 0.0
+		batch_count = 0
+		for batch in trainer.iter_training_batches(epoch, dataloader):
+			if get_trainer_global_step(trainer) >= max_steps or getattr(trainer, '_stop_training', False):
+				break
+			loss = trainer.train_batch(batch, epoch)
+			loss_total += float(loss)
+			batch_count += 1
+			step = on_index_kge_training_step(trainer, epoch)
+			if should_stop_at_step(trainer, step) or getattr(trainer, '_stop_training', False):
+				break
+
+		trainer.memory_tracker.end_phase('train')
+		trainer.train_time += time.time() - train_start
+		if batch_count > 0:
+			logger.info(
+				'[EPOCH %s] Train | Loss: %.4f | Step: %s',
+				epoch + 1,
+				loss_total / batch_count,
+				get_trainer_global_step(trainer),
+			)
+
+		if should_stop_at_step(trainer, get_trainer_global_step(trainer)):
+			logger.info('[STOP] Reached max_steps=%d at epoch %d', max_steps, epoch + 1)
+			break
+		epoch += 1
+
+	trainer.total_time = time.time() - total_start
+	return _kge_train_loop_result(trainer)
+
+
+def run_index_kge_train_loop(trainer, dataloader=None) -> dict:
+	"""Dispatch epoch-based or step-based training for index KGE strategies."""
+
+	from utils.training_cadence import uses_step_cadence
+
+	if uses_step_cadence(trainer.args):
+		return run_step_based_kge_train_loop(trainer, dataloader)
+	return run_epoch_based_kge_train_loop(trainer, dataloader)
 
 
 def run_kge_train_loop(trainer) -> dict:
@@ -618,18 +759,26 @@ def run_kge_train_loop(trainer) -> dict:
 
 	from utils.logger import logger
 	from utils.memory import format_memory
+	from utils.training_cadence import get_trainer_global_step, resolve_max_steps, uses_step_cadence
 
 	if getattr(trainer.args, 'use_amp', False) and not hasattr(trainer, 'scaler'):
 		trainer.scaler = torch.cuda.amp.GradScaler()
 
 	total_start = time.time()
+	max_steps = resolve_max_steps(trainer.args) if uses_step_cadence(trainer.args) else None
 	for epoch in range(trainer.args.epochs):
 		epoch_train_start = time.time()
 		trainer.memory_tracker.begin_phase()
 		trainer.train_epoch(epoch)
 		trainer.memory_tracker.end_phase('train')
 		trainer.train_time += time.time() - epoch_train_start
-		trainer._run_eval(epoch=epoch)
+		if max_steps is None:
+			trainer._run_eval(epoch=epoch)
+		elif getattr(trainer, '_stop_training', False) or get_trainer_global_step(trainer) >= max_steps:
+			break
+
+	if max_steps is not None and getattr(trainer, '_stop_training', False):
+		logger.info('[STOP] Reached max_steps=%d', max_steps)
 
 	trainer.total_time = time.time() - total_start
 	logger.info(f"[Timing] Training time (s): {round(trainer.train_time, 2)}")
