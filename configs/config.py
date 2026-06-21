@@ -788,6 +788,28 @@ for _name, _default in (('gamma_h', 0.0), ('gamma_ent', 0.0), ('gamma_cross', 0.
 if getattr(args, 'workers', None) is None:
     args.workers = 0
 
+
+def _infer_data_paths_from_dataset() -> None:
+    """Fill standard preprocessed split paths from ``dataset`` when omitted in JSON."""
+
+    dataset = getattr(args, 'dataset', None) or ''
+    if not dataset:
+        return
+    base = os.path.join('data', dataset, 'preprocessed')
+    defaults = {
+        'train_path': os.path.join(base, 'train.txt.json'),
+        'valid_path': os.path.join(base, 'valid.txt.json'),
+        'test_path': os.path.join(base, 'test.txt.json'),
+        'valid_w_label_path': os.path.join(base, 'valid_w_label.txt.json'),
+        'test_w_label_path': os.path.join(base, 'test_w_label.txt.json'),
+    }
+    for key, path in defaults.items():
+        if not getattr(args, key, None):
+            setattr(args, key, path)
+
+
+_infer_data_paths_from_dataset()
+
 args.train_path = _resolve_data_path(getattr(args, 'train_path', None) or '')
 args.valid_path = _resolve_data_path(_derive_split_variant(getattr(args, 'valid_path', None) or '', split_name='valid', labeled=False))
 args.test_path = _resolve_data_path(_derive_split_variant(getattr(args, 'test_path', None) or '', split_name='test', labeled=False))

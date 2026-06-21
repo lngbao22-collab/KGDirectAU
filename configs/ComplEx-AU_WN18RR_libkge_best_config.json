@@ -28,7 +28,6 @@
   "gamma_cross": 1,
   "tuni": 2,
   "normalize_au_vectors": true,
-  "normalize_lp_scores": false,
   "learnable_au_gammas": true,
   "learnable_uniformity_scale": true,
   "log_au_gamma_lr": 0.034702669886504146,
