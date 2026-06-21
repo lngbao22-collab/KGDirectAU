@@ -23,6 +23,33 @@ class DistMultScorer(KGEScorer):
 
 		return torch.sum(h_emb * r_emb * t_emb, dim=-1)
 
+	def score_po(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+		"""Return DistMult scores for head candidates with fixed (relation, tail)."""
+
+		return self.score_spo(h_emb, r_emb, t_emb)
+
+	def score_spo_candidates(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+	) -> torch.Tensor:
+		"""Score many tail candidates per row: ``h_emb,r_emb`` are [B, D], ``t_emb`` is [B, C, D]."""
+
+		query = h_emb * r_emb
+		return torch.bmm(query.unsqueeze(1), t_emb.transpose(1, 2)).squeeze(1)
+
+	def score_po_candidates(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+	) -> torch.Tensor:
+		"""Score many head candidates per row: ``h_emb`` is [B, C, D], ``r_emb,t_emb`` are [B, D]."""
+
+		query = t_emb * r_emb
+		return torch.bmm(query.unsqueeze(1), h_emb.transpose(1, 2)).squeeze(1)
+
 	def score_sp_(self, h_emb: torch.Tensor, r_emb: torch.Tensor, all_t_embs: torch.Tensor) -> torch.Tensor:
 		"""Return 1-vs-all DistMult scores using LibKGE-style sp_ broadcasting."""
 
