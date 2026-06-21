@@ -84,6 +84,34 @@ class pRotatEScorer(KGEScorer):
 		phase = self._phase(h_emb) + (self._phase(r_emb) - self._phase(t_emb))
 		return self._score_phase(phase)
 
+	def score_spo_candidates(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+	) -> torch.Tensor:
+		"""Score many tail candidates per row: ``h_emb,r_emb`` are [B, D], ``t_emb`` is [B, C, D]."""
+
+		phase = (
+			self._phase(h_emb).unsqueeze(1)
+			+ self._phase(r_emb).unsqueeze(1)
+			- self._phase(t_emb)
+		)
+		return self._score_phase(phase)
+
+	def score_po_candidates(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+	) -> torch.Tensor:
+		"""Score many head candidates per row: ``h_emb`` is [B, C, D], ``r_emb,t_emb`` are [B, D]."""
+
+		phase = self._phase(h_emb) + (
+			self._phase(r_emb).unsqueeze(1) - self._phase(t_emb).unsqueeze(1)
+		)
+		return self._score_phase(phase)
+
 	def score_sp_(self, h_emb: torch.Tensor, r_emb: torch.Tensor, all_t_embs: torch.Tensor) -> torch.Tensor:
 		"""Return 1-vs-all pRotatE tail scores using raw tensor broadcasting."""
 

@@ -194,6 +194,26 @@ class RotatEScorer(KGEScorer):
 
 		return self._distance_score(h_emb, r_emb, t_emb, predict_head=True)
 
+	def score_spo_candidates(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+	) -> torch.Tensor:
+		"""Score many tail candidates per row: ``h_emb,r_emb`` are [B, D], ``t_emb`` is [B, C, D]."""
+
+		return self._candidate_distance_score(h_emb, r_emb, t_emb, predict_head=False)
+
+	def score_po_candidates(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+	) -> torch.Tensor:
+		"""Score many head candidates per row: ``h_emb`` is [B, C, D], ``r_emb,t_emb`` are [B, D]."""
+
+		return self._candidate_distance_score(h_emb, r_emb, t_emb, predict_head=True)
+
 	def score_sp_(self, h_emb: torch.Tensor, r_emb: torch.Tensor, all_t_embs: torch.Tensor) -> torch.Tensor:
 		"""Return 1-vs-all RotatE tail scores using LibKGE-style sp_ broadcasting."""
 
@@ -233,12 +253,72 @@ class RotatEScorer(KGEScorer):
 			q_re, q_im = self._rotate_query(h_re, h_im, r_emb, inverse=False)
 			return self._libkge_distance(q_re, q_im, t_re, t_im, pairwise=False)
 
+		return self._margin_distance_pairwise(h_re, h_im, r_emb, t_re, t_im, predict_head=predict_head)
+
+	def _candidate_distance_score(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+		*,
+		predict_head: bool,
+	) -> torch.Tensor:
+		"""RotatE distance for [B, C, D] candidate tensors (negative sampling)."""
+
+		h_re, h_im = self._split_complex(h_emb)
+		t_re, t_im = self._split_complex(t_emb)
+		if self._libkge:
+			if predict_head:
+				q_re, q_im = self._rotate_query(t_re, t_im, r_emb, inverse=True)
+				if h_re.dim() == 3:
+					diff_re = q_re.unsqueeze(1) - h_re
+					diff_im = q_im.unsqueeze(1) - h_im
+					norm_dim = 2
+				else:
+					diff_re = q_re - h_re
+					diff_im = q_im - h_im
+					norm_dim = 1
+			else:
+				q_re, q_im = self._rotate_query(h_re, h_im, r_emb, inverse=False)
+				if t_re.dim() == 3:
+					diff_re = q_re.unsqueeze(1) - t_re
+					diff_im = q_im.unsqueeze(1) - t_im
+					norm_dim = 2
+				else:
+					diff_re = q_re - t_re
+					diff_im = q_im - t_im
+					norm_dim = 1
+			diff_abs = self._abs_complex(diff_re, diff_im)
+			return -self._norm_nonnegative(diff_abs, dim=norm_dim)
+
+		return self._margin_distance_pairwise(h_re, h_im, r_emb, t_re, t_im, predict_head=predict_head)
+
+	def _margin_distance_pairwise(
+		self,
+		h_re: torch.Tensor,
+		h_im: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_re: torch.Tensor,
+		t_im: torch.Tensor,
+		*,
+		predict_head: bool,
+	) -> torch.Tensor:
+		"""Margin RotatE distance with optional per-row candidate broadcasting."""
+
 		phase = self._phase(r_emb)
 		r_re = torch.cos(phase)
 		r_im = torch.sin(phase)
+		candidate_dim = h_re.dim() == 3 if predict_head else t_re.dim() == 3
 		if predict_head:
-			re_score = r_re * t_re + r_im * t_im - h_re
-			im_score = r_re * t_im - r_im * t_re - h_im
+			if candidate_dim:
+				re_score = r_re.unsqueeze(1) * t_re.unsqueeze(1) + r_im.unsqueeze(1) * t_im.unsqueeze(1) - h_re
+				im_score = r_re.unsqueeze(1) * t_im.unsqueeze(1) - r_im.unsqueeze(1) * t_re.unsqueeze(1) - h_im
+			else:
+				re_score = r_re * t_re + r_im * t_im - h_re
+				im_score = r_re * t_im - r_im * t_re - h_im
+		elif candidate_dim:
+			re_score = h_re.unsqueeze(1) * r_re.unsqueeze(1) - h_im.unsqueeze(1) * r_im.unsqueeze(1) - t_re
+			im_score = h_re.unsqueeze(1) * r_im.unsqueeze(1) + h_im.unsqueeze(1) * r_re.unsqueeze(1) - t_im
 		else:
 			re_score = h_re * r_re - h_im * r_im - t_re
 			im_score = h_re * r_im + h_im * r_re - t_im
