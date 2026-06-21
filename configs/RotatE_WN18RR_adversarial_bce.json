@@ -37,7 +37,7 @@
   "score_query_chunk_size": 256,
   "eval_candidate_chunk_size": 2048,
   "eval_entity_chunk_size": 4096,
-  "neg_score_chunk_size": 0,
+  "neg_score_chunk_size": 128,
   "normalize_lp_scores": false,
   "tie_handling": "rounded_mean_rank",
   "tie_rtol": 0.0001,
