@@ -14,6 +14,8 @@ def build_scorer(args) -> DistMultScorer:
 class DistMultScorer(KGEScorer):
 	"""DistMult score function with explicit 1-to-1 and 1-vs-All tensor paths."""
 
+	bidirectional_score_batch = True
+
 	def __init__(self, args=None):
 		super().__init__()
 		self.args = args
