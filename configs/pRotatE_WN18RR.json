@@ -13,6 +13,7 @@
   "valid_w_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
   "test_w_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
   "output_dir_prefix": "logs/pRotatE_WN18RR",
+  "head_eval_mode": "po_forward",
   "dim": 500,
   "margin": 6.0,
   "batch_size": 512,

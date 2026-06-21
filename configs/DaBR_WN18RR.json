@@ -13,6 +13,7 @@
   "valid_w_label_path": "data/WN18RR/preprocessed/valid_w_label.txt.json",
   "test_w_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
   "output_dir_prefix": "logs/DaBR_WN18RR",
+  "head_eval_mode": "po_forward",
   "dim": 100,
   "lr": 0.1,
   "weight_decay": 0.1,

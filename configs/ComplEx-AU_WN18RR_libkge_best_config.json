@@ -1,5 +1,6 @@
 {
   "add_reciprocal_relations": true,
+  "head_eval_mode": "po_forward",
   "au_deduplicate": true,
   "batch_size": 128,
   "dataset": "WN18RR",

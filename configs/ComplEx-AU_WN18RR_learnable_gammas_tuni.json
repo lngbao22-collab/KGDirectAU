@@ -14,6 +14,7 @@
   "test_w_label_path": "data/WN18RR/preprocessed/test_w_label.txt.json",
   "output_dir_prefix": "logs/ComplEx-AU_WN18RR_learnable_gammas_tuni",
   "add_reciprocal_relations": true,
+  "head_eval_mode": "po_forward",
   "dim": 128,
   "batch_size": 512,
   "epochs": 400,

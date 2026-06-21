@@ -100,16 +100,36 @@ def build_forward_to_inverse_index_tensor(relation_to_idx: dict[str, int]) -> to
 	return mapping
 
 
+HEAD_EVAL_MODES = frozenset({'po_forward', 'po_inverse', 'sp_inverse'})
+
+
 def resolve_head_eval_mode(args: Any | None, *, eval_forward: bool) -> str:
 	"""Choose backward link-prediction scoring to match the training recipe.
 
 	Returns one of ``tail``, ``po_forward``, ``po_inverse``, or ``sp_inverse``.
+
+	When ``args.head_eval_mode`` is set in JSON/CLI, it overrides strategy-based
+	inference for the backward (head) pass. Use ``po_forward`` for adversarial
+	BCE / direct head prediction with the forward relation (no inverse relation).
 	"""
 
 	if eval_forward:
 		return 'tail'
 	if args is None:
 		return 'po_forward'
+
+	explicit = getattr(args, 'head_eval_mode', None)
+	if explicit is not None:
+		mode = str(explicit).strip().lower()
+		if mode in {'auto', 'infer', 'default', ''}:
+			pass
+		elif mode in HEAD_EVAL_MODES:
+			return mode
+		else:
+			raise ValueError(
+				f'Unsupported head_eval_mode={explicit!r}; '
+				f'expected one of {sorted(HEAD_EVAL_MODES)} or auto'
+			)
 
 	strategy = (getattr(args, 'model_strategy_path', '') or '').replace('\\', '/').lower()
 	loss_path = (getattr(args, 'model_loss_path', '') or '').replace('\\', '/').lower()

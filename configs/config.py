@@ -457,6 +457,11 @@ def build_parser() -> argparse.ArgumentParser:
                         dest='n_sample_s', help='Number of subject negative samples per positive')
 
     # Link-prediction evaluation.
+    parser.add_argument('--head-eval-mode', '--head_eval_mode', default=None, type=str,
+                        dest='head_eval_mode',
+                        help='Backward LP head scoring: po_forward (direct head, forward r), '
+                             'po_inverse (KvsAll _po), sp_inverse (kbc CE inverse triple), '
+                             'or auto (infer from strategy; default when omitted)')
     parser.add_argument('--eval-entity-chunk-size', '--eval_entity_chunk_size',
                         default=None, type=int, dest='eval_entity_chunk_size',
                         help='Entity chunk size for chunked RotatE evaluation')
