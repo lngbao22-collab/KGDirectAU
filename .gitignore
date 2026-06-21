@@ -15,5 +15,4 @@ configs/ComplEx-AU_WN18RR_learnable_tuni.json
 configs/ComplEx-AU_WN18RR_v2.json
 configs/ComplEx_WN18RR_bpr.json
 configs/ComplEx_WN18RR_ce_libkge.json
-configs/ComplEx-AU_WN18RR_learnable_gammas_tuni.json
 configs/ComplEx-AU_WN18RR_libkge_best_config.json

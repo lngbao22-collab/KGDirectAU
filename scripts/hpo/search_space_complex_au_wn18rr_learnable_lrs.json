@@ -30,7 +30,6 @@
     "early_stopping_min_metric": 0.03
   },
   "parameters": {
-    "log_au_gamma_lr": {"type": "loguniform", "low": 1e-5, "high": 1.0},
-    "log_uniformity_lr": {"type": "loguniform", "low": 1e-5, "high": 0.5}
+    "log_au_gamma_lr": {"type": "loguniform", "low": 1e-5, "high": 1.0}
   }
 }
