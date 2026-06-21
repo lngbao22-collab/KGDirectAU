@@ -185,10 +185,14 @@ def _init_rotate_weight(weight: nn.Parameter, args, *, role: str, hidden_dim: in
 		nn.init.uniform_(weight, a=-bound, b=bound)
 		return
 	if role == 'relation' and _is_rotate(args):
-		low = float(getattr(args, 'init_relation_uniform_a', -math.pi))
-		high = float(getattr(args, 'init_relation_uniform_b', math.pi))
-		nn.init.uniform_(weight, a=low, b=high)
-		return
+		if (
+			str(getattr(args, 'model', '') or '').lower() == 'rotate'
+			and not bool(getattr(args, 'adversarial_training', False))
+		):
+			low = float(getattr(args, 'init_relation_uniform_a', -math.pi))
+			high = float(getattr(args, 'init_relation_uniform_b', math.pi))
+			nn.init.uniform_(weight, a=low, b=high)
+			return
 	if getattr(args, 'init_method', None):
 		temp = LookupEmbedder(weight.size(0), full_dim, args, role=role)
 		init_lookup_embedding(temp, args, full_dim, role=role)

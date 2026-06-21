@@ -14,8 +14,10 @@ def build_scorer(args) -> RotatEScorer:
 
 
 def _is_libkge_rotate(args) -> bool:
-	"""Return True for plain RotatE (LibKGE ``rotate``), not RotatE-AU variants."""
+	"""Return True for plain RotatE (LibKGE ``rotate``), not RotatE-AU or KGE adversarial runs."""
 
+	if bool(getattr(args, 'adversarial_training', False)):
+		return False
 	return str(getattr(args, 'model', '') or '').lower() == 'rotate'
 
 

@@ -353,6 +353,20 @@ def build_parser() -> argparse.ArgumentParser:
                         help='StepLR: multiply LR by factor every this many epochs')
 
     # RotatE / pRotatE and adversarial negative sampling.
+    adversarial_training_group = parser.add_mutually_exclusive_group()
+    adversarial_training_group.add_argument(
+        '--adversarial-training', '--adversarial_training',
+        dest='adversarial_training',
+        action='store_true',
+        default=None,
+        help='Use KnowledgeGraphEmbedding-style adversarial negative sampling (RotatE/DistMult/ComplEx)',
+    )
+    adversarial_training_group.add_argument(
+        '--no-adversarial-training', '--no_adversarial_training',
+        dest='adversarial_training',
+        action='store_false',
+        help='Disable adversarial negative sampling',
+    )
     parser.add_argument('--margin', default=None, type=float,
                         help='RotatE/pRotatE embedding margin')
     parser.add_argument('--l-norm', '--l_norm', default=None, type=float, dest='l_norm',
