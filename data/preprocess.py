@@ -101,7 +101,11 @@ def _load_triples(path: str) -> List[Tuple[str, str, str, str]]:
 def _normalize_fb15k237_relation(relation: str) -> str:
     """Normalize FB15k-237 relation strings by replacing certain characters and removing redundant tokens."""
 
-    tokens = relation.replace("./", "/").replace("_", " ").strip().split("/")
+    tokens = [
+        token
+        for token in relation.replace("./", "/").replace("_", " ").strip().split("/")
+        if token
+    ]
     dedup_tokens: List[str] = []
     for token in tokens:
         if token not in dedup_tokens[-3:]:

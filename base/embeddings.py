@@ -75,6 +75,35 @@ def add_inverse_relations(relation_to_idx: dict[str, int]) -> dict[str, int]:
 	return updated
 
 
+def _apply_relation_display_aliases(relation_to_idx: dict[str, int], args) -> dict[str, int]:
+	"""Add human-readable relation aliases (FB15k-237 path IDs -> display strings)."""
+
+	dataset = str(getattr(args, 'dataset', '') or '').lower()
+	if dataset != 'fb15k237':
+		return relation_to_idx
+
+	from data.preprocess import _normalize_fb15k237_relation
+
+	updated = dict(relation_to_idx)
+	for relation, idx in relation_to_idx.items():
+		relation_str = str(relation)
+		if relation_str.startswith('inverse '):
+			base_id = relation_str[len('inverse '):]
+			if not base_id.startswith('/'):
+				continue
+			display = _normalize_fb15k237_relation(base_id)
+			updated[f'inverse {display}'] = idx
+			continue
+		if not relation_str.startswith('/'):
+			continue
+		display = _normalize_fb15k237_relation(relation_str)
+		updated[display] = idx
+		normalized = ' '.join(display.split())
+		if normalized != display:
+			updated[normalized] = idx
+	return updated
+
+
 def load_relation_to_idx(args) -> dict[str, int]:
 	for path in _relation_path_candidates(args):
 		if not path or not os.path.exists(path):
@@ -87,7 +116,7 @@ def load_relation_to_idx(args) -> dict[str, int]:
 				relation_to_idx = add_kbc_inverse_relations(relation_to_idx)
 			elif use_reciprocal_relations(args):
 				relation_to_idx = add_inverse_relations(relation_to_idx)
-			return relation_to_idx
+			return _apply_relation_display_aliases(relation_to_idx, args)
 
 	relations: list[str] = []
 	seen: set[str] = set()
@@ -100,7 +129,7 @@ def load_relation_to_idx(args) -> dict[str, int]:
 		relation_to_idx = add_kbc_inverse_relations(relation_to_idx)
 	elif use_reciprocal_relations(args):
 		relation_to_idx = add_inverse_relations(relation_to_idx)
-	return relation_to_idx
+	return _apply_relation_display_aliases(relation_to_idx, args)
 
 
 def _scaled_init(module: nn.Module, dim: int, sigma: float = 0.2) -> None:
