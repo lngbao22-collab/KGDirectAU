@@ -75,6 +75,69 @@ def add_inverse_relations(relation_to_idx: dict[str, int]) -> dict[str, int]:
 	return updated
 
 
+def build_forward_to_inverse_index_tensor(relation_to_idx: dict[str, int]) -> torch.Tensor | None:
+	"""Map forward relation indices to inverse indices (KvsAll ``_po`` / kbc CE head eval)."""
+
+	if not relation_to_idx:
+		return None
+	max_idx = max(int(value) for value in relation_to_idx.values())
+	mapping = torch.full((max_idx + 1,), -1, dtype=torch.long)
+	for relation, fwd_idx in relation_to_idx.items():
+		if str(relation).startswith('inverse '):
+			continue
+		inv_idx = relation_to_idx.get(f'inverse {relation}')
+		if inv_idx is not None:
+			mapping[int(fwd_idx)] = int(inv_idx)
+	n_forward = kbc_forward_relation_count(relation_to_idx)
+	if n_forward > 0:
+		for fwd_idx in range(n_forward):
+			if int(mapping[fwd_idx]) < 0:
+				inv_idx = int(fwd_idx) + n_forward
+				if inv_idx <= max_idx:
+					mapping[fwd_idx] = inv_idx
+	if int(mapping.ge(0).sum()) == 0:
+		return None
+	return mapping
+
+
+def resolve_head_eval_mode(args: Any | None, *, eval_forward: bool) -> str:
+	"""Choose backward link-prediction scoring to match the training recipe.
+
+	Returns one of ``tail``, ``po_forward``, ``po_inverse``, or ``sp_inverse``.
+	"""
+
+	if eval_forward:
+		return 'tail'
+	if args is None:
+		return 'po_forward'
+
+	strategy = (getattr(args, 'model_strategy_path', '') or '').replace('\\', '/').lower()
+	loss_path = (getattr(args, 'model_loss_path', '') or '').replace('\\', '/').lower()
+
+	if 'negsamp' in strategy or 'adversarial_bce' in loss_path:
+		return 'po_forward'
+
+	if 'kvsall' in strategy:
+		from models.strategies.kvsall_strategy import kvsall_uses_po_training
+
+		if kvsall_uses_po_training(args) and use_reciprocal_relations(args):
+			return 'po_inverse'
+		return 'po_forward'
+
+	if '1vsall' in strategy:
+		if use_kbc_reciprocal_relations(args) and not bool(getattr(args, 'bidirectional_1vsall', True)):
+			return 'sp_inverse'
+		return 'po_forward'
+
+	return 'po_forward'
+
+
+def uses_forward_examples_for_backward_eval(args: Any | None) -> bool:
+	"""Backward eval always starts from forward (h, r, t) test triples for index KGE."""
+
+	return resolve_head_eval_mode(args, eval_forward=False) != 'tail'
+
+
 def _apply_relation_display_aliases(relation_to_idx: dict[str, int], args) -> dict[str, int]:
 	"""Add human-readable relation aliases (FB15k-237 path IDs -> display strings)."""
 

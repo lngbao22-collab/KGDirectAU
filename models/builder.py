@@ -429,6 +429,7 @@ def _kge_should_validate_at_epoch_end(args, epoch: int, *, stopping: bool = Fals
 
 
 def _kge_get_valid_examples(trainer):
+	from base.embeddings import uses_forward_examples_for_backward_eval
 	from data.dataset import Example, load_data, reverse_triplet
 	from utils.device import get_model_obj
 
@@ -437,8 +438,7 @@ def _kge_get_valid_examples(trainer):
 
 	valid_path = getattr(trainer.args, 'valid_path', '')
 	valid_exs = load_data(valid_path, add_forward_triplet=True, add_backward_triplet=False)
-	model_obj = get_model_obj(trainer.model)
-	if getattr(model_obj, 'bidirectional_score_batch', False):
+	if uses_forward_examples_for_backward_eval(trainer.args):
 		valid_backward_exs = valid_exs
 	else:
 		valid_backward_exs = [
