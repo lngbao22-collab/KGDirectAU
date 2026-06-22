@@ -25,5 +25,8 @@
   "shuffle_train": true,
   "test_batch_size": 8,
   "use_amp": true,
-  "output_dir_prefix": "logs/ComplEx_WN18RR_adversarial_bce"
+  "output_dir_prefix": "logs/ComplEx_WN18RR_adversarial_bce",
+  "early_stopping_patience": 10,
+  "early_stopping_min_epochs": 50,
+  "early_stopping_min_metric": 0.05
 }

@@ -646,6 +646,33 @@ def on_index_kge_training_step(trainer, epoch: int) -> int:
 	return step
 
 
+def _kge_resolve_early_stopping(args) -> tuple[int | None, int, Any]:
+	patience = config_int(args, 'early_stopping_patience', None)
+	min_epochs = config_int(args, 'early_stopping_min_epochs', None) or 0
+	min_metric = getattr(args, 'early_stopping_min_metric', None)
+	if patience is not None and patience <= 0:
+		patience = None
+	return patience, min_epochs, min_metric
+
+
+def _kge_update_early_stopping_bad_count(
+	trainer,
+	*,
+	metric_dict: dict,
+	is_best: bool,
+	bad_counts: int,
+	min_metric,
+) -> int:
+	if not metric_dict or 'mrr' not in metric_dict:
+		return bad_counts
+	if is_best:
+		return 0
+	best_mrr = None if trainer.best_metric is None else trainer.best_metric.get('score')
+	if min_metric is None or (best_mrr is not None and best_mrr >= float(min_metric)):
+		return bad_counts + 1
+	return bad_counts
+
+
 def run_epoch_based_kge_train_loop(trainer, dataloader=None) -> dict:
 	"""Epoch-driven training with optional early stopping (LibKGE-style index KGE)."""
 
@@ -655,12 +682,8 @@ def run_epoch_based_kge_train_loop(trainer, dataloader=None) -> dict:
 
 	total_start = time.time()
 	max_epochs = max(int(getattr(trainer.args, 'epochs', 1)), 1)
-	patience = config_int(trainer.args, 'early_stopping_patience', None)
-	min_epochs = config_int(trainer.args, 'early_stopping_min_epochs', None) or 0
-	min_metric = getattr(trainer.args, 'early_stopping_min_metric', None)
+	patience, min_epochs, min_metric = _kge_resolve_early_stopping(trainer.args)
 	bad_counts = 0
-	if patience is not None and patience <= 0:
-		patience = None
 
 	for epoch in range(max_epochs):
 		train_start = time.time()
@@ -681,12 +704,13 @@ def run_epoch_based_kge_train_loop(trainer, dataloader=None) -> dict:
 		is_best = False
 		if validated and metric_dict and 'mrr' in metric_dict:
 			is_best = _update_index_kge_best_metric(trainer, metric_dict, epoch)
-			if is_best:
-				bad_counts = 0
-			else:
-				best_mrr = None if trainer.best_metric is None else trainer.best_metric.get('score')
-				if min_metric is None or (best_mrr is not None and best_mrr >= float(min_metric)):
-					bad_counts += 1
+			bad_counts = _kge_update_early_stopping_bad_count(
+				trainer,
+				metric_dict=metric_dict,
+				is_best=is_best,
+				bad_counts=bad_counts,
+				min_metric=min_metric,
+			)
 
 		_save_index_kge_checkpoint(trainer, epoch, is_best)
 
@@ -732,6 +756,8 @@ def run_step_based_kge_train_loop(trainer, dataloader=None) -> dict:
 	total_start = time.time()
 	epoch = 0
 	max_epochs = max(int(getattr(trainer.args, 'epochs', 1)), 1)
+	patience, min_epochs, min_metric = _kge_resolve_early_stopping(trainer.args)
+	bad_counts = 0
 
 	while get_trainer_global_step(trainer) < max_steps and epoch < max_epochs:
 		if getattr(trainer, '_stop_training', False):
@@ -763,6 +789,7 @@ def run_step_based_kge_train_loop(trainer, dataloader=None) -> dict:
 			)
 
 		stopping = should_stop_at_step(trainer, current_step)
+		scheduled_epoch_eval = _kge_should_validate_at_epoch_end(trainer.args, epoch, stopping=False)
 		validated = _kge_should_validate_at_epoch_end(trainer.args, epoch, stopping=stopping)
 		metric_dict = {}
 		is_best = False
@@ -773,9 +800,26 @@ def run_step_based_kge_train_loop(trainer, dataloader=None) -> dict:
 			trainer.memory_tracker.end_phase('eval')
 			trainer.valid_time += time.time() - eval_start
 			is_best = _update_index_kge_best_metric(trainer, metric_dict, epoch, step=current_step)
+			if scheduled_epoch_eval:
+				bad_counts = _kge_update_early_stopping_bad_count(
+					trainer,
+					metric_dict=metric_dict,
+					is_best=is_best,
+					bad_counts=bad_counts,
+					min_metric=min_metric,
+				)
 
 		if batch_count > 0:
 			_save_index_kge_checkpoint(trainer, epoch, is_best, step=current_step)
+
+		if (
+			not stopping
+			and patience is not None
+			and bad_counts >= patience
+			and (epoch + 1) >= min_epochs
+		):
+			logger.info('[EARLY STOP] No validation MRR improvement for %d evaluations.', patience)
+			break
 
 		if stopping:
 			logger.info('[STOP] Reached max_steps=%d at epoch %d', max_steps, epoch + 1)
