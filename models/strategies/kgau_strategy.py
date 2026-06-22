@@ -13,7 +13,7 @@ from torch import optim
 from torch.optim import Adam
 
 from base.embeddings import use_reciprocal_relations
-from base.evaluator import Evaluator
+from base.evaluator import Evaluator, log_bidirectional_link_metrics
 from data.dataloader import collate
 from data.dataset import Dataset, load_data
 from data.dict_hub import get_entity_dict, get_relation_id_map
@@ -940,44 +940,6 @@ class KGAUStrategy(Evaluator):
 				return candidate
 		return ''
 
-	def _average_metric_dict(self, forward_metrics: dict, backward_metrics: dict) -> dict:
-		"""Average matching numeric metrics from forward and backward evaluation."""
-
-		if not forward_metrics or not backward_metrics:
-			return forward_metrics or backward_metrics or {}
-
-		averaged_metrics = {}
-		for key in forward_metrics.keys() & backward_metrics.keys():
-			forward_value = forward_metrics[key]
-			backward_value = backward_metrics[key]
-			if isinstance(forward_value, (int, float)) and isinstance(backward_value, (int, float)):
-				averaged_metrics[key] = (forward_value + backward_value) / 2
-		return averaged_metrics
-
-	def _format_link_metrics(self, epoch: int, direction: str, metrics: dict) -> str:
-		"""Format link prediction metrics for a single direction."""
-
-		return (
-			f'[EPOCH {epoch}] Valid ({direction}) | '
-			f'MR: {metrics.get("mr", metrics.get("mean_rank", 0.0)):.4f} | '
-			f'MRR: {metrics.get("mrr", 0.0):.4f} | '
-			f'H@1: {metrics.get("hit@1", metrics.get("hits@1", 0.0)):.4f} | '
-			f'H@3: {metrics.get("hit@3", metrics.get("hits@3", 0.0)):.4f} | '
-			f'H@10: {metrics.get("hit@10", metrics.get("hits@10", 0.0)):.4f}'
-		)
-
-	def _format_avg_link_metrics(self, epoch: int, metrics: dict) -> str:
-		"""Format averaged validation link prediction metrics."""
-
-		return (
-			f'[EPOCH {epoch}] Valid (Avg) | '
-			f'MR: {metrics.get("mr", metrics.get("mean_rank", 0.0)):.4f} | '
-			f'MRR: {metrics.get("mrr", 0.0):.4f} | '
-			f'H@1: {metrics.get("hit@1", metrics.get("hits@1", 0.0)):.4f} | '
-			f'H@3: {metrics.get("hit@3", metrics.get("hits@3", 0.0)):.4f} | '
-			f'H@10: {metrics.get("hit@10", metrics.get("hits@10", 0.0)):.4f}'
-		)
-
 	def train_epoch(self, epoch) -> float:
 		"""Train the model for one epoch and return the average training loss."""
 
@@ -1171,20 +1133,11 @@ class KGAUStrategy(Evaluator):
 				self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=True)
 			backward_metrics = self.evaluate_link_prediction_inplace(
 				self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=False)
-			if forward_metrics:
-				logger.info(self._format_link_metrics(display_epoch, 'Fwd', forward_metrics))
-			if backward_metrics:
-				logger.info(self._format_link_metrics(display_epoch, 'Bwd', backward_metrics))
-			if forward_metrics and backward_metrics:
-				avg_metrics = self._average_metric_dict(forward_metrics, backward_metrics)
-				logger.info(self._format_avg_link_metrics(display_epoch, avg_metrics))
-				for key, value in avg_metrics.items():
-					if isinstance(value, (int, float)):
-						metric_dict[key] = round(value, 4)
-			elif forward_metrics:
-				metric_dict.update(forward_metrics)
-			elif backward_metrics:
-				metric_dict.update(backward_metrics)
+			metric_dict.update(
+				log_bidirectional_link_metrics(
+					f'[EPOCH {display_epoch}] Valid', forward_metrics, backward_metrics
+				)
+			)
 		else:
 			logger.warning('[EPOCH %s] No validation link-prediction split found; skipping valid LP metrics', display_epoch)
 			if train_loss is not None:

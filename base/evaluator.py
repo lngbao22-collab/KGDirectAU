@@ -60,6 +60,48 @@ def average_link_metrics(forward_metrics: dict, backward_metrics: dict) -> dict:
 		if isinstance(forward_value, (int, float)) and isinstance(backward_value, (int, float)):
 			averaged_metrics[key] = (forward_value + backward_value) / 2
 	return averaged_metrics
+
+
+def format_link_prediction_metrics(scope_label: str, direction: str, metrics: dict) -> str:
+	"""Format link prediction metrics for a single direction or their average."""
+
+	return (
+		f'{scope_label} ({direction}) | '
+		f'MR: {metrics.get("mr", metrics.get("mean_rank", 0.0)):.4f} | '
+		f'MRR: {metrics.get("mrr", 0.0):.4f} | '
+		f'H@1: {metrics.get("hit@1", metrics.get("hits@1", 0.0)):.4f} | '
+		f'H@3: {metrics.get("hit@3", metrics.get("hits@3", 0.0)):.4f} | '
+		f'H@10: {metrics.get("hit@10", metrics.get("hits@10", 0.0)):.4f}'
+	)
+
+
+def log_bidirectional_link_metrics(
+	scope_label: str,
+	forward_metrics: dict | None,
+	backward_metrics: dict | None,
+	*,
+	round_digits: int | None = 4,
+) -> dict:
+	"""Log forward, backward, and averaged link metrics; return metrics for monitoring."""
+
+	forward_metrics = forward_metrics or {}
+	backward_metrics = backward_metrics or {}
+
+	if forward_metrics:
+		logger.info(format_link_prediction_metrics(scope_label, 'Fwd', forward_metrics))
+	if backward_metrics:
+		logger.info(format_link_prediction_metrics(scope_label, 'Bwd', backward_metrics))
+
+	if forward_metrics and backward_metrics:
+		result = average_link_metrics(forward_metrics, backward_metrics)
+		logger.info(format_link_prediction_metrics(scope_label, 'Avg', result))
+		if round_digits is not None:
+			return {
+				key: round(value, round_digits) if isinstance(value, (int, float)) else value
+				for key, value in result.items()
+			}
+		return result
+	return forward_metrics or backward_metrics or {}
 from configs.config import apply_train_args
 import numpy as np
 import json
@@ -980,13 +1022,10 @@ class Evaluator:
                     log_path,
                     eval_forward=False,
                 )
-            dual_metrics[label] = average_link_metrics(forward_metrics, backward_metrics)
-            logger.info(
-                '[TEST] Link prediction (%s scorer) | MRR: %.4f | H@1: %.4f | H@10: %.4f',
-                label,
-                dual_metrics[label].get('mrr', 0.0),
-                dual_metrics[label].get('hit@1', dual_metrics[label].get('hits@1', 0.0)),
-                dual_metrics[label].get('hit@10', dual_metrics[label].get('hits@10', 0.0)),
+            dual_metrics[label] = log_bidirectional_link_metrics(
+                f'[TEST] Link prediction ({label} scorer)',
+                forward_metrics,
+                backward_metrics,
             )
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()

@@ -470,18 +470,6 @@ def _kge_resolve_link_prediction_path(path: str) -> str:
 	return path
 
 
-def _kge_average_metric_dict(forward_metrics: dict, backward_metrics: dict) -> dict:
-	if not forward_metrics or not backward_metrics:
-		return forward_metrics or backward_metrics or {}
-	averaged = {}
-	for key in forward_metrics.keys() & backward_metrics.keys():
-		fwd = forward_metrics[key]
-		bwd = backward_metrics[key]
-		if isinstance(fwd, (int, float)) and isinstance(bwd, (int, float)):
-			averaged[key] = (fwd + bwd) / 2
-	return averaged
-
-
 def _kge_extract_monitor_value(metric_dict: dict, train_loss: float | None = None):
 	if metric_dict and 'mrr' in metric_dict:
 		return metric_dict['mrr']
@@ -498,7 +486,7 @@ def _kge_extract_monitor_value(metric_dict: dict, train_loss: float | None = Non
 def eval_index_kge_epoch(trainer, epoch: int, *, step: int | None = None) -> dict:
 	"""Run validation link prediction for index-based KGE strategies."""
 
-	from utils.logger import logger
+	from base.evaluator import log_bidirectional_link_metrics
 
 	trainer.model.eval()
 	if hasattr(trainer, 'optimizer') and trainer.optimizer is not None:
@@ -523,22 +511,11 @@ def eval_index_kge_epoch(trainer, epoch: int, *, step: int | None = None) -> dic
 		trainer.model, valid_eval_path, trainer.entity_dict, valid_output_path,
 		batch_size=eval_batch_size, eval_forward=False, examples=valid_backward_exs,
 	)
-	if forward_metrics and backward_metrics:
-		metric_dict.update(_kge_average_metric_dict(forward_metrics, backward_metrics))
-		if step is not None:
-			logger.info(
-				'[STEP %s] Valid | MRR: %.4f | H@10: %.4f',
-				step,
-				metric_dict.get('mrr', 0.0),
-				metric_dict.get('hit@10', metric_dict.get('hits@10', 0.0)),
-			)
-		else:
-			logger.info(
-				'[EPOCH %s] Valid | MRR: %.4f | H@10: %.4f',
-				epoch + 1,
-				metric_dict.get('mrr', 0.0),
-				metric_dict.get('hit@10', metric_dict.get('hits@10', 0.0)),
-			)
+	if forward_metrics or backward_metrics:
+		scope_label = f'[STEP {step}] Valid' if step is not None else f'[EPOCH {epoch + 1}] Valid'
+		metric_dict.update(
+			log_bidirectional_link_metrics(scope_label, forward_metrics, backward_metrics)
+		)
 	return metric_dict
 
 

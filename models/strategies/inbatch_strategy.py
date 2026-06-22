@@ -7,7 +7,7 @@ import torch
 from torch.optim import AdamW
 from transformers import get_cosine_schedule_with_warmup, get_linear_schedule_with_warmup
 
-from base.evaluator import Evaluator
+from base.evaluator import Evaluator, log_bidirectional_link_metrics
 from data.dataset import Dataset
 from data.dataloader import collate
 from data.dict_hub import build_tokenizer, get_entity_dict
@@ -315,9 +315,9 @@ class InBatchStrategy(Evaluator):
 				self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=True)
 			backward_metrics = self.evaluate_link_prediction_inplace(
 				self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=False)
-			if forward_metrics and backward_metrics:
-				metric_dict['mrr'] = round((forward_metrics.get('mrr', 0) + backward_metrics.get('mrr', 0)) / 2, 4)
-				logger.info(f"[EPOCH {epoch}] Validation link-pred MRR(avg): {metric_dict['mrr']}")
+			metric_dict.update(
+				log_bidirectional_link_metrics(f'[EPOCH {epoch}] Valid', forward_metrics, backward_metrics)
+			)
 
 		if metric_dict:
 			logger.info('Epoch {}, valid metric: {}'.format(epoch, json.dumps(metric_dict)))
