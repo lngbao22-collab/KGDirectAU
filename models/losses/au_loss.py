@@ -364,7 +364,7 @@ class KGAULoss(nn.Module):
 		self,
 		q: torch.Tensor,
 		t: torch.Tensor,
-		external_align: torch.Tensor | None = None,
+		external_align: torch.Tensor | None = None
 	) -> torch.Tensor:
 		if external_align is not None:
 			return external_align
