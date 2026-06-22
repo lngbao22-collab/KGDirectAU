@@ -18,5 +18,7 @@
   "gamma_h": 0.5,
   "tuni": 2.0,
   "test_batch_size": 8,
-  "output_dir_prefix": "logs/pRotatE-AU_WN18RR"
+  "output_dir_prefix": "logs/pRotatE-AU_WN18RR",
+  "weight_decay": 0.0,
+  "gamma_ent": 0.0
 }

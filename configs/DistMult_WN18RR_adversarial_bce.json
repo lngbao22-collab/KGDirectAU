@@ -25,5 +25,10 @@
   "shuffle_train": true,
   "test_batch_size": 8,
   "use_amp": true,
-  "output_dir_prefix": "logs/DistMult_WN18RR_adversarial_bce"
+  "output_dir_prefix": "logs/DistMult_WN18RR_adversarial_bce",
+  "tie_rtol": 0.0001,
+  "tie_handling": "rounded_mean_rank",
+  "weight_decay": 0.0,
+  "tie_atol": 1e-05,
+  "normalize_lp_scores": false
 }

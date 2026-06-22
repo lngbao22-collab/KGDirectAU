@@ -30,5 +30,7 @@
   "print_freq": 20,
   "max_to_keep": 3,
   "use_amp": true,
-  "output_dir_prefix": "logs/SimKGC-AU_WN18RR"
+  "output_dir_prefix": "logs/SimKGC-AU_WN18RR",
+  "gamma_h": 0.0,
+  "gamma_ent": 0.0
 }

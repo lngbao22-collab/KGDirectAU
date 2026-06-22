@@ -28,5 +28,10 @@
   "eval_candidate_chunk_size": 2048,
   "eval_entity_chunk_size": 4096,
   "use_amp": true,
-  "output_dir_prefix": "logs/pRotatE_WN18RR_adversarial_bce"
+  "output_dir_prefix": "logs/pRotatE_WN18RR_adversarial_bce",
+  "tie_rtol": 0.0001,
+  "tie_handling": "rounded_mean_rank",
+  "weight_decay": 0.0,
+  "tie_atol": 1e-05,
+  "normalize_lp_scores": false
 }

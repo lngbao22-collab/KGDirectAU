@@ -25,5 +25,6 @@
   "eval_entity_chunk_size": 4096,
   "use_amp": true,
   "eval_use_amp": true,
-  "output_dir_prefix": "logs/pRotatE_WN18RR"
+  "output_dir_prefix": "logs/pRotatE_WN18RR",
+  "weight_decay": 0.0
 }

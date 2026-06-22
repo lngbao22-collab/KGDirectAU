@@ -17,5 +17,11 @@
   "sparse_embeddings": true,
   "epoch_per_eval": 3,
   "eval_batch_size": 256,
-  "output_dir_prefix": "logs/ComplEx_FB15k237_ce"
+  "output_dir_prefix": "logs/ComplEx_FB15k237_ce",
+  "tie_rtol": 0.0001,
+  "tie_handling": "rounded_mean_rank",
+  "weight_decay": 0.0,
+  "bidirectional_1vsall": false,
+  "tie_atol": 1e-05,
+  "normalize_lp_scores": false
 }
