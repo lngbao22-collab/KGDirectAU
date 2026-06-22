@@ -5,16 +5,23 @@
   "model_strategy_path": "models/strategies/negsamp_strategy.py",
   "model_sampler_path": "models/samplers/filtered_1_to_n_sampler.py",
   "head_eval_mode": "po_forward",
+
   "dim": 500,
+
   "batch_size": 512,
   "epochs": 1000,
   "optim": "adam",
   "lr": 0.002,
+  "weight_decay": 0.0,
+  "shuffle_train": true,
+  "use_amp": true,
+
   "adversarial_training": true,
   "adversarial_temperature": 1.0,
   "margin": 200.0,
   "n_sample": 1024,
   "regularization": 5e-06,
+
   "training_cadence": "step",
   "max_steps": 80000,
   "valid_steps": 10000,
@@ -22,16 +29,16 @@
   "epoch_per_eval": 5,
   "warm_up_steps": 40000,
   "lr_decay_factor": 0.1,
-  "shuffle_train": true,
+
   "test_batch_size": 8,
-  "use_amp": true,
-  "output_dir_prefix": "logs/ComplEx_WN18RR_adversarial_bce",
+
   "early_stopping_patience": 10,
   "early_stopping_min_epochs": 50,
   "early_stopping_min_metric": 0.05,
-  "tie_rtol": 0.0001,
+
+  "output_dir_prefix": "logs/ComplEx_WN18RR_adversarial_bce",
   "tie_handling": "rounded_mean_rank",
-  "weight_decay": 0.0,
+  "tie_rtol": 0.0001,
   "tie_atol": 1e-05,
   "normalize_lp_scores": false
 }
