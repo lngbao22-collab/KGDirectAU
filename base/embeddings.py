@@ -111,6 +111,8 @@ def resolve_head_eval_mode(args: Any | None, *, eval_forward: bool) -> str:
 	When ``args.head_eval_mode`` is set in JSON/CLI, it overrides strategy-based
 	inference for the backward (head) pass. Use ``po_forward`` for adversarial
 	BCE / direct head prediction with the forward relation (no inverse relation).
+	KGAU with reciprocal relations trains inverse triplets ``(t, r^{-1}, h)`` as
+	tail prediction, so backward eval defaults to ``sp_inverse``.
 	"""
 
 	if eval_forward:
@@ -146,6 +148,11 @@ def resolve_head_eval_mode(args: Any | None, *, eval_forward: bool) -> str:
 
 	if '1vsall' in strategy:
 		if use_kbc_reciprocal_relations(args) and not bool(getattr(args, 'bidirectional_1vsall', True)):
+			return 'sp_inverse'
+		return 'po_forward'
+
+	if 'kgau' in strategy:
+		if use_reciprocal_relations(args):
 			return 'sp_inverse'
 		return 'po_forward'
 
