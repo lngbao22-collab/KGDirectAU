@@ -36,6 +36,10 @@
   "eval_candidate_chunk_size": 2048,
   "eval_entity_chunk_size": 4096,
 
+  "early_stopping_patience": 10,
+  "early_stopping_min_epochs": 50,
+  "early_stopping_min_metric": 0.05,
+
   "output_dir_prefix": "logs/RotatE_WN18RR_adversarial_bce",
   "tie_handling": "rounded_mean_rank",
   "tie_rtol": 0.0001,
