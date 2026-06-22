@@ -1,5 +1,6 @@
 """Abstract evaluation loop shared by KG evaluators."""
 
+from contextlib import contextmanager
 from typing import List, Optional, Sequence, Tuple
 import inspect
 import os
@@ -28,6 +29,37 @@ from configs.config import args as global_args
 from data.dict_hub import build_tokenizer
 from models.builder import import_module_from_path, is_index_kge_model, load_attr_from_path
 from utils.checkpoint import load_state_dict_clean, load_checkpoint, best_model_path, checkpoint_path
+
+
+@contextmanager
+def normalize_lp_scores_context(model, normalize: bool):
+	"""Temporarily set link-prediction scoring mode (cosine vs native scorer)."""
+
+	model_obj = get_model_obj(model)
+	if not hasattr(model_obj, 'normalize_lp_scores'):
+		yield
+		return
+	previous = bool(model_obj.normalize_lp_scores)
+	model_obj.normalize_lp_scores = bool(normalize)
+	try:
+		yield
+	finally:
+		model_obj.normalize_lp_scores = previous
+
+
+def average_link_metrics(forward_metrics: dict, backward_metrics: dict) -> dict:
+	"""Average numeric link-prediction metrics from forward and backward passes."""
+
+	if not forward_metrics or not backward_metrics:
+		return forward_metrics or backward_metrics or {}
+
+	averaged_metrics = {}
+	for key in forward_metrics.keys() & backward_metrics.keys():
+		forward_value = forward_metrics[key]
+		backward_value = backward_metrics[key]
+		if isinstance(forward_value, (int, float)) and isinstance(backward_value, (int, float)):
+			averaged_metrics[key] = (forward_value + backward_value) / 2
+	return averaged_metrics
 from configs.config import apply_train_args
 import numpy as np
 import json
@@ -921,6 +953,44 @@ class Evaluator:
         ranks = _ranks_from_score_matrix(score, target_indices)
         metrics = ranking_metrics_from_ranks(ranks)
         return metrics
+
+    def evaluate_dual_test_link_prediction(
+        self,
+        eval_path: str,
+        entity_dict,
+        output_dir: str,
+    ) -> dict[str, dict]:
+        """Run test link prediction with cosine and native KGE scorers."""
+
+        dual_metrics: dict[str, dict] = {}
+        for label, normalize in (('cosine', True), ('original', False)):
+            log_path = os.path.join(output_dir, f'test_link_prediction_{label}.log')
+            with normalize_lp_scores_context(self.model, normalize):
+                forward_metrics = self.evaluate_link_prediction_inplace(
+                    self.model,
+                    eval_path,
+                    entity_dict,
+                    log_path,
+                    eval_forward=True,
+                )
+                backward_metrics = self.evaluate_link_prediction_inplace(
+                    self.model,
+                    eval_path,
+                    entity_dict,
+                    log_path,
+                    eval_forward=False,
+                )
+            dual_metrics[label] = average_link_metrics(forward_metrics, backward_metrics)
+            logger.info(
+                '[TEST] Link prediction (%s scorer) | MRR: %.4f | H@1: %.4f | H@10: %.4f',
+                label,
+                dual_metrics[label].get('mrr', 0.0),
+                dual_metrics[label].get('hit@1', dual_metrics[label].get('hits@1', 0.0)),
+                dual_metrics[label].get('hit@10', dual_metrics[label].get('hits@10', 0.0)),
+            )
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        return dual_metrics
 
     def evaluate_test_triple_classification(self, epoch=None) -> dict:
         """Evaluate triple classification on the test split using the loaded checkpoint."""

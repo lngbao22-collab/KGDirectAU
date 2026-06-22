@@ -142,17 +142,33 @@ def _format_metric_value(value) -> str:
     return str(value)
 
 
+def _append_link_metrics_lines(lines: list[str], link_metrics: dict, section_title: str = 'Link Prediction') -> None:
+    """Append formatted link-prediction metrics to a report line list."""
+
+    lines.append(section_title)
+    for key in ['mr', 'mrr', 'hit@1', 'hit@3', 'hit@10']:
+        if key in link_metrics:
+            lines.append(f'  {_format_metric_key(key)}: {_format_metric_value(link_metrics[key])}')
+    lines.append('')
+
+
 def write_results_report(path: Union[str, Path], *, link_metrics: Optional[dict] = None, triple_metrics: Optional[dict] = None, best_epoch: Optional[int] = None, best_mrr: Optional[float] = None, train_time: Optional[float] = None, valid_time: Optional[float] = None, test_time: Optional[float] = None, total_time: Optional[float] = None, train_peak_mb: Optional[float] = None, eval_peak_mb: Optional[float] = None, peak_memory_mb: Optional[float] = None, configs: Optional[dict] = None, extra_sections: Optional[dict] = None) -> str:
     """Write a structured results summary to disk."""
 
     lines = []
 
     if link_metrics:
-        lines.append('Link Prediction')
-        for key in ['mr', 'mrr', 'hit@1', 'hit@3', 'hit@10']:
-            if key in link_metrics:
-                lines.append(f'  {_format_metric_key(key)}: {_format_metric_value(link_metrics[key])}')
-        lines.append('')
+        dual_scorers = (
+            'cosine' in link_metrics
+            and 'original' in link_metrics
+            and isinstance(link_metrics.get('cosine'), dict)
+            and isinstance(link_metrics.get('original'), dict)
+        )
+        if dual_scorers:
+            _append_link_metrics_lines(lines, link_metrics['cosine'], 'Link Prediction (cosine scorer)')
+            _append_link_metrics_lines(lines, link_metrics['original'], 'Link Prediction (original scorer)')
+        else:
+            _append_link_metrics_lines(lines, link_metrics)
 
     if triple_metrics:
         lines.append('Triple Classification')

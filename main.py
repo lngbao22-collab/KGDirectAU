@@ -43,7 +43,15 @@ def _write_results(current_args, train_summary, evaluator, link_metrics, triple_
     """Write the evaluation results and training summary to a report file."""
 
     if link_metrics:
-        logger.info('Link prediction metrics on test set:\n{}'.format(json.dumps(link_metrics, indent=4)))
+        if _is_dual_link_metrics(link_metrics):
+            for scorer_label, metrics in link_metrics.items():
+                logger.info(
+                    'Link prediction metrics on test set (%s scorer):\n%s',
+                    scorer_label,
+                    json.dumps(metrics, indent=4),
+                )
+        else:
+            logger.info('Link prediction metrics on test set:\n{}'.format(json.dumps(link_metrics, indent=4)))
     if triple_metrics:
         logger.info('Triple classification metrics on test set:\n{}'.format(json.dumps(triple_metrics, indent=4)))
 
@@ -104,19 +112,23 @@ def _release_gpu_memory() -> None:
         torch.cuda.empty_cache()
 
 
-def _average_link_metrics(forward_metrics, backward_metrics) -> dict:
-    """Average the link prediction metrics from forward and backward evaluations."""
+def _is_dual_link_metrics(link_metrics: dict | None) -> bool:
+    """Return True when link metrics contain separate cosine and original scorer results."""
 
-    if not forward_metrics or not backward_metrics:
-        return forward_metrics or backward_metrics
+    if not link_metrics:
+        return False
+    return (
+        'cosine' in link_metrics
+        and 'original' in link_metrics
+        and isinstance(link_metrics['cosine'], dict)
+        and isinstance(link_metrics['original'], dict)
+    )
 
-    averaged_metrics = {}
-    for key in forward_metrics.keys() & backward_metrics.keys():
-        forward_value = forward_metrics[key]
-        backward_value = backward_metrics[key]
-        if isinstance(forward_value, (int, float)) and isinstance(backward_value, (int, float)):
-            averaged_metrics[key] = (forward_value + backward_value) / 2
-    return averaged_metrics
+
+def _run_test_link_prediction(evaluator, test_lp_path: str, entity_dict, output_dir: str) -> dict:
+    """Evaluate test link prediction with cosine and native KGE scorers."""
+
+    return evaluator.evaluate_dual_test_link_prediction(test_lp_path, entity_dict, output_dir)
 
 
 def main():
@@ -151,13 +163,8 @@ def main():
         test_lp_path = _resolve_test_lp_path(args)
         if run_lp and test_lp_path:
             entity_dict = get_entity_dict()
-            test_lp_log_path = os.path.join(args.output_dir, 'test_link_prediction.log')
-            forward_metrics = evaluator.evaluate_link_prediction_inplace(
-                evaluator.model, test_lp_path, entity_dict, test_lp_log_path, eval_forward=True)
+            link_metrics = _run_test_link_prediction(evaluator, test_lp_path, entity_dict, args.output_dir)
             _release_gpu_memory()
-            backward_metrics = evaluator.evaluate_link_prediction_inplace(
-                evaluator.model, test_lp_path, entity_dict, test_lp_log_path, eval_forward=False)
-            link_metrics = _average_link_metrics(forward_metrics, backward_metrics)
         if run_tc:
             triple_metrics = evaluator.evaluate_test_triple_classification()
         memory_tracker.end_phase('eval')
@@ -195,13 +202,8 @@ def main():
     test_lp_path = _resolve_test_lp_path(args)
     if run_lp and test_lp_path:
         entity_dict = get_entity_dict()
-        test_lp_log_path = os.path.join(args.output_dir, 'test_link_prediction.log')
-        forward_metrics = evaluator.evaluate_link_prediction_inplace(
-            evaluator.model, test_lp_path, entity_dict, test_lp_log_path, eval_forward=True)
+        link_metrics = _run_test_link_prediction(evaluator, test_lp_path, entity_dict, args.output_dir)
         _release_gpu_memory()
-        backward_metrics = evaluator.evaluate_link_prediction_inplace(
-            evaluator.model, test_lp_path, entity_dict, test_lp_log_path, eval_forward=False)
-        link_metrics = _average_link_metrics(forward_metrics, backward_metrics)
     if run_tc:
         triple_metrics = evaluator.evaluate_test_triple_classification()
     memory_tracker.end_phase('eval')
