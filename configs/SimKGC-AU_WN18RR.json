@@ -3,6 +3,7 @@
   "dataset": "WN18RR",
   "model_loss_path": "models/losses/au_loss.py",
   "model_strategy_path": "models/strategies/kgau_strategy.py",
+  "head_eval_mode": "sp_inverse",
   "dim": 768,
   "batch_size": 512,
   "epochs": 50,
