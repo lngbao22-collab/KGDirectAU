@@ -1206,6 +1206,9 @@ class KGAUStrategy(Evaluator):
 			self.train_time += time.time() - epoch_train_start
 			num_train_epochs = epoch + 1
 
+			from utils.au_reporter import report_au_after_epoch
+			report_au_after_epoch(self, epoch)
+
 			validated = self._should_validate(epoch)
 			metric_dict: dict = {}
 			if validated:
@@ -1270,6 +1273,9 @@ class KGAUStrategy(Evaluator):
 		logger.info('[Memory] Training peak: %s', format_memory(self.memory_tracker.train_peak_mb))
 		logger.info('[Memory] Eval peak: %s', format_memory(self.memory_tracker.eval_peak_mb))
 		logger.info('[Memory] Peak memory: %s', format_memory(self.memory_tracker.peak_memory_mb))
+
+		from utils.au_reporter import finalize_au_report
+		finalize_au_report(self)
 
 		return {
 			'best_epoch': None if self.best_metric is None else self.best_metric.get('epoch'),

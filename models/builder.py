@@ -572,6 +572,8 @@ def _kge_train_loop_result(trainer) -> dict:
 	logger.info('[Memory] Training peak: %s', format_memory(trainer.memory_tracker.train_peak_mb))
 	logger.info('[Memory] Eval peak: %s', format_memory(trainer.memory_tracker.eval_peak_mb))
 	logger.info('[Memory] Peak memory: %s', format_memory(trainer.memory_tracker.peak_memory_mb))
+	from utils.au_reporter import finalize_au_report
+	finalize_au_report(trainer)
 	return {
 		'best_epoch': None if trainer.best_metric is None else trainer.best_metric.get('epoch', 0) + 1,
 		'best_step': None if trainer.best_metric is None else trainer.best_metric.get('step'),
@@ -679,6 +681,9 @@ def run_epoch_based_kge_train_loop(trainer, dataloader=None) -> dict:
 		trainer.memory_tracker.end_phase('train')
 		trainer.train_time += time.time() - train_start
 
+		from utils.au_reporter import report_au_after_epoch
+		report_au_after_epoch(trainer, epoch)
+
 		validated = _kge_should_validate(trainer.args, epoch)
 		metric_dict = {}
 		if validated:
@@ -776,6 +781,9 @@ def run_step_based_kge_train_loop(trainer, dataloader=None) -> dict:
 				current_step,
 			)
 
+		from utils.au_reporter import report_au_after_epoch
+		report_au_after_epoch(trainer, epoch)
+
 		stopping = should_stop_at_step(trainer, current_step)
 		scheduled_epoch_eval = _kge_should_validate_at_epoch_end(trainer.args, epoch, stopping=False)
 		validated = _kge_should_validate_at_epoch_end(trainer.args, epoch, stopping=stopping)
@@ -859,6 +867,8 @@ def run_kge_train_loop(trainer) -> dict:
 		trainer.memory_tracker.end_phase('train')
 		trainer.train_time += time.time() - epoch_train_start
 		num_train_epochs = epoch + 1
+		from utils.au_reporter import report_au_after_epoch
+		report_au_after_epoch(trainer, epoch)
 		if max_steps is None:
 			trainer._run_eval(epoch=epoch)
 		elif getattr(trainer, '_stop_training', False) or get_trainer_global_step(trainer) >= max_steps:
@@ -878,6 +888,9 @@ def run_kge_train_loop(trainer) -> dict:
 	logger.info('[Memory] Training peak: %s', format_memory(trainer.memory_tracker.train_peak_mb))
 	logger.info('[Memory] Eval peak: %s', format_memory(trainer.memory_tracker.eval_peak_mb))
 	logger.info('[Memory] Peak memory: %s', format_memory(trainer.memory_tracker.peak_memory_mb))
+
+	from utils.au_reporter import finalize_au_report
+	finalize_au_report(trainer)
 
 	return {
 		'best_epoch': None if trainer.best_metric is None else trainer.best_metric.get('epoch'),
@@ -1063,7 +1076,7 @@ def build_pipeline(args, ngpus_per_node: int = 1):
 		sampler = load_sampler(args, model, train_triples)
 	strategy_kwargs = _strategy_init_kwargs(args, strategy_path, model, train_triples)
 
-	if paradigm == 'kgau':
-		return StrategyClass(model, sampler, loss_fn, args, ngpus_per_node=ngpus_per_node, **strategy_kwargs)
-
-	return StrategyClass(model, sampler, loss_fn, args, ngpus_per_node=ngpus_per_node, **strategy_kwargs)
+	trainer = StrategyClass(model, sampler, loss_fn, args, ngpus_per_node=ngpus_per_node, **strategy_kwargs)
+	from utils.au_reporter import attach_au_reporter
+	attach_au_reporter(trainer, args)
+	return trainer

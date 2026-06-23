@@ -23,5 +23,10 @@
   "weight_decay": 0.0,
   "bidirectional_1vsall": false,
   "tie_atol": 1e-05,
-  "normalize_lp_scores": false
+  "normalize_lp_scores": false,
+  "report_au": true,
+  "tuni": 2,
+  "gamma_q": 1,
+  "gamma_t": 1,
+  "gamma_cross": 0
 }
