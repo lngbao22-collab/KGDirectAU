@@ -8,7 +8,7 @@
 
   "dim": 2000,
 
-  "batch_size": 1024,
+  "batch_size": 100,
   "epochs": 400,
   "optim": "adam",
   "lr": 0.001,
