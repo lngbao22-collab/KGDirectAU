@@ -12,7 +12,7 @@ from data.dataset import Dataset
 from data.dataloader import collate
 from utils.checkpoint import save_checkpoint, best_model_path, last_model_path
 from utils.device import report_num_trainable_parameters
-from utils.logger import logger
+from utils.logger import logger, time_per_train_epoch
 from utils.memory import PhaseMemoryTracker, format_memory
 
 
@@ -75,6 +75,7 @@ class Trainer(ABC):
             self.scaler = torch.cuda.amp.GradScaler()
 
         total_start_time = time.time()
+        num_train_epochs = 0
 
         for epoch in range(self.args.epochs):
             epoch_train_start = time.time()
@@ -82,12 +83,16 @@ class Trainer(ABC):
             self.train_epoch(epoch)
             self.memory_tracker.end_phase('train')
             self.train_time += time.time() - epoch_train_start
+            num_train_epochs = epoch + 1
             self._run_eval(epoch=epoch)
 
         self.total_time = time.time() - total_start_time
+        epoch_time = time_per_train_epoch(self.train_time, num_train_epochs)
         logger.info(f"[Timing] Training time (s): {round(self.train_time, 2)}")
         logger.info(f"[Timing] Valid time (s): {round(self.valid_time, 2)}")
         logger.info(f"[Timing] Total run time (s): {round(self.total_time, 2)}")
+        if epoch_time is not None:
+            logger.info('[Timing] Time per training epoch (s): %.2f', round(epoch_time, 2))
         logger.info('[Memory] Training peak: %s', format_memory(self.memory_tracker.train_peak_mb))
         logger.info('[Memory] Eval peak: %s', format_memory(self.memory_tracker.eval_peak_mb))
         logger.info('[Memory] Peak memory: %s', format_memory(self.memory_tracker.peak_memory_mb))
@@ -98,6 +103,8 @@ class Trainer(ABC):
             'train_time': self.train_time,
             'valid_time': self.valid_time,
             'total_time': self.total_time,
+            'num_train_epochs': num_train_epochs,
+            'time_per_train_epoch': epoch_time,
             'best_checkpoint_path': self.best_checkpoint_path,
             **self.memory_tracker.to_dict(),
         }

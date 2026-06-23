@@ -559,8 +559,15 @@ def _save_index_kge_checkpoint(
 
 def _kge_train_loop_result(trainer) -> dict:
 	from utils.memory import format_memory
-	from utils.logger import logger
+	from utils.logger import logger, time_per_train_epoch
 
+	num_train_epochs = getattr(trainer, 'num_train_epochs', None)
+	epoch_time = time_per_train_epoch(trainer.train_time, num_train_epochs)
+	logger.info('[Timing] Training time (s): %.2f', round(trainer.train_time, 2))
+	logger.info('[Timing] Valid time (s): %.2f', round(trainer.valid_time, 2))
+	logger.info('[Timing] Total run time (s): %.2f', round(trainer.total_time, 2))
+	if epoch_time is not None:
+		logger.info('[Timing] Time per training epoch (s): %.2f', round(epoch_time, 2))
 	logger.info('[Memory] Training peak: %s', format_memory(trainer.memory_tracker.train_peak_mb))
 	logger.info('[Memory] Eval peak: %s', format_memory(trainer.memory_tracker.eval_peak_mb))
 	logger.info('[Memory] Peak memory: %s', format_memory(trainer.memory_tracker.peak_memory_mb))
@@ -571,6 +578,8 @@ def _kge_train_loop_result(trainer) -> dict:
 		'train_time': trainer.train_time,
 		'valid_time': trainer.valid_time,
 		'total_time': trainer.total_time,
+		'num_train_epochs': num_train_epochs,
+		'time_per_train_epoch': epoch_time,
 		'best_checkpoint_path': trainer.best_checkpoint_path,
 		**trainer.memory_tracker.to_dict(),
 	}
@@ -698,6 +707,7 @@ def run_epoch_based_kge_train_loop(trainer, dataloader=None) -> dict:
 			logger.info('[EARLY STOP] No validation MRR improvement for %d evaluations.', patience)
 			break
 
+	trainer.num_train_epochs = epoch + 1
 	trainer.total_time = time.time() - total_start
 	return _kge_train_loop_result(trainer)
 
@@ -811,6 +821,7 @@ def run_step_based_kge_train_loop(trainer, dataloader=None) -> dict:
 			step=get_trainer_global_step(trainer),
 		)
 
+	trainer.num_train_epochs = epoch + 1
 	trainer.total_time = time.time() - total_start
 	return _kge_train_loop_result(trainer)
 
@@ -830,7 +841,7 @@ def run_kge_train_loop(trainer) -> dict:
 
 	import time
 
-	from utils.logger import logger
+	from utils.logger import logger, time_per_train_epoch
 	from utils.memory import format_memory
 	from utils.training_cadence import get_trainer_global_step, resolve_max_steps, uses_step_cadence
 
@@ -839,12 +850,14 @@ def run_kge_train_loop(trainer) -> dict:
 
 	total_start = time.time()
 	max_steps = resolve_max_steps(trainer.args) if uses_step_cadence(trainer.args) else None
+	num_train_epochs = 0
 	for epoch in range(trainer.args.epochs):
 		epoch_train_start = time.time()
 		trainer.memory_tracker.begin_phase()
 		trainer.train_epoch(epoch)
 		trainer.memory_tracker.end_phase('train')
 		trainer.train_time += time.time() - epoch_train_start
+		num_train_epochs = epoch + 1
 		if max_steps is None:
 			trainer._run_eval(epoch=epoch)
 		elif getattr(trainer, '_stop_training', False) or get_trainer_global_step(trainer) >= max_steps:
@@ -853,10 +866,14 @@ def run_kge_train_loop(trainer) -> dict:
 	if max_steps is not None and getattr(trainer, '_stop_training', False):
 		logger.info('[STOP] Reached max_steps=%d', max_steps)
 
+	trainer.num_train_epochs = num_train_epochs
 	trainer.total_time = time.time() - total_start
+	epoch_time = time_per_train_epoch(trainer.train_time, num_train_epochs)
 	logger.info(f"[Timing] Training time (s): {round(trainer.train_time, 2)}")
 	logger.info(f"[Timing] Valid time (s): {round(trainer.valid_time, 2)}")
 	logger.info(f"[Timing] Total run time (s): {round(trainer.total_time, 2)}")
+	if epoch_time is not None:
+		logger.info('[Timing] Time per training epoch (s): %.2f', round(epoch_time, 2))
 	logger.info('[Memory] Training peak: %s', format_memory(trainer.memory_tracker.train_peak_mb))
 	logger.info('[Memory] Eval peak: %s', format_memory(trainer.memory_tracker.eval_peak_mb))
 	logger.info('[Memory] Peak memory: %s', format_memory(trainer.memory_tracker.peak_memory_mb))
@@ -867,6 +884,8 @@ def run_kge_train_loop(trainer) -> dict:
 		'train_time': trainer.train_time,
 		'valid_time': trainer.valid_time,
 		'total_time': trainer.total_time,
+		'num_train_epochs': num_train_epochs,
+		'time_per_train_epoch': epoch_time,
 		'best_checkpoint_path': trainer.best_checkpoint_path,
 		**trainer.memory_tracker.to_dict(),
 	}

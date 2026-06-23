@@ -21,7 +21,7 @@ from models.builder import apply_kge_regularization, build_lr_scheduler, config_
 from base.embeddings import embedding_l3_penalty
 from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, last_model_path, save_checkpoint
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
-from utils.logger import AverageMeter, ProgressMeter, logger
+from utils.logger import AverageMeter, ProgressMeter, logger, time_per_train_epoch
 from utils.memory import PhaseMemoryTracker, format_memory
 from models.losses.au_loss import KGAULoss, distinct_first_indices, select_distinct_rows, _GAMMA_NAMES
 
@@ -1169,6 +1169,7 @@ class KGAUStrategy(Evaluator):
 			patience = None
 
 		total_start_time = time.time()
+		num_train_epochs = 0
 		for epoch in range(self.args.epochs):
 			self._maybe_update_alpha_schedule(epoch)
 			self._maybe_update_gamma_schedule(epoch)
@@ -1178,6 +1179,7 @@ class KGAUStrategy(Evaluator):
 			train_loss = self.train_epoch(epoch)
 			self.memory_tracker.end_phase('train')
 			self.train_time += time.time() - epoch_train_start
+			num_train_epochs = epoch + 1
 
 			validated = self._should_validate(epoch)
 			metric_dict: dict = {}
@@ -1234,9 +1236,12 @@ class KGAUStrategy(Evaluator):
 				break
 
 		self.total_time = time.time() - total_start_time
+		epoch_time = time_per_train_epoch(self.train_time, num_train_epochs)
 		logger.info('[Timing] Training time (s): %.2f', round(self.train_time, 2))
 		logger.info('[Timing] Valid time (s): %.2f', round(self.valid_time, 2))
 		logger.info('[Timing] Total run time (s): %.2f', round(self.total_time, 2))
+		if epoch_time is not None:
+			logger.info('[Timing] Time per training epoch (s): %.2f', round(epoch_time, 2))
 		logger.info('[Memory] Training peak: %s', format_memory(self.memory_tracker.train_peak_mb))
 		logger.info('[Memory] Eval peak: %s', format_memory(self.memory_tracker.eval_peak_mb))
 		logger.info('[Memory] Peak memory: %s', format_memory(self.memory_tracker.peak_memory_mb))
@@ -1247,6 +1252,8 @@ class KGAUStrategy(Evaluator):
 			'train_time': self.train_time,
 			'valid_time': self.valid_time,
 			'total_time': self.total_time,
+			'num_train_epochs': num_train_epochs,
+			'time_per_train_epoch': epoch_time,
 			**self.memory_tracker.to_dict(),
 		}
 

@@ -119,6 +119,14 @@ def format_duration(seconds: float) -> str:
     return f'{seconds:.2f}s ({hours}h {minutes}m {secs}s)'
 
 
+def time_per_train_epoch(train_time: Optional[float], num_train_epochs: Optional[int]) -> Optional[float]:
+    """Average wall-clock training time per completed epoch."""
+
+    if train_time is None or not num_train_epochs:
+        return None
+    return train_time / num_train_epochs
+
+
 def _format_metric_key(key: str) -> str:
     mapping = {
         'mr': 'MR',
@@ -152,7 +160,7 @@ def _append_link_metrics_lines(lines: list[str], link_metrics: dict, section_tit
     lines.append('')
 
 
-def write_results_report(path: Union[str, Path], *, link_metrics: Optional[dict] = None, triple_metrics: Optional[dict] = None, best_epoch: Optional[int] = None, best_mrr: Optional[float] = None, train_time: Optional[float] = None, valid_time: Optional[float] = None, test_time: Optional[float] = None, total_time: Optional[float] = None, train_peak_mb: Optional[float] = None, eval_peak_mb: Optional[float] = None, peak_memory_mb: Optional[float] = None, configs: Optional[dict] = None, extra_sections: Optional[dict] = None) -> str:
+def write_results_report(path: Union[str, Path], *, link_metrics: Optional[dict] = None, triple_metrics: Optional[dict] = None, best_epoch: Optional[int] = None, best_mrr: Optional[float] = None, train_time: Optional[float] = None, valid_time: Optional[float] = None, test_time: Optional[float] = None, total_time: Optional[float] = None, time_per_train_epoch: Optional[float] = None, train_peak_mb: Optional[float] = None, eval_peak_mb: Optional[float] = None, peak_memory_mb: Optional[float] = None, configs: Optional[dict] = None, extra_sections: Optional[dict] = None) -> str:
     """Write a structured results summary to disk."""
 
     lines = []
@@ -185,10 +193,12 @@ def write_results_report(path: Union[str, Path], *, link_metrics: Optional[dict]
             lines.append(f'  Best MRR: {best_mrr:.6f}')
         lines.append('')
 
-    if train_time is not None or valid_time is not None or test_time is not None or total_time is not None:
+    if train_time is not None or valid_time is not None or test_time is not None or total_time is not None or time_per_train_epoch is not None:
         lines.append('Time')
         if train_time is not None:
             lines.append(f'  Training Time: {format_duration(train_time)}')
+        if time_per_train_epoch is not None:
+            lines.append(f'  Time Per Train Epoch: {format_duration(time_per_train_epoch)}')
         if valid_time is not None:
             lines.append(f'  Valid Time: {format_duration(valid_time)}')
         if test_time is not None:

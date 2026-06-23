@@ -10,7 +10,7 @@ from data.dict_hub import get_entity_dict
 from models.builder import build_pipeline
 from utils.device import init_hardware
 from utils.checkpoint import best_model_path, last_model_path
-from utils.logger import setup_logger, write_results_report, _format_metric_key
+from utils.logger import setup_logger, write_results_report, _format_metric_key, time_per_train_epoch
 from utils.memory import PhaseMemoryTracker
 
 
@@ -74,6 +74,10 @@ def _write_results(current_args, train_summary, evaluator, link_metrics, triple_
 
     train_time = train_summary.get('train_time') if train_summary else None
     valid_time = train_summary.get('valid_time') if train_summary else None
+    num_train_epochs = train_summary.get('num_train_epochs') if train_summary else None
+    epoch_time = train_summary.get('time_per_train_epoch') if train_summary else None
+    if epoch_time is None:
+        epoch_time = time_per_train_epoch(train_time, num_train_epochs)
     total_time = None
     if train_summary and train_summary.get('total_time') is not None:
         total_time = train_summary['total_time'] + test_time
@@ -97,6 +101,7 @@ def _write_results(current_args, train_summary, evaluator, link_metrics, triple_
         valid_time=valid_time,
         test_time=test_time,
         total_time=total_time,
+        time_per_train_epoch=epoch_time,
         train_peak_mb=train_peak_mb,
         eval_peak_mb=eval_peak_mb,
         peak_memory_mb=peak_memory_mb,
