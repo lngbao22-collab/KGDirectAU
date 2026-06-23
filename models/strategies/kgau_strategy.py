@@ -126,7 +126,12 @@ def _build_kgau_optimizer(args, model, criterion: KGAULoss, weight_decay: float)
 		param_groups.append({'params': [log_alpha_param], 'lr': log_alpha_lr, 'weight_decay': 0.0})
 	if log_gamma_params:
 		log_gamma_lr = _config_float(args, 'log_au_gamma_lr', lr)
-		param_groups.append({'params': log_gamma_params, 'lr': log_gamma_lr, 'weight_decay': 0.0})
+		param_groups.append({
+			'params': log_gamma_params,
+			'lr': log_gamma_lr,
+			'weight_decay': 0.0,
+			'param_group': 'log_gamma',
+		})
 
 	if not param_groups:
 		return _build_optimizer(args, model.parameters(), weight_decay)
@@ -188,21 +193,62 @@ def _alpha_schedule_enabled(args) -> bool:
 	)
 
 
-def _scheduled_gamma_mult(args, epoch: int) -> float:
-	"""Linear gamma multiplier: 1.0 at start, ``gamma_schedule_end`` at the last scheduled epoch."""
+def _gamma_schedule_span(args) -> tuple[int, int]:
+	"""Return ``(start_epoch, schedule_span)`` shared by gamma multiplier and LR schedules."""
 
 	start_epoch = int(getattr(args, 'gamma_schedule_start_epoch', 0) or 0)
-	end_mult = float(getattr(args, 'gamma_schedule_end', 0.1))
 	schedule_epochs = int(getattr(args, 'gamma_schedule_epochs', 0) or 0)
 	if schedule_epochs <= 0:
 		schedule_span = max(1, int(getattr(args, 'epochs', 1)) - 1 - start_epoch)
 	else:
 		schedule_span = max(1, schedule_epochs - 1)
+	return start_epoch, schedule_span
 
+
+def _gamma_schedule_progress(args, epoch: int) -> float:
+	start_epoch, schedule_span = _gamma_schedule_span(args)
 	if epoch < start_epoch:
-		return 1.0
-	progress = min(1.0, max(0.0, (epoch - start_epoch) / float(schedule_span)))
+		return 0.0
+	return min(1.0, max(0.0, (epoch - start_epoch) / float(schedule_span)))
+
+
+def _scheduled_gamma_mult(args, epoch: int) -> float:
+	"""Linear gamma multiplier: 1.0 at start, ``gamma_schedule_end`` at the last scheduled epoch."""
+
+	end_mult = float(getattr(args, 'gamma_schedule_end', 0.1))
+	progress = _gamma_schedule_progress(args, epoch)
 	return 1.0 + (end_mult - 1.0) * progress
+
+
+def _log_au_gamma_lr_schedule_enabled(args) -> bool:
+	"""Whether to linearly ramp ``log_au_gamma_lr`` toward ``gamma_schedule_end``."""
+
+	_, learnable_au_gammas = _resolve_learnable_au_flags(args)
+	if not learnable_au_gammas:
+		return False
+	if getattr(args, 'log_au_gamma_lr_linear_schedule', None) is not None:
+		return bool(args.log_au_gamma_lr_linear_schedule)
+	return _gamma_schedule_enabled(args)
+
+
+def _scheduled_log_au_gamma_lr(args, epoch: int) -> float:
+	"""Linear ``log_au_gamma_lr``: initial config value at start, ``gamma_schedule_end`` at the last scheduled epoch."""
+
+	lr = _config_float(args, 'lr', getattr(args, 'learning_rate', 2e-5))
+	start_lr = _config_float(args, 'log_au_gamma_lr', lr)
+	end_lr = float(getattr(args, 'gamma_schedule_end', start_lr))
+	progress = _gamma_schedule_progress(args, epoch)
+	return start_lr + (end_lr - start_lr) * progress
+
+
+def _set_log_au_gamma_lr(optimizer, lr: float) -> bool:
+	"""Update the learnable-gamma param group LR; return True when that group exists."""
+
+	for group in optimizer.param_groups:
+		if group.get('param_group') == 'log_gamma':
+			group['lr'] = float(lr)
+			return True
+	return False
 
 
 def _scheduled_alpha_mult(args, epoch: int) -> float:
@@ -421,6 +467,15 @@ class KGAUStrategy(Evaluator):
 			logger.info(
 				'Gamma linear schedule: multiplier epoch 0=1.0000 -> last=%.4f (start_epoch=%d)',
 				end_mult,
+				int(getattr(args, 'gamma_schedule_start_epoch', 0) or 0),
+			)
+		if _log_au_gamma_lr_schedule_enabled(args):
+			start_lr = _config_float(args, 'log_au_gamma_lr', _config_float(args, 'lr', 2e-5))
+			end_lr = float(getattr(args, 'gamma_schedule_end', start_lr))
+			logger.info(
+				'log_au_gamma_lr linear schedule: epoch 0=%.2e -> last=%.2e (start_epoch=%d)',
+				start_lr,
+				end_lr,
 				int(getattr(args, 'gamma_schedule_start_epoch', 0) or 0),
 			)
 		if _alpha_schedule_enabled(args):
@@ -1114,6 +1169,22 @@ class KGAUStrategy(Evaluator):
 
 		self.criterion.set_gamma_schedule_mult(mult)
 
+	def _maybe_update_log_au_gamma_lr_schedule(self, epoch: int) -> None:
+		"""Linearly ramp ``log_au_gamma_lr`` toward ``gamma_schedule_end`` before each training epoch."""
+
+		if not _log_au_gamma_lr_schedule_enabled(self.args):
+			return
+
+		lr = _scheduled_log_au_gamma_lr(self.args, epoch)
+		if lr <= 0.0:
+			logger.warning('Scheduled log_au_gamma_lr <= 0 (%.6e) at epoch %d; skip update', lr, epoch)
+			return
+
+		if not _set_log_au_gamma_lr(self.optimizer, lr):
+			return
+
+		self.args.log_au_gamma_lr = float(lr)
+
 	def _should_log_gammas(self) -> bool:
 		return self.criterion.learnable_au_gammas or _gamma_schedule_enabled(self.args)
 
@@ -1198,6 +1269,7 @@ class KGAUStrategy(Evaluator):
 		for epoch in range(self.args.epochs):
 			self._maybe_update_alpha_schedule(epoch)
 			self._maybe_update_gamma_schedule(epoch)
+			self._maybe_update_log_au_gamma_lr_schedule(epoch)
 			self._maybe_update_tuni_schedule(epoch)
 			epoch_train_start = time.time()
 			self.memory_tracker.begin_phase()

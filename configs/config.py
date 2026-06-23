@@ -206,6 +206,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--log-au-gamma-lr', '--log_au_gamma_lr', default=None, type=float,
                         dest='log_au_gamma_lr',
                         help='learning rate for learnable log-gamma parameters')
+    log_au_gamma_lr_schedule_group = parser.add_mutually_exclusive_group()
+    log_au_gamma_lr_schedule_group.add_argument(
+        '--log-au-gamma-lr-linear-schedule', '--log_au_gamma_lr_linear_schedule',
+        dest='log_au_gamma_lr_linear_schedule',
+        action='store_true', default=None,
+        help='linearly ramp log_au_gamma_lr from its initial value to gamma_schedule_end')
+    log_au_gamma_lr_schedule_group.add_argument(
+        '--no-log-au-gamma-lr-linear-schedule', '--no_log_au_gamma_lr_linear_schedule',
+        dest='log_au_gamma_lr_linear_schedule',
+        action='store_false',
+        help='disable log_au_gamma_lr linear schedule (even with learnable_au_gammas)')
     parser.add_argument('--gamma-linear-schedule', '--gamma_linear_schedule',
                         dest='gamma_linear_schedule', action='store_true', default=False,
                         help='linearly decay AU gamma multiplier from 1.0 to gamma_schedule_end')
