@@ -19,7 +19,7 @@
   "adversarial_training": true,
   "adversarial_temperature": 1.0,
   "margin": 200.0,
-  "n_sample": 256,
+  "n_sample": 128,
   "regularization": 1e-05,
 
   "training_cadence": "epoch",

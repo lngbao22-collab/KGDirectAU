@@ -20,7 +20,7 @@
   "gamma_schedule_start_epoch": 0,
   "gamma_schedule_epochs": 0,
   "learnable_uniformity_scale": true,
-  "log_uniformity_lr": 0.00005,
+  "log_uniformity_lr": 0.005,
 
   "dim": 500,
 
