@@ -224,7 +224,11 @@ def _scheduled_alpha_mult(args, epoch: int) -> float:
 
 def _gamma_log_suffix(criterion: KGAULoss) -> str:
 	parts = []
-	if criterion.learnable_au_alpha or criterion.alpha_schedule_mult_value() != 1.0:
+	if (
+		criterion.tuni_as_alpha
+		or criterion.learnable_au_alpha
+		or criterion.alpha_schedule_mult_value() != 1.0
+	):
 		parts.append(f'alpha={criterion.alpha_value():.4f}')
 		if criterion.alpha_schedule_mult_value() != 1.0:
 			parts.append(f'alpha_mult={criterion.alpha_schedule_mult_value():.4f}')
@@ -325,7 +329,11 @@ class KGAUStrategy(Evaluator):
 
 		tuni_val = _config_float(args, 'tuni', _config_float(args, 'temperature', _config_float(args, 't', 2.0)))
 		learnable_tuni = config_bool(args, 'learnable_uniformity_scale', False)
+		tuni_as_alpha = config_bool(args, 'tuni_as_alpha', False)
 		learnable_au_alpha, learnable_au_gammas = _resolve_learnable_au_flags(args)
+		if tuni_as_alpha and learnable_au_alpha:
+			logger.warning('tuni_as_alpha is enabled; ignoring learnable_au_alpha')
+			learnable_au_alpha = False
 
 		# Alignment mode is opt-in: cosine by default for all encoders; only pRotatE-AU sets
 		# ``sin_phase`` (via config and/or encoder ``kgau_alignment_mode``).
@@ -356,16 +364,33 @@ class KGAUStrategy(Evaluator):
 			learnable_tuni=learnable_tuni,
 			learnable_au_alpha=learnable_au_alpha,
 			learnable_au_gammas=learnable_au_gammas,
+			tuni_as_alpha=tuni_as_alpha,
+			uniformity_tuni=_config_float(args, 'uniformity_tuni', 2.0),
 			max_uniformity_samples=int(_config_float(args, 'max_uniformity_samples', 1024)),
 			additive_margin=_config_float(args, 'additive_margin', 0.0),
 			alignment_mode=alignment_mode,
 			normalize_uniformity=bool(normalize_uniformity),
 		).to(self.device)
 		if learnable_tuni:
+			if tuni_as_alpha:
+				logger.info(
+					'Learnable alignment scale (tuni-as-alpha): initial=%.4f, log_uniformity_lr=%.2e, '
+					'uniformity_tuni=%.4f',
+					tuni_val,
+					_config_float(args, 'log_uniformity_lr', _config_float(args, 'lr', 2e-5)),
+					_config_float(args, 'uniformity_tuni', 2.0),
+				)
+			else:
+				logger.info(
+					'Learnable uniformity scale (tuni): initial=%.4f, log_uniformity_lr=%.2e',
+					tuni_val,
+					_config_float(args, 'log_uniformity_lr', _config_float(args, 'lr', 2e-5)),
+				)
+		elif tuni_as_alpha:
 			logger.info(
-				'Learnable uniformity scale (tuni): initial=%.4f, log_uniformity_lr=%.2e',
+				'Alignment scale from tuni (fixed): %.4f | uniformity_tuni=%.4f',
 				tuni_val,
-				_config_float(args, 'log_uniformity_lr', _config_float(args, 'lr', 2e-5)),
+				_config_float(args, 'uniformity_tuni', 2.0),
 			)
 		elif config_bool(args, 'tuni_linear_schedule', False):
 			start_scale = _scheduled_tuni_value(args, 0)
@@ -1058,7 +1083,8 @@ class KGAUStrategy(Evaluator):
 		if float(self.criterion.additive_margin) > 0.0:
 			self.train_component_losses['margin_buffer_pair_frac'] = avg_margin_active
 		if hasattr(self.criterion, 'log_tuni') or config_bool(self.args, 'tuni_linear_schedule', False):
-			self.train_component_losses['tuni'] = _tuni_scalar(self.criterion)
+			if not config_bool(self.args, 'tuni_as_alpha', False):
+				self.train_component_losses['tuni'] = _tuni_scalar(self.criterion)
 		if self._should_log_gammas():
 			for name in _GAMMA_NAMES:
 				if self.criterion.gamma_active(name):
@@ -1097,6 +1123,8 @@ class KGAUStrategy(Evaluator):
 		return self.criterion.learnable_au_gammas or _gamma_schedule_enabled(self.args)
 
 	def _should_log_alpha(self) -> bool:
+		if config_bool(self.args, 'tuni_as_alpha', False):
+			return hasattr(self.criterion, 'log_tuni') or config_bool(self.args, 'tuni_linear_schedule', False)
 		return self.criterion.learnable_au_alpha or _alpha_schedule_enabled(self.args)
 
 	def _maybe_update_tuni_schedule(self, epoch: int) -> None:
@@ -1117,6 +1145,8 @@ class KGAUStrategy(Evaluator):
 		logger.info('Linear tuni schedule at epoch %d: %.6f', epoch + 1, scale_value)
 
 	def _should_log_tuni(self) -> bool:
+		if config_bool(self.args, 'tuni_as_alpha', False):
+			return False
 		return hasattr(self.criterion, 'log_tuni') or config_bool(self.args, 'tuni_linear_schedule', False)
 
 	@torch.no_grad()

@@ -222,13 +222,30 @@ def build_parser() -> argparse.ArgumentParser:
                         dest='gamma_schedule_epochs',
                         help='epochs over which to schedule gamma multiplier (0: full training)')
     parser.add_argument('--tuni', default=None, type=float,
-                        help='AU uniformity temperature (Gaussian potential scale)')
+                        help='AU tuni: uniformity temperature by default; alignment scale when tuni_as_alpha')
+    tuni_as_alpha_group = parser.add_mutually_exclusive_group()
+    tuni_as_alpha_group.add_argument(
+        '--tuni-as-alpha', '--tuni_as_alpha',
+        dest='tuni_as_alpha',
+        action='store_true',
+        default=None,
+        help='use tuni as the AU alignment scale (alpha); uniformity uses uniformity_tuni',
+    )
+    tuni_as_alpha_group.add_argument(
+        '--no-tuni-as-alpha', '--no_tuni_as_alpha',
+        dest='tuni_as_alpha',
+        action='store_false',
+        help='use alpha for alignment and tuni for uniformity (default)',
+    )
+    parser.add_argument('--uniformity-tuni', '--uniformity_tuni', default=None, type=float,
+                        dest='uniformity_tuni',
+                        help='fixed uniformity temperature when tuni_as_alpha is enabled (default 2.0)')
     parser.add_argument('--learnable-uniformity-scale', '--learnable_uniformity_scale',
                         dest='learnable_uniformity_scale', action='store_true', default=False,
-                        help='make AU uniformity scale tuni learnable (log re-parameterization)')
+                        help='make tuni learnable (uniformity temp, or alignment scale with tuni_as_alpha)')
     parser.add_argument('--log-uniformity-lr', '--log_uniformity_lr', default=None, type=float,
                         dest='log_uniformity_lr',
-                        help='learning rate for learnable log-uniformity-scale (tuni)')
+                        help='learning rate for learnable log-tuni (uniformity or alignment when tuni_as_alpha)')
     parser.add_argument('--tuni-linear-schedule', '--tuni_linear_schedule',
                         dest='tuni_linear_schedule', action='store_true', default=False,
                         help='linearly increase tuni from start to end across training epochs')

@@ -59,12 +59,15 @@ class KGAULoss(nn.Module):
 		learnable_tuni: bool = False,
 		learnable_au_alpha: bool = False,
 		learnable_au_gammas: bool = False,
+		tuni_as_alpha: bool = False,
+		uniformity_tuni: float = 2.0,
 		max_uniformity_samples: int = 1024,
 		additive_margin: float = 0.0,
 		alignment_mode: str = 'cosine',
 		normalize_uniformity: bool = True,
 	):
 		super().__init__()
+		self.tuni_as_alpha = bool(tuni_as_alpha)
 		self.learnable_au_alpha = bool(learnable_au_alpha)
 		self.learnable_au_gammas = bool(learnable_au_gammas)
 		alpha_init = _coalesce_float(alpha, 1.0)
@@ -94,12 +97,13 @@ class KGAULoss(nn.Module):
 				# Unconstrained log-scale gammas rise under AU loss because uniformity is negative.
 				setattr(self, f'log_gamma_adj_{name}', nn.Parameter(torch.zeros(())))
 		self.register_buffer('gamma_schedule_mult', torch.tensor(1.0))
-		# `tuni` is the uniformity temperature/scaling factor; optionally learnable via log-scale.
+		# `tuni` is the uniformity temperature by default; with ``tuni_as_alpha`` it scales alignment.
 		tuni_val = _coalesce_float(tuni, 2.0)
 		if learnable_tuni:
 			self.log_tuni = nn.Parameter(torch.tensor(math.log(tuni_val)))
 		else:
 			self._tuni = tuni_val
+		self._uniformity_tuni = _coalesce_float(uniformity_tuni, 2.0)
 		self.max_uniformity_samples = max_uniformity_samples
 		# InfoNCE additive margin gamma; geometric threshold m = 2 * gamma on squared L2.
 		self.additive_margin = _coalesce_float(additive_margin, 0.0)
@@ -165,6 +169,8 @@ class KGAULoss(nn.Module):
 		return float(getattr(self, f'_gamma_{name}')) * float(mult)
 
 	def _effective_alpha(self) -> torch.Tensor | float:
+		if self.tuni_as_alpha:
+			return self.tuni
 		mult = self.alpha_schedule_mult
 		if self.learnable_au_alpha:
 			return self.alpha_init * mult * self._learnable_alpha_factor()
@@ -214,6 +220,14 @@ class KGAULoss(nn.Module):
 		if hasattr(self, 'log_tuni'):
 			return torch.exp(self.log_tuni)
 		return self._tuni
+
+	@property
+	def _uniformity_temperature(self) -> torch.Tensor | float:
+		"""Gaussian-potential temperature for uniformity (fixed when ``tuni_as_alpha``)."""
+
+		if self.tuni_as_alpha:
+			return self._uniformity_tuni
+		return self.tuni
 
 	@tuni.setter
 	def tuni(self, value):
@@ -347,15 +361,16 @@ class KGAULoss(nn.Module):
 			return x.new_zeros(()), 0.0
 		scaled_dist_sq = self._scaled_uniformity_dist_sq(dist_sq)
 		margin = float(self.additive_margin)
+		uniformity_temp = self._uniformity_temperature
 		if margin <= 0.0:
-			return self._log_mean_potential(self.tuni * scaled_dist_sq), 1.0
+			return self._log_mean_potential(uniformity_temp * scaled_dist_sq), 1.0
 		# Fixed m = 2*gamma is far too small in high dimensions (random pairs have d^2 ~ 2).
 		# Use an adaptive buffer from batch geometry: repel the closest fraction of pairs.
 		target_frac = self._margin_uniformity_fraction(margin)
 		geom_margin = torch.quantile(scaled_dist_sq, target_frac)
-		buffer_penalty = torch.exp(self.tuni * F.relu(geom_margin - scaled_dist_sq))
+		buffer_penalty = torch.exp(uniformity_temp * F.relu(geom_margin - scaled_dist_sq))
 		# Keep classic AU spread so early epochs still have strong uniformity signal.
-		spread = self._log_mean_potential(self.tuni * scaled_dist_sq)
+		spread = self._log_mean_potential(uniformity_temp * scaled_dist_sq)
 		buffer = buffer_penalty.mean().clamp_min(1e-12).log()
 		active_frac = float((scaled_dist_sq < geom_margin).float().mean().item())
 		return spread + buffer, active_frac
