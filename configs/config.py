@@ -828,6 +828,7 @@ _model_name_for_scheduler = (args.model or '').lower()
 _is_index_kge_model = _model_name_for_scheduler in {
     'distmult', 'distmult-au', 'distmult-adversarial', 'distmult-adversarial-au',
     'complex', 'complex-au', 'dabr', 'dabr-au', 'rotate', 'rotate-au', 'protate', 'protate-au',
+    'transe',
 }
 if args.lr_scheduler is not None:
     if _is_index_kge_model:
@@ -841,7 +842,10 @@ if args.lr_scheduler is not None:
 args.config_path = config_path
 
 _model_name = (args.model or '').lower()
-_is_text_model = _model_name not in {'distmult', 'distmult-au', 'complex', 'complex-au', 'dabr', 'dabr-au'}
+_is_text_model = _model_name not in {
+    'distmult', 'distmult-au', 'complex', 'complex-au', 'dabr', 'dabr-au',
+    'transe',
+}
 
 if getattr(args, 'normalize_phases', None) is None and _model_name in {'protate', 'protate-au'}:
     args.normalize_phases = True
@@ -879,6 +883,8 @@ if not args.model_encoder_path:
         args.model_encoder_path = 'models/scorers/rotate_scorer.py'
     elif _model_name in {'protate', 'protate-au'}:
         args.model_encoder_path = 'models/scorers/protate_scorer.py'
+    elif _model_name == 'transe':
+        args.model_encoder_path = 'models/scorers/transe_scorer.py'
     else:
         args.model_encoder_path = 'models/scorers/simkgc_scorer.py'
 

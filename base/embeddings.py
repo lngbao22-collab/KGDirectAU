@@ -234,7 +234,7 @@ def init_lookup_embedding(module: nn.Module, args: Any | None, dim: int, role: s
 	init_method = str(getattr(args, 'init_method', '') or '').lower()
 	if not init_method:
 		model_name = str(getattr(args, 'model', '') or '').lower()
-		if any(name in model_name for name in ('rotate', 'protate')):
+		if any(name in model_name for name in ('rotate', 'protate', 'transe')):
 			margin = float(getattr(args, 'margin', 6.0))
 			epsilon = float(getattr(args, 'epsilon', 2.0))
 			bound = (margin + epsilon) / max(1, dim)

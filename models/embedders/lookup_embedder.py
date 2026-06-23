@@ -46,7 +46,7 @@ class LookupEmbedder(nn.Module):
 		if getattr(self.args, 'init_method', None):
 			init_lookup_embedding(self, self.args, self.dim, role=self.role)
 			return
-		if any(name in model_name for name in ('rotate', 'protate')):
+		if any(name in model_name for name in ('rotate', 'protate', 'transe')):
 			margin = float(getattr(self.args, 'margin', 6.0))
 			epsilon = float(getattr(self.args, 'epsilon', 2.0))
 			bound = (margin + epsilon) / max(1, self.dim)
