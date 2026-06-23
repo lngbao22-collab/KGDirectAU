@@ -6,7 +6,7 @@
   "head_eval_mode": "po_forward",
   "dim": 200,
   "batch_size": 512,
-  "epochs": 800,
+  "epochs": 400,
   "lr": 5e-05,
   "adversarial_temperature": 1.0,
   "margin": 6.0,

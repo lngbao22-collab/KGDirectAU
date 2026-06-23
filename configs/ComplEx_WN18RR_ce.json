@@ -7,7 +7,7 @@
   "head_eval_mode": "sp_inverse",
   "dim": 100,
   "batch_size": 100,
-  "epochs": 100,
+  "epochs": 400,
   "optim": "adagrad",
   "lr": 0.1,
   "regularizer": "n3_kbc",

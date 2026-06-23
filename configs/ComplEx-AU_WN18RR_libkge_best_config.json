@@ -16,7 +16,7 @@
   "add_reciprocal_relations": true,
   "dim": 128,
   "batch_size": 512,
-  "epochs": 1000,
+  "epochs": 400,
   "optim": "adagrad",
   "lr": 0.15,
   "weight_decay": 0.0,

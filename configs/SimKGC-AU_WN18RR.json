@@ -6,7 +6,7 @@
   "head_eval_mode": "sp_inverse",
   "dim": 768,
   "batch_size": 512,
-  "epochs": 50,
+  "epochs": 400,
   "lr": 5e-05,
   "weight_decay": 0.0001,
   "eval_every_n_step": 10000,
