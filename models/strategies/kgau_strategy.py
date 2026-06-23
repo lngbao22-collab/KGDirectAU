@@ -365,7 +365,6 @@ class KGAUStrategy(Evaluator):
 			learnable_au_alpha=learnable_au_alpha,
 			learnable_au_gammas=learnable_au_gammas,
 			tuni_as_alpha=tuni_as_alpha,
-			uniformity_tuni=_config_float(args, 'uniformity_tuni', 2.0),
 			max_uniformity_samples=int(_config_float(args, 'max_uniformity_samples', 1024)),
 			additive_margin=_config_float(args, 'additive_margin', 0.0),
 			alignment_mode=alignment_mode,
@@ -374,11 +373,10 @@ class KGAUStrategy(Evaluator):
 		if learnable_tuni:
 			if tuni_as_alpha:
 				logger.info(
-					'Learnable alignment scale (tuni-as-alpha): initial=%.4f, log_uniformity_lr=%.2e, '
-					'uniformity_tuni=%.4f',
+					'Learnable tuni (alignment scale + uniformity temperature): initial=%.4f, '
+					'log_uniformity_lr=%.2e',
 					tuni_val,
 					_config_float(args, 'log_uniformity_lr', _config_float(args, 'lr', 2e-5)),
-					_config_float(args, 'uniformity_tuni', 2.0),
 				)
 			else:
 				logger.info(
@@ -387,11 +385,7 @@ class KGAUStrategy(Evaluator):
 					_config_float(args, 'log_uniformity_lr', _config_float(args, 'lr', 2e-5)),
 				)
 		elif tuni_as_alpha:
-			logger.info(
-				'Alignment scale from tuni (fixed): %.4f | uniformity_tuni=%.4f',
-				tuni_val,
-				_config_float(args, 'uniformity_tuni', 2.0),
-			)
+			logger.info('tuni scales alignment and uniformity (fixed): %.4f', tuni_val)
 		elif config_bool(args, 'tuni_linear_schedule', False):
 			start_scale = _scheduled_tuni_value(args, 0)
 			end_scale = _scheduled_tuni_value(args, max(int(getattr(args, 'epochs', 1)) - 1, 0))
@@ -783,6 +777,7 @@ class KGAUStrategy(Evaluator):
 			self.optimizer.step()
 		self.criterion.clamp_learnable_gamma_adj()
 		self.criterion.clamp_learnable_alpha_adj()
+		self.criterion.clamp_learnable_tuni()
 
 	def _train_au_tensor_batch(
 		self,

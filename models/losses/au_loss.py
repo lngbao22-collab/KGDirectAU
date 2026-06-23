@@ -60,7 +60,6 @@ class KGAULoss(nn.Module):
 		learnable_au_alpha: bool = False,
 		learnable_au_gammas: bool = False,
 		tuni_as_alpha: bool = False,
-		uniformity_tuni: float = 2.0,
 		max_uniformity_samples: int = 1024,
 		additive_margin: float = 0.0,
 		alignment_mode: str = 'cosine',
@@ -97,13 +96,13 @@ class KGAULoss(nn.Module):
 				# Unconstrained log-scale gammas rise under AU loss because uniformity is negative.
 				setattr(self, f'log_gamma_adj_{name}', nn.Parameter(torch.zeros(())))
 		self.register_buffer('gamma_schedule_mult', torch.tensor(1.0))
-		# `tuni` is the uniformity temperature by default; with ``tuni_as_alpha`` it scales alignment.
+		# `tuni` is the uniformity temperature; with ``tuni_as_alpha`` it also replaces alpha.
 		tuni_val = _coalesce_float(tuni, 2.0)
+		self.register_buffer('tuni_init_log', torch.tensor(math.log(tuni_val)))
 		if learnable_tuni:
 			self.log_tuni = nn.Parameter(torch.tensor(math.log(tuni_val)))
 		else:
 			self._tuni = tuni_val
-		self._uniformity_tuni = _coalesce_float(uniformity_tuni, 2.0)
 		self.max_uniformity_samples = max_uniformity_samples
 		# InfoNCE additive margin gamma; geometric threshold m = 2 * gamma on squared L2.
 		self.additive_margin = _coalesce_float(additive_margin, 0.0)
@@ -158,6 +157,14 @@ class KGAULoss(nn.Module):
 				continue
 			with torch.no_grad():
 				getattr(self, f'log_gamma_adj_{name}').clamp_(max=0.0)
+
+	def clamp_learnable_tuni(self) -> None:
+		"""When ``tuni_as_alpha``, keep learnable tuni at or above its initial value."""
+
+		if not self.tuni_as_alpha or not hasattr(self, 'log_tuni'):
+			return
+		with torch.no_grad():
+			self.log_tuni.clamp_(min=float(self.tuni_init_log.item()))
 
 	def _effective_gamma(self, name: str) -> torch.Tensor | float:
 		mult = self.gamma_schedule_mult
@@ -220,14 +227,6 @@ class KGAULoss(nn.Module):
 		if hasattr(self, 'log_tuni'):
 			return torch.exp(self.log_tuni)
 		return self._tuni
-
-	@property
-	def _uniformity_temperature(self) -> torch.Tensor | float:
-		"""Gaussian-potential temperature for uniformity (fixed when ``tuni_as_alpha``)."""
-
-		if self.tuni_as_alpha:
-			return self._uniformity_tuni
-		return self.tuni
 
 	@tuni.setter
 	def tuni(self, value):
@@ -361,7 +360,7 @@ class KGAULoss(nn.Module):
 			return x.new_zeros(()), 0.0
 		scaled_dist_sq = self._scaled_uniformity_dist_sq(dist_sq)
 		margin = float(self.additive_margin)
-		uniformity_temp = self._uniformity_temperature
+		uniformity_temp = self.tuni
 		if margin <= 0.0:
 			return self._log_mean_potential(uniformity_temp * scaled_dist_sq), 1.0
 		# Fixed m = 2*gamma is far too small in high dimensions (random pairs have d^2 ~ 2).

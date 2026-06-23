@@ -16,7 +16,6 @@
   "tuni_as_alpha": true,
   "learnable_uniformity_scale": true,
   "log_uniformity_lr": 0.00005,
-  "uniformity_tuni": 2.0,
 
   "dim": 500,
 
