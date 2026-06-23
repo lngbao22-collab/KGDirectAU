@@ -13,9 +13,6 @@
   "gamma_t": 1,
   "gamma_cross": 0,
   "tuni": 2,
-  "tuni_as_alpha": true,
-  "learnable_uniformity_scale": true,
-  "log_uniformity_lr": 0.00005,
 
   "dim": 500,
 
