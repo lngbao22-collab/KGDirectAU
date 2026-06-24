@@ -234,6 +234,20 @@ class RotatEScorer(KGEScorer):
 			return self._libkge_distance_1vsall(q_re, q_im, h_re, h_im)
 		return self._margin_distance_1vsall(q_re, q_im, h_re, h_im)
 
+	def build_query(self, h_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
+		"""Tail-prediction query vectors for cosine link prediction (``h * r`` in complex space)."""
+
+		h_re, h_im = self._split_complex(h_emb)
+		q_re, q_im = self._rotate_query(h_re, h_im, r_emb, inverse=False)
+		return torch.cat([q_re, q_im], dim=-1)
+
+	def build_po_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+		"""Head-prediction query vectors for cosine link prediction."""
+
+		t_re, t_im = self._split_complex(t_emb)
+		q_re, q_im = self._rotate_query(t_re, t_im, r_emb, inverse=True)
+		return torch.cat([q_re, q_im], dim=-1)
+
 	def _distance_score(
 		self,
 		h_emb: torch.Tensor,
@@ -331,10 +345,4 @@ class RotatEScorer(KGEScorer):
 		t_emb: torch.Tensor,
 		**kwargs,
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-		h_re, h_im = self._split_complex(h_emb)
-		r_phase = self._phase(r_emb)
-		query = torch.cat([
-			h_re * torch.cos(r_phase) - h_im * torch.sin(r_phase),
-			h_re * torch.sin(r_phase) + h_im * torch.cos(r_phase),
-		], dim=-1)
-		return query, t_emb, h_emb
+		return self.build_query(h_emb, r_emb), t_emb, h_emb
