@@ -420,7 +420,10 @@ class KGAUStrategy(Evaluator):
 			additive_margin=_config_float(args, 'additive_margin', 0.0),
 			alignment_mode=alignment_mode,
 			normalize_uniformity=bool(normalize_uniformity),
+			average_uniformity_terms=config_bool(args, 'average_uniformity_terms', False),
 		).to(self.device)
+		if config_bool(args, 'average_uniformity_terms', False):
+			logger.info('KGAU average_uniformity_terms: enabled (sum active terms / count)')
 		if learnable_tuni:
 			if tuni_as_alpha:
 				logger.info(
@@ -493,7 +496,19 @@ class KGAUStrategy(Evaluator):
 		self.optimizer = _build_kgau_optimizer(args, self.model, self.criterion, self.weight_decay)
 		self.lr_scheduler = build_lr_scheduler(args, self.optimizer)
 		init_step_cadence_state(self)
+		warm_up_epochs = getattr(args, 'warm_up_epochs', None)
+		if warm_up_epochs is not None and getattr(args, 'warm_up_steps', None) is None:
+			num_batches = max(math.ceil(len(self.train_examples) / batch_size), 1)
+			self.next_lr_decay_step = int(warm_up_epochs) * num_batches
+			logger.info(
+				'warm_up_epochs=%d -> warm_up_steps=%d (%d batches/epoch)',
+				int(warm_up_epochs),
+				self.next_lr_decay_step,
+				num_batches,
+			)
 		logger.info('KGAU au_deduplicate: %s', self.au_deduplicate)
+		if config_bool(args, 'entity_uniformity_batch', False):
+			logger.info('KGAU entity_uniformity_batch: batch cat(head, tail) (GB-Magic au style)')
 		if self.criterion.gamma_active('ent') and self.uses_text_inputs:
 			ent_mode = 'deduplicated' if self.au_deduplicate else 'all batch'
 			logger.info(
@@ -793,7 +808,7 @@ class KGAUStrategy(Evaluator):
 	) -> torch.Tensor | None:
 		"""Entity vectors for ``gamma_ent``: batch dedup (text) or full table (embedding encoders)."""
 
-		if self.uses_text_inputs:
+		if config_bool(self.args, 'entity_uniformity_batch', False) or self.uses_text_inputs:
 			return self._batch_entity_uniformity_vectors(h_raw, t_raw, h_keys, t_keys)
 		return self._catalog_entity_uniformity_vectors(model)
 

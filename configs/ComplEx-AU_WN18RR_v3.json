@@ -1,19 +1,25 @@
 {
 
-  "model": "ComplEx",
+  "model": "ComplEx-AU",
   "dataset": "WN18RR",
   "model_loss_path": "models/losses/au_loss.py",
   "model_strategy_path": "models/strategies/kgau_strategy.py",
   "model_sampler_path": "",
   "head_eval_mode": "sp_inverse",
 
-  "normalize_au_vectors": true,
-  "gamma_q": 0.5,
-  "gamma_t": 0.5,
+  "normalize_au_vectors": false,
+  "gamma_q": 1.0,
+  "gamma_t": 1.0,
+  "gamma_ent": 1.0,
   "gamma_cross": 0,
+  "average_uniformity_terms": true,
+  "entity_uniformity_batch": true,
+  "au_deduplicate": false,
   "tuni": 4,
 
   "dim": 64,
+  "adversarial_training": true,
+  "margin": 200.0,
 
   "add_reciprocal_relations": true,
   "batch_size": 512,
@@ -21,7 +27,7 @@
   "optim": "adam",
   "lr": 0.002,
   "weight_decay": 0.0,
-  "warm_up_steps": 40000,
+  "warm_up_epochs": 200,
   "lr_decay_factor": 0.1,
 
   "shuffle_train": true,
@@ -45,4 +51,3 @@
   "normalize_lp_scores": false,
   "report_au": true
 }
-

@@ -13,7 +13,7 @@
   "tuni": 4,
   "report_au": true,
 
-  "dim": 128,
+  "dim": 64,
 
   "add_reciprocal_relations": true,
   "batch_size": 512,

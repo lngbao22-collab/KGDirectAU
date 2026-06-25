@@ -64,8 +64,10 @@ class KGAULoss(nn.Module):
 		additive_margin: float = 0.0,
 		alignment_mode: str = 'cosine',
 		normalize_uniformity: bool = True,
+		average_uniformity_terms: bool = False,
 	):
 		super().__init__()
+		self.average_uniformity_terms = bool(average_uniformity_terms)
 		self.tuni_as_alpha = bool(tuni_as_alpha)
 		self.learnable_au_alpha = bool(learnable_au_alpha)
 		self.learnable_au_gammas = bool(learnable_au_gammas)
@@ -411,6 +413,7 @@ class KGAULoss(nn.Module):
 		l_align = self._effective_alpha() * self._raw_alignment_loss(q, t, external_align=external_align)
 
 		l_unif = q.new_zeros(())
+		uniform_count = 0
 		active_sum = 0.0
 		active_weight = 0.0
 
@@ -419,6 +422,7 @@ class KGAULoss(nn.Module):
 			q_uniformity = q_uni if q_uni is not None else q
 			term, frac = self.uniformity_loss_with_stats(q_uniformity)
 			l_unif = l_unif + gamma_q * term
+			uniform_count += 1
 			active_sum += self.gamma_value('q') * frac
 			active_weight += self.gamma_value('q')
 		gamma_t = self._effective_gamma('t')
@@ -426,6 +430,7 @@ class KGAULoss(nn.Module):
 			t_uniformity = t_uni if t_uni is not None else t
 			term, frac = self.uniformity_loss_with_stats(t_uniformity)
 			l_unif = l_unif + gamma_t * term
+			uniform_count += 1
 			active_sum += self.gamma_value('t') * frac
 			active_weight += self.gamma_value('t')
 		gamma_h = self._effective_gamma('h')
@@ -433,16 +438,22 @@ class KGAULoss(nn.Module):
 			h_uniformity = h_uni if h_uni is not None else h
 			term, _ = self.uniformity_loss_with_stats(h_uniformity)
 			l_unif = l_unif + gamma_h * term
+			uniform_count += 1
 		gamma_ent = self._effective_gamma('ent')
 		if ent is not None and self.gamma_active('ent'):
 			ent_rows = self._subsample_uniformity_rows(ent)
 			if ent_rows is not None:
 				term, _ = self.uniformity_loss_with_stats(ent_rows)
 				l_unif = l_unif + gamma_ent * term
+				uniform_count += 1
 		gamma_cross = self._effective_gamma('cross')
 		if cross_uni is not None and self.gamma_active('cross'):
 			term, _ = self.uniformity_loss_with_stats(cross_uni)
 			l_unif = l_unif + gamma_cross * term
+			uniform_count += 1
+
+		if self.average_uniformity_terms and uniform_count > 0:
+			l_unif = l_unif / uniform_count
 
 		if float(self.additive_margin) > 0.0 and active_weight > 0:
 			margin_active_frac = active_sum / active_weight

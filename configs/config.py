@@ -283,6 +283,34 @@ def build_parser() -> argparse.ArgumentParser:
         action='store_false',
         help='KGAU: use all batch rows for uniformity (DirectAU-style, no id dedup)',
     )
+    average_uniformity_group = parser.add_mutually_exclusive_group()
+    average_uniformity_group.add_argument(
+        '--average-uniformity-terms', '--average_uniformity_terms',
+        dest='average_uniformity_terms',
+        action='store_true',
+        default=None,
+        help='KGAU: divide summed uniformity terms by active term count (GB-Magic au style)',
+    )
+    average_uniformity_group.add_argument(
+        '--no-average-uniformity-terms', '--no_average_uniformity_terms',
+        dest='average_uniformity_terms',
+        action='store_false',
+        help='KGAU: sum uniformity terms without averaging (default)',
+    )
+    entity_uniformity_batch_group = parser.add_mutually_exclusive_group()
+    entity_uniformity_batch_group.add_argument(
+        '--entity-uniformity-batch', '--entity_uniformity_batch',
+        dest='entity_uniformity_batch',
+        action='store_true',
+        default=None,
+        help='KGAU: entity uniformity on batch cat(head, tail) instead of full entity table',
+    )
+    entity_uniformity_batch_group.add_argument(
+        '--no-entity-uniformity-batch', '--no_entity_uniformity_batch',
+        dest='entity_uniformity_batch',
+        action='store_false',
+        help='KGAU: entity uniformity on full entity table (default for index KGE)',
+    )
     report_au_group = parser.add_mutually_exclusive_group()
     report_au_group.add_argument(
         '--report-au', '--report_au',
@@ -444,6 +472,9 @@ def build_parser() -> argparse.ArgumentParser:
                         dest='save_checkpoint_steps', help='Save checkpoint every N optimizer steps')
     parser.add_argument('--warm-up-steps', '--warm_up_steps', default=None, type=int,
                         dest='warm_up_steps', help='Decay LR by lr_decay_factor at this step (default: max_steps // 2)')
+    parser.add_argument('--warm-up-epochs', '--warm_up_epochs', default=None, type=int,
+                        dest='warm_up_epochs',
+                        help='Decay LR after this many epochs (overrides warm_up_steps when warm_up_steps unset)')
     parser.add_argument('--lr-decay-factor', '--lr_decay_factor', default=None, type=float,
                         dest='lr_decay_factor', help='LR multiplier applied at warm_up_steps (default: 0.1)')
     parser.add_argument('--epoch-per-eval', '--epoch_per_eval', default=None, type=int,

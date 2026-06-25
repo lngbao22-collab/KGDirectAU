@@ -1,6 +1,6 @@
 {
-  "model": "pRotatE-AU",
-  "dataset": "WN18RR",
+  "model": "RotatE-AU",
+  "dataset": "FB15k237",
   "model_loss_path": "models/losses/au_loss.py",
   "model_strategy_path": "models/strategies/kgau_strategy.py",
   "model_sampler_path": "",
@@ -13,13 +13,15 @@
   "tuni": 4,
 
   "dim": 64,
-  "normalize_phases": true,
 
   "add_reciprocal_relations": true,
-  "batch_size": 512,
+  "batch_size": 1024,
   "epochs": 400,
   "optim": "adam",
   "lr": 5e-05,
+  "lr_scheduler": "StepLR",
+  "lr_scheduler_step_size": 200,
+  "lr_scheduler_factor": 0.1,
   "weight_decay": 0.0,
   "shuffle_train": true,
   "use_amp": true,
@@ -28,7 +30,7 @@
 
   "training_cadence": "epoch",
   "epoch_per_eval": 5,
-  "test_batch_size": 8,
+  "test_batch_size": 16,
   "score_query_chunk_size": 256,
   "eval_candidate_chunk_size": 2048,
   "eval_entity_chunk_size": 4096,
@@ -37,7 +39,7 @@
   "early_stopping_min_epochs": 50,
   "early_stopping_min_metric": 0.05,
 
-  "output_dir_prefix": "logs/pRotatE-AU_WN18RR",
+  "output_dir_prefix": "logs/RotatE-AU_FB15k237",
   "tie_handling": "rounded_mean_rank",
   "tie_rtol": 0.0001,
   "tie_atol": 1e-05,
