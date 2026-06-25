@@ -4,15 +4,15 @@
   "model_loss_path": "models/losses/adversarial_bce_loss.py",
   "model_strategy_path": "models/strategies/negsamp_strategy.py",
   "model_sampler_path": "models/samplers/filtered_1_to_n_sampler.py",
-  "head_eval_mode": "po_forward",
+  "head_eval_mode": "sp_inverse",
 
   "normalize_au_vectors": true,
-  "gamma_q": 1,
-  "gamma_t": 1,
+  "gamma_q": 0.5,
+  "gamma_t": 0.5,
   "gamma_cross": 0,
   "tuni": 4,
   "report_au": true,
-  
+
   "dim": 128,
 
   "add_reciprocal_relations": true,
@@ -25,7 +25,6 @@
   "lr_decay_factor": 0.1,
   "shuffle_train": true,
 
-  "margin": 200.0,
   "regularization": 5e-06,
 
   "training_cadence": "epoch",
