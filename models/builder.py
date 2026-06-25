@@ -693,6 +693,9 @@ def run_epoch_based_kge_train_loop(trainer, dataloader=None) -> dict:
 			trainer.memory_tracker.end_phase('eval')
 			trainer.valid_time += time.time() - eval_start
 
+		from utils.au_reporter import report_au_validation
+		report_au_validation(trainer, epoch, metric_dict if validated else None)
+
 		is_best = False
 		if validated and metric_dict and 'mrr' in metric_dict:
 			is_best = _update_index_kge_best_metric(trainer, metric_dict, epoch)
@@ -804,6 +807,9 @@ def run_step_based_kge_train_loop(trainer, dataloader=None) -> dict:
 					bad_counts=bad_counts,
 					min_metric=min_metric,
 				)
+
+		from utils.au_reporter import report_au_validation
+		report_au_validation(trainer, epoch, metric_dict if validated else None)
 
 		if batch_count > 0:
 			_save_index_kge_checkpoint(trainer, epoch, is_best, step=current_step)

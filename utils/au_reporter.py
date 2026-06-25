@@ -101,7 +101,8 @@ class AUReporter:
 		self.output_dir = Path(args.output_dir)
 		self.json_path = self.output_dir / 'au_loss_report.json'
 		self.csv_path = self.output_dir / 'au_loss_report.csv'
-		self.chart_path = self.output_dir / 'au_loss_by_epoch.png'
+		self.mrr_loss_chart_path = self.output_dir / 'au_mrr_loss_by_epoch.png'
+		self.align_uniformity_chart_path = self.output_dir / 'au_align_uniformity_by_epoch.png'
 		self.history: list[dict[str, Any]] = []
 		self._cached_ent_raw: torch.Tensor | None = None
 		self._cached_ent_epoch: int | None = None
@@ -369,6 +370,7 @@ class AUReporter:
 			'au_loss': loss_sum / num_examples,
 			'align_loss': align_sum / num_examples,
 			'uniformity_loss': unif_sum / num_examples,
+			'mrr': None,
 			'num_examples': num_examples,
 			**self._epoch_config_snapshot(),
 		}
@@ -378,6 +380,19 @@ class AUReporter:
 			'[AU REPORT] Epoch %d | loss: %.6f | align: %.6f | uniformity: %.6f',
 			record['epoch'], record['au_loss'], record['align_loss'], record['uniformity_loss'],
 		)
+
+	def record_validation(self, epoch: int, metric_dict: dict | None) -> None:
+		target_epoch = epoch + 1
+		mrr = None
+		if metric_dict and 'mrr' in metric_dict:
+			mrr = float(metric_dict['mrr'])
+		for record in reversed(self.history):
+			if record['epoch'] == target_epoch:
+				record['mrr'] = mrr
+				self._write_files()
+				if mrr is not None:
+					logger.info('[AU REPORT] Epoch %d | validation MRR: %.6f', target_epoch, mrr)
+				return
 
 	def _write_files(self) -> None:
 		self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -397,7 +412,7 @@ class AUReporter:
 		}
 		self.json_path.write_text(json.dumps(payload, indent=2), encoding='utf-8')
 
-		fieldnames = ['epoch', 'au_loss', 'align_loss', 'uniformity_loss', 'num_examples', 'tuni']
+		fieldnames = ['epoch', 'au_loss', 'align_loss', 'uniformity_loss', 'mrr', 'num_examples', 'tuni']
 		if not config_bool(self.args, 'tuni_as_alpha', False):
 			fieldnames.append('alpha')
 		for name in ('q', 't', 'h', 'ent', 'cross'):
@@ -409,11 +424,7 @@ class AUReporter:
 			for row in self.history:
 				writer.writerow(row)
 
-	def finalize(self) -> None:
-		if not self.history:
-			logger.warning('[AU REPORT] No AU history recorded; skipping chart')
-			return
-		self._write_files()
+	def _save_charts(self) -> None:
 		try:
 			import matplotlib.pyplot as plt
 		except ImportError:
@@ -424,20 +435,56 @@ class AUReporter:
 		au_losses = [row['au_loss'] for row in self.history]
 		align_losses = [row['align_loss'] for row in self.history]
 		unif_losses = [row['uniformity_loss'] for row in self.history]
+		mrr_values = [row.get('mrr') for row in self.history]
+
+		fig, ax_loss = plt.subplots(figsize=(8, 5))
+		ax_loss.plot(epochs, au_losses, marker='o', color='tab:blue', label='AU loss', linewidth=2)
+		ax_loss.set_xlabel('Epoch')
+		ax_loss.set_ylabel('AU loss', color='tab:blue')
+		ax_loss.tick_params(axis='y', labelcolor='tab:blue')
+		ax_loss.grid(True, alpha=0.3)
+
+		mrr_epochs = [epoch for epoch, mrr in zip(epochs, mrr_values) if mrr is not None]
+		mrr_series = [mrr for mrr in mrr_values if mrr is not None]
+		if mrr_series:
+			ax_mrr = ax_loss.twinx()
+			ax_mrr.plot(mrr_epochs, mrr_series, marker='s', color='tab:orange', label='MRR', linewidth=2)
+			ax_mrr.set_ylabel('MRR', color='tab:orange')
+			ax_mrr.tick_params(axis='y', labelcolor='tab:orange')
+			lines_loss, labels_loss = ax_loss.get_legend_handles_labels()
+			lines_mrr, labels_mrr = ax_mrr.get_legend_handles_labels()
+			ax_loss.legend(lines_loss + lines_mrr, labels_loss + labels_mrr, loc='best')
+		else:
+			ax_loss.legend(loc='best')
+
+		ax_loss.set_title('AU loss and validation MRR by epoch')
+		fig.tight_layout()
+		fig.savefig(self.mrr_loss_chart_path, dpi=150)
+		plt.close(fig)
 
 		fig, ax = plt.subplots(figsize=(8, 5))
-		ax.plot(epochs, au_losses, marker='o', label='AU loss (total)', linewidth=2)
-		ax.plot(epochs, align_losses, marker='s', label='Alignment', linewidth=1.5, alpha=0.85)
-		ax.plot(epochs, unif_losses, marker='^', label='Uniformity', linewidth=1.5, alpha=0.85)
+		ax.plot(epochs, align_losses, marker='s', label='Alignment', linewidth=2)
+		ax.plot(epochs, unif_losses, marker='^', label='Uniformity', linewidth=2)
 		ax.set_xlabel('Epoch')
 		ax.set_ylabel('Loss')
-		ax.set_title('Alignment-Uniformity loss by epoch')
+		ax.set_title('Alignment and uniformity loss by epoch')
 		ax.grid(True, alpha=0.3)
 		ax.legend()
 		fig.tight_layout()
-		fig.savefig(self.chart_path, dpi=150)
+		fig.savefig(self.align_uniformity_chart_path, dpi=150)
 		plt.close(fig)
-		logger.info('[AU REPORT] Saved chart to %s', self.chart_path)
+		logger.info(
+			'[AU REPORT] Saved charts to %s and %s',
+			self.mrr_loss_chart_path,
+			self.align_uniformity_chart_path,
+		)
+
+	def finalize(self) -> None:
+		if not self.history:
+			logger.warning('[AU REPORT] No AU history recorded; skipping charts')
+			return
+		self._write_files()
+		self._save_charts()
 
 
 def attach_au_reporter(trainer, args) -> None:
@@ -450,6 +497,12 @@ def report_au_after_epoch(trainer, epoch: int) -> None:
 	reporter = getattr(trainer, 'au_reporter', None)
 	if reporter is not None:
 		reporter.on_epoch_end(epoch)
+
+
+def report_au_validation(trainer, epoch: int, metric_dict: dict | None) -> None:
+	reporter = getattr(trainer, 'au_reporter', None)
+	if reporter is not None:
+		reporter.record_validation(epoch, metric_dict)
 
 
 def finalize_au_report(trainer) -> None:

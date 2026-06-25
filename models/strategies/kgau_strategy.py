@@ -1298,6 +1298,9 @@ class KGAUStrategy(Evaluator):
 				self.memory_tracker.end_phase('eval')
 				self.valid_time += time.time() - eval_start
 
+			from utils.au_reporter import report_au_validation
+			report_au_validation(self, epoch, metric_dict if validated else None)
+
 			is_best = False
 			if validated and metric_dict and 'mrr' in metric_dict:
 				monitor_value = metric_dict['mrr']

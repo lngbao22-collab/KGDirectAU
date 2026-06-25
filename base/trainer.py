@@ -128,6 +128,8 @@ class Trainer(ABC):
         metric_dict = self.eval_epoch(epoch)
         self.memory_tracker.end_phase('eval')
         self.valid_time += time.time() - eval_start
+        from utils.au_reporter import report_au_validation
+        report_au_validation(self, epoch, metric_dict)
         monitor_value = self._extract_monitor_value(metric_dict)
         is_best = monitor_value is not None and (self.best_metric is None or monitor_value > self.best_metric.get('score', float('-inf')))
         if is_best:
