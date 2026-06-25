@@ -99,8 +99,7 @@ class TransEScorer(KGEScorer):
 	def score_po_(self, all_h_embs: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Return 1-vs-all TransE head scores for each (relation, tail) query."""
 
-		query = r_emb - t_emb
-		return self._score_1vsall(query, all_h_embs)
+		return self._score_1vsall(-(r_emb - t_emb), all_h_embs)
 
 	def build_query(self, h_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
 		return h_emb + r_emb
