@@ -14,9 +14,9 @@ def build_scorer(args) -> TransEScorer:
 class TransEScorer(KGEScorer):
 	"""TransE score function with explicit 1-to-1 and 1-vs-All tensor paths.
 
-	Matches ``KnowledgeGraphEmbedding`` (Sun et al.): higher score is better,
-	``gamma - ||h + r - t||_1`` for tail prediction and
-	``gamma - ||h + (r - t)||_1`` for head prediction.
+	Matches ``KnowledgeGraphEmbedding`` (Sun et al.) when ``transe_norm=1``:
+	higher score is better, ``gamma - ||h + r - t||_1`` for tail prediction.
+	With ``transe_norm=2``, uses L2 distance instead of L1 (configurable via ``transe_norm``).
 	"""
 
 	bidirectional_score_batch = True
@@ -31,6 +31,10 @@ class TransEScorer(KGEScorer):
 		self.gamma = float(margin_value)
 		epsilon = float(getattr(args, 'epsilon', 2.0))
 		self.embedding_range = float((self.gamma + epsilon) / max(self.dim, 1))
+		norm_p = int(getattr(args, 'transe_norm', 1) or 1)
+		if norm_p not in (1, 2):
+			raise ValueError(f'transe_norm must be 1 or 2, got {norm_p}')
+		self.norm_p = norm_p
 
 	def _entity_chunk_size(self, batch_size: int) -> int:
 		"""Candidate chunk size for 1-vs-all scoring (controls peak GPU memory)."""
@@ -42,7 +46,7 @@ class TransEScorer(KGEScorer):
 		return max(1, min(configured, memory_limit))
 
 	def _score_distance(self, diff: torch.Tensor) -> torch.Tensor:
-		return self.gamma - torch.norm(diff, p=1, dim=-1)
+		return self.gamma - torch.norm(diff, p=self.norm_p, dim=-1)
 
 	def score_spo(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Return standard TransE tail scores for matching batches of triples."""
@@ -105,4 +109,6 @@ class TransEScorer(KGEScorer):
 		return h_emb + r_emb
 
 	def build_po_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-		return r_emb - t_emb
+		"""Head-prediction query: ``t - r`` so positives satisfy ``h ≈ t - r``."""
+
+		return t_emb - r_emb

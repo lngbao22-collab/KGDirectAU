@@ -401,6 +401,12 @@ def build_parser() -> argparse.ArgumentParser:
         action='store_false',
         help='use raw embeddings for KGAU training vectors',
     )
+    parser.add_argument('--alignment-mode', '--alignment_mode', default=None, type=str,
+                        dest='alignment_mode',
+                        help='KGAU alignment: cosine, phase_residual, or sin_phase')
+    parser.add_argument('--transe-norm', '--transe_norm', default=None, type=int,
+                        dest='transe_norm',
+                        help='TransE distance norm: 1 (classic L1) or 2 (L2, TransE-AU)')
 
     # LibKGE-style index KGE training (DistMult, ComplEx, KvsAll, reciprocal relations).
     parser.add_argument('--add-reciprocal-relations', '--add_reciprocal_relations',
@@ -645,6 +651,7 @@ def _format_model_name(model: str) -> str:
         'dabr-au': 'DaBR-AU',
         'simkgc': 'SimKGC',
         'transe': 'TransE',
+        'transe-au': 'TransE-AU',
         'transd': 'TransD',
         'rotate': 'RotatE',
     }
@@ -946,7 +953,7 @@ _model_name_for_scheduler = (args.model or '').lower()
 _is_index_kge_model = _model_name_for_scheduler in {
     'distmult', 'distmult-au', 'distmult-adversarial', 'distmult-adversarial-au',
     'complex', 'complex-au', 'dabr', 'dabr-au', 'rotate', 'rotate-au', 'protate', 'protate-au',
-    'transe',
+    'transe', 'transe-au',
 }
 if args.lr_scheduler is not None:
     if _is_index_kge_model:
@@ -962,7 +969,7 @@ args.config_path = config_path
 _model_name = (args.model or '').lower()
 _is_text_model = _model_name not in {
     'distmult', 'distmult-au', 'complex', 'complex-au', 'dabr', 'dabr-au',
-    'transe',
+    'transe', 'transe-au',
 }
 
 if getattr(args, 'normalize_phases', None) is None and _model_name in {'protate', 'protate-au'}:
@@ -1001,7 +1008,7 @@ if not args.model_encoder_path:
         args.model_encoder_path = 'models/scorers/rotate_scorer.py'
     elif _model_name in {'protate', 'protate-au'}:
         args.model_encoder_path = 'models/scorers/protate_scorer.py'
-    elif _model_name == 'transe':
+    elif _model_name in {'transe', 'transe-au'}:
         args.model_encoder_path = 'models/scorers/transe_scorer.py'
     else:
         args.model_encoder_path = 'models/scorers/simkgc_scorer.py'
