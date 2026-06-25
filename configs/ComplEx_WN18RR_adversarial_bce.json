@@ -13,6 +13,8 @@
   "optim": "adam",
   "lr": 0.002,
   "weight_decay": 0.0,
+  "warm_up_steps": 40000,
+  "lr_decay_factor": 0.1,
   "shuffle_train": true,
   "use_amp": true,
 

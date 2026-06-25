@@ -9,30 +9,29 @@
   "dim": 500,
 
   "batch_size": 512,
-  "epochs": 400,
+  "epochs": 472,
   "optim": "adam",
   "lr": 5e-05,
   "weight_decay": 0.0,
+  "warm_up_steps": 40000,
+  "lr_decay_factor": 0.1,
   "shuffle_train": true,
-  "use_amp": true,
+  "use_amp": false,
 
   "adversarial_training": true,
   "adversarial_temperature": 0.5,
   "margin": 6.0,
   "n_sample": 1024,
-  "regularization": 5e-05,
+  "neg_score_chunk_size": 128,
+  "neg_weight_chunk_size": 256,
 
   "training_cadence": "epoch",
-  "epoch_per_eval": 5,
+  "epoch_per_eval": 59,
 
   "test_batch_size": 8,
   "score_query_chunk_size": 256,
   "eval_candidate_chunk_size": 2048,
   "eval_entity_chunk_size": 4096,
-
-  "early_stopping_patience": 10,
-  "early_stopping_min_epochs": 50,
-  "early_stopping_min_metric": 0.05,
 
   "output_dir_prefix": "logs/TransE_WN18RR_adversarial_bce",
   "tie_handling": "rounded_mean_rank",

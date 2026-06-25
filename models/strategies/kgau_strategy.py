@@ -23,6 +23,11 @@ from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, l
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
 from utils.logger import AverageMeter, ProgressMeter, logger, time_per_train_epoch
 from utils.memory import PhaseMemoryTracker, format_memory
+from utils.training_cadence import (
+	init_step_cadence_state,
+	increment_trainer_global_step,
+	maybe_decay_lr_at_step,
+)
 from models.losses.au_loss import KGAULoss, distinct_first_indices, select_distinct_rows, _GAMMA_NAMES
 
 
@@ -487,6 +492,7 @@ class KGAUStrategy(Evaluator):
 			)
 		self.optimizer = _build_kgau_optimizer(args, self.model, self.criterion, self.weight_decay)
 		self.lr_scheduler = build_lr_scheduler(args, self.optimizer)
+		init_step_cadence_state(self)
 		logger.info('KGAU au_deduplicate: %s', self.au_deduplicate)
 		if self.criterion.gamma_active('ent') and self.uses_text_inputs:
 			ent_mode = 'deduplicated' if self.au_deduplicate else 'all batch'
@@ -833,6 +839,8 @@ class KGAUStrategy(Evaluator):
 		self.criterion.clamp_learnable_gamma_adj()
 		self.criterion.clamp_learnable_alpha_adj()
 		self.criterion.clamp_learnable_tuni()
+		step = increment_trainer_global_step(self)
+		maybe_decay_lr_at_step(self, step)
 
 	def _train_au_tensor_batch(
 		self,

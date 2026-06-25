@@ -50,7 +50,7 @@ def resolve_warm_up_steps(args: Any) -> int | None:
 	if explicit is not None:
 		return explicit
 	max_steps = resolve_max_steps(args)
-	if max_steps is not None and uses_step_cadence(args):
+	if max_steps is not None:
 		return max_steps // 2
 	return None
 
@@ -95,8 +95,25 @@ def increment_trainer_global_step(trainer: Any) -> int:
 	return trainer.global_step
 
 
+def _rebuild_trainer_optimizer(trainer: Any, new_lr: float) -> None:
+	"""Recreate the optimizer at a new LR (matches KnowledgeGraphEmbedding warm-up decay)."""
+
+	model = getattr(trainer, 'model', None)
+	args = getattr(trainer, 'args', None)
+	if model is None or args is None:
+		return
+
+	from models.builder import build_optimizer
+
+	weight_decay = config_float(args, 'weight_decay', 0.0)
+	params = filter(lambda p: p.requires_grad, model.parameters())
+	trainer.optimizer = build_optimizer(args, params, weight_decay)
+	for param_group in trainer.optimizer.param_groups:
+		param_group['lr'] = new_lr
+
+
 def maybe_decay_lr_at_step(trainer: Any, step: int) -> None:
-	"""RotatE-style LR decay: multiply LR by ``lr_decay_factor`` once ``step >= warm_up_steps``."""
+	"""KnowledgeGraphEmbedding-style LR decay: multiply LR by ``lr_decay_factor`` once ``step >= warm_up_steps``."""
 
 	next_step = getattr(trainer, 'next_lr_decay_step', None)
 	optimizer = getattr(trainer, 'optimizer', None)
@@ -105,8 +122,7 @@ def maybe_decay_lr_at_step(trainer: Any, step: int) -> None:
 
 	decay_factor = max(float(getattr(trainer, 'lr_decay_factor', 0.1)), 0.0)
 	new_lr = optimizer.param_groups[0]['lr'] * decay_factor
-	for param_group in optimizer.param_groups:
-		param_group['lr'] = new_lr
+	_rebuild_trainer_optimizer(trainer, new_lr)
 
 	from utils.logger import logger
 

@@ -8,21 +8,12 @@
   "head_eval_mode": "sp_inverse",
 
   "normalize_au_vectors": true,
-
   "gamma_q": 1,
   "gamma_t": 1,
-  "gamma_cross": 1,
-  "tuni": 2,
-  "learnable_au_gammas": true,
-  "log_au_gamma_lr": 0.00005,
-  "gamma_linear_schedule": true,
-  "gamma_schedule_end": 0.1,
-  "gamma_schedule_start_epoch": 0,
-  "gamma_schedule_epochs": 0,
-  "learnable_uniformity_scale": true,
-  "log_uniformity_lr": 0.005,
+  "gamma_cross": 0,
+  "tuni": 4,
 
-  "dim": 500,
+  "dim": 64,
 
   "add_reciprocal_relations": true,
   "batch_size": 512,
@@ -30,10 +21,10 @@
   "optim": "adam",
   "lr": 0.002,
   "weight_decay": 0.0,
+  "warm_up_steps": 40000,
+  "lr_decay_factor": 0.1,
 
   "shuffle_train": true,
-
-  "use_amp": true,
 
   "n_sample": 0,
   "regularization": 5e-06,
@@ -51,6 +42,7 @@
   "tie_rtol": 0.0001,
   "tie_atol": 1e-05,
 
-  "normalize_lp_scores": false
+  "normalize_lp_scores": false,
+  "report_au": true
 }
 
