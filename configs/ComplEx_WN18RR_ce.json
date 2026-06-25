@@ -5,7 +5,7 @@
   "model_strategy_path": "models/strategies/1vsall_strategy.py",
   "kbc_reciprocal_relations": true,
   "head_eval_mode": "sp_inverse",
-  "dim": 100,
+  "dim": 64,
   "batch_size": 100,
   "epochs": 400,
   "optim": "adagrad",
