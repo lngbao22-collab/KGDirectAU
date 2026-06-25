@@ -132,14 +132,67 @@ class AUReporter:
 		if config_bool(self.args, 'tuni_linear_schedule', False):
 			self.criterion.tuni = float(_scheduled_tuni_value(self.args, epoch))
 
+	def _reporting_criterion(self) -> KGAULoss:
+		"""Prefer the trainer's live criterion (already scheduled for this epoch)."""
+
+		return getattr(self.trainer, 'criterion', self.criterion)
+
 	def _epoch_config_snapshot(self) -> dict[str, float]:
-		snapshot = {'tuni': float(self.criterion.tuni if not torch.is_tensor(self.criterion.tuni) else self.criterion.tuni.item())}
+		criterion = self._reporting_criterion()
+		snapshot = {'tuni': float(criterion.tuni if not torch.is_tensor(criterion.tuni) else criterion.tuni.item())}
 		if not config_bool(self.args, 'tuni_as_alpha', False):
-			snapshot['alpha'] = self.criterion.alpha_value()
+			snapshot['alpha'] = criterion.alpha_value()
 		for name in ('q', 't', 'h', 'ent', 'cross'):
-			if self.criterion.gamma_active(name):
-				snapshot[f'gamma_{name}'] = self.criterion.gamma_value(name)
+			if criterion.gamma_active(name):
+				snapshot[f'gamma_{name}'] = criterion.gamma_value(name)
 		return snapshot
+
+	def _training_example_count(self) -> int:
+		if hasattr(self.trainer, 'train_examples'):
+			count = len(self.trainer.train_examples)
+			if getattr(self.trainer, 'kgau_bidirectional', False):
+				count *= 2
+			return count
+		if hasattr(self.trainer, 'train_src'):
+			return int(self.trainer.train_src.size(0))
+		return 0
+
+	def _reuse_train_component_losses(self) -> dict[str, float] | None:
+		"""Return epoch AU metrics already accumulated during training, if available."""
+
+		if self.max_batches is not None:
+			return None
+		components = getattr(self.trainer, 'train_component_losses', None)
+		if not isinstance(components, dict):
+			return None
+		if 'align' not in components or 'uniformity' not in components:
+			return None
+		return components
+
+	def _record_epoch_metrics(
+		self,
+		epoch: int,
+		*,
+		au_loss: float,
+		align_loss: float,
+		uniformity_loss: float,
+		num_examples: int,
+	) -> None:
+		record = {
+			'epoch': epoch + 1,
+			'au_loss': au_loss,
+			'align_loss': align_loss,
+			'uniformity_loss': uniformity_loss,
+			'mrr': None,
+			'num_examples': num_examples,
+			**self._epoch_config_snapshot(),
+		}
+		self.history.append(record)
+		self._write_files()
+		logger.info(
+			'[AU REPORT] Epoch %d | loss: %.6f | align: %.6f | uniformity: %.6f',
+			record['epoch'], record['au_loss'], record['align_loss'], record['uniformity_loss'],
+		)
 
 	def _distinct_uniformity_inputs(
 		self,
@@ -336,6 +389,21 @@ class AUReporter:
 
 	@torch.no_grad()
 	def on_epoch_end(self, epoch: int) -> None:
+		components = self._reuse_train_component_losses()
+		if components is not None:
+			align_loss = float(components['align'])
+			uniformity_loss = float(components['uniformity'])
+			au_loss = float(components.get('au', align_loss + uniformity_loss))
+			num_examples = int(components.get('num_examples') or self._training_example_count())
+			self._record_epoch_metrics(
+				epoch,
+				au_loss=au_loss,
+				align_loss=align_loss,
+				uniformity_loss=uniformity_loss,
+				num_examples=num_examples,
+			)
+			return
+
 		self._apply_epoch_schedules(epoch)
 		model = get_model_obj(self.model)
 		was_training = self.model.training
@@ -388,20 +456,12 @@ class AUReporter:
 			logger.warning('[AU REPORT] Epoch %d: no training batches available; skipping', epoch + 1)
 			return
 
-		record = {
-			'epoch': epoch + 1,
-			'au_loss': loss_sum / num_examples,
-			'align_loss': align_sum / num_examples,
-			'uniformity_loss': unif_sum / num_examples,
-			'mrr': None,
-			'num_examples': num_examples,
-			**self._epoch_config_snapshot(),
-		}
-		self.history.append(record)
-		self._write_files()
-		logger.info(
-			'[AU REPORT] Epoch %d | loss: %.6f | align: %.6f | uniformity: %.6f',
-			record['epoch'], record['au_loss'], record['align_loss'], record['uniformity_loss'],
+		self._record_epoch_metrics(
+			epoch,
+			au_loss=loss_sum / num_examples,
+			align_loss=align_sum / num_examples,
+			uniformity_loss=unif_sum / num_examples,
+			num_examples=num_examples,
 		)
 
 	def record_validation(self, epoch: int, metric_dict: dict | None) -> None:
@@ -439,7 +499,7 @@ class AUReporter:
 		if not config_bool(self.args, 'tuni_as_alpha', False):
 			fieldnames.append('alpha')
 		for name in ('q', 't', 'h', 'ent', 'cross'):
-			if self.criterion._gamma_init_value(name) > 0.0:
+			if self._reporting_criterion()._gamma_init_value(name) > 0.0:
 				fieldnames.append(f'gamma_{name}')
 		with self.csv_path.open('w', newline='', encoding='utf-8') as handle:
 			writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction='ignore')

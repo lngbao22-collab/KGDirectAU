@@ -1236,6 +1236,7 @@ class KGAUStrategy(Evaluator):
 			'align': avg_align_loss,
 			'uniformity': avg_unif_loss,
 			'reg': avg_reg_loss,
+			'num_examples': avg_count,
 			'avg_unique_q': avg_unique_q,
 			'avg_unique_t': avg_unique_t,
 		}

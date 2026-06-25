@@ -1,5 +1,4 @@
 {
-
   "model": "ComplEx-AU",
   "dataset": "WN18RR",
   "model_loss_path": "models/losses/au_loss.py",

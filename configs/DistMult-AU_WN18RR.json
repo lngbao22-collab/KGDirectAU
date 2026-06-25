@@ -4,8 +4,11 @@
   "model_loss_path": "models/losses/au_loss.py",
   "model_strategy_path": "models/strategies/kgau_strategy.py",
   "model_sampler_path": "",
-  "head_eval_mode": "sp_inverse",
+  "head_eval_mode": "po_forward",
 
+  "kgau_bidirectional": true,
+  "uniformity_full_pdist": true,
+  "max_uniformity_samples": 0,
   "normalize_au_vectors": false,
   "gamma_q": 1.0,
   "gamma_t": 1.0,
@@ -20,7 +23,7 @@
   "adversarial_training": true,
   "margin": 200.0,
 
-  "add_reciprocal_relations": true,
+  "add_reciprocal_relations": false,
   "batch_size": 512,
   "epochs": 400,
   "optim": "adam",
@@ -28,7 +31,10 @@
   "weight_decay": 0.0,
   "warm_up_epochs": 200,
   "lr_decay_factor": 0.1,
-
+  "lr_decay_preserve_optimizer": true,
+  "test_eval_last": true,
+  "test_eval_best": true,
+  
   "shuffle_train": true,
 
   "n_sample": 0,
