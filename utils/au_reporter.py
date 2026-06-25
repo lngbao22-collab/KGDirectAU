@@ -182,10 +182,25 @@ class AUReporter:
 		t_keys: torch.Tensor,
 		*,
 		epoch: int,
+		head_indices: torch.Tensor | None = None,
+		tail_indices: torch.Tensor | None = None,
 	) -> torch.Tensor | None:
 		if not self.criterion.gamma_active('ent'):
 			return None
-		if self.uses_text_inputs:
+		if self.uses_text_inputs or config_bool(self.args, 'entity_uniformity_batch', False):
+			if (
+				not self.uses_text_inputs
+				and head_indices is not None
+				and tail_indices is not None
+				and config_bool(self.args, 'entity_uniformity_batch', False)
+			):
+				model_obj = get_model_obj(model)
+				h_ent = model_obj.embed_s(head_indices)
+				t_ent = model_obj.embed_o(tail_indices)
+				if hasattr(model_obj, '_normalize_au_vector'):
+					h_ent = model_obj._normalize_au_vector(h_ent)
+					t_ent = model_obj._normalize_au_vector(t_ent)
+				return self._batch_entity_uniformity_vectors(h_ent, t_ent, h_keys, t_keys)
 			return self._batch_entity_uniformity_vectors(h_raw, t_raw, h_keys, t_keys)
 		if self._cached_ent_epoch == epoch and self._cached_ent_raw is not None:
 			return self._cached_ent_raw
@@ -241,10 +256,15 @@ class AUReporter:
 		h_keys: torch.Tensor,
 		*,
 		epoch: int,
+		head_indices: torch.Tensor | None = None,
+		tail_indices: torch.Tensor | None = None,
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 		q_uni, t_uni, h_uni = self._distinct_uniformity_inputs(q_raw, t_raw, h_raw, q_keys, t_keys, h_keys)
 		cross_uni = self._cross_uniformity_vectors(q_raw, t_raw, q_keys, t_keys)
-		ent_raw = self._entity_uniformity_vectors(model, h_raw, t_raw, h_keys, t_keys, epoch=epoch)
+		ent_raw = self._entity_uniformity_vectors(
+			model, h_raw, t_raw, h_keys, t_keys, epoch=epoch,
+			head_indices=head_indices, tail_indices=tail_indices,
+		)
 		total, l_align, l_unif = self.criterion(
 			q_raw, t_raw, h_raw, ent_raw, q_uni=q_uni, t_uni=t_uni, h_uni=h_uni, cross_uni=cross_uni,
 		)
@@ -354,6 +374,7 @@ class AUReporter:
 				batch_n = ss.size(0)
 				total, l_align, l_unif = self._compute_batch_au(
 					model, q_raw, t_raw, h_raw, q_keys, t_keys, h_keys, epoch=epoch,
+					head_indices=ss, tail_indices=ts,
 				)
 				loss_sum += float(total.item()) * batch_n
 				align_sum += float(l_align.item()) * batch_n

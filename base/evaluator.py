@@ -322,8 +322,6 @@ def _evaluate_kge_link_prediction(
 			inverse_map=inverse_map,
 		)
 		ranks.extend(batch_ranks)
-		if torch.cuda.is_available():
-			torch.cuda.empty_cache()
 	return ranks
 
 
