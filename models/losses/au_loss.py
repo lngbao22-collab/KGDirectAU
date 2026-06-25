@@ -65,9 +65,11 @@ class KGAULoss(nn.Module):
 		alignment_mode: str = 'cosine',
 		normalize_uniformity: bool = True,
 		average_uniformity_terms: bool = False,
+		uniformity_full_pdist: bool = False,
 	):
 		super().__init__()
 		self.average_uniformity_terms = bool(average_uniformity_terms)
+		self.uniformity_full_pdist = bool(uniformity_full_pdist)
 		self.tuni_as_alpha = bool(tuni_as_alpha)
 		self.learnable_au_alpha = bool(learnable_au_alpha)
 		self.learnable_au_gammas = bool(learnable_au_gammas)
@@ -260,6 +262,8 @@ class KGAULoss(nn.Module):
 
 		if x is None or x.size(0) < 2:
 			return None
+		if self.uniformity_full_pdist:
+			return x
 		max_samples = int(getattr(self, 'max_uniformity_samples', 0) or 0)
 		if max_samples > 0 and x.size(0) > max_samples:
 			indices = torch.randperm(x.size(0), device=x.device)[:max_samples]
@@ -272,6 +276,8 @@ class KGAULoss(nn.Module):
 		full_pairs = num_rows * (num_rows - 1) // 2
 		if full_pairs <= 0:
 			return 0
+		if self.uniformity_full_pdist:
+			return full_pairs
 		max_samples = int(getattr(self, 'max_uniformity_samples', 0) or 0)
 		# `pdist` backward requires O(n^2 * dim) intermediate storage; budget 32 MiB to stay safe
 		# across high-dim AU vectors (e.g. DaBR concatenates two 2000-D vectors → 4000-D).

@@ -50,6 +50,7 @@ def _build_au_criterion(args, device: torch.device, *, alignment_mode: str | Non
 		alignment_mode=alignment_mode,
 		normalize_uniformity=bool(normalize_uniformity),
 		average_uniformity_terms=config_bool(args, 'average_uniformity_terms', False),
+		uniformity_full_pdist=config_bool(args, 'uniformity_full_pdist', False),
 	).to(device)
 
 

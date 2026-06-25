@@ -425,9 +425,12 @@ class KGAUStrategy(Evaluator):
 			alignment_mode=alignment_mode,
 			normalize_uniformity=bool(normalize_uniformity),
 			average_uniformity_terms=config_bool(args, 'average_uniformity_terms', False),
+			uniformity_full_pdist=config_bool(args, 'uniformity_full_pdist', False),
 		).to(self.device)
 		if config_bool(args, 'average_uniformity_terms', False):
 			logger.info('KGAU average_uniformity_terms: enabled (sum active terms / count)')
+		if config_bool(args, 'uniformity_full_pdist', False):
+			logger.info('KGAU uniformity_full_pdist: full-batch torch.pdist (GB-Magic au style)')
 		if learnable_tuni:
 			if tuni_as_alpha:
 				logger.info(
@@ -1442,6 +1445,7 @@ class KGAUStrategy(Evaluator):
 		return {
 			'best_epoch': None if self.best_metric is None else self.best_metric.get('epoch'),
 			'best_mrr': None if self.best_metric is None else self.best_metric.get('score'),
+			'best_checkpoint_path': self.best_checkpoint_path,
 			'train_time': self.train_time,
 			'valid_time': self.valid_time,
 			'total_time': self.total_time,

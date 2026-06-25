@@ -113,8 +113,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help='learning-rate scheduler')
     parser.add_argument('--max-num-tokens', default=None, type=int,
                         help='maximum number of tokens for text-based models')
-    parser.add_argument('--max-uniformity-samples', default=None, type=int,
-                        help='maximum number of embeddings used to estimate the AU uniformity term')
+    parser.add_argument('--max-uniformity-samples', '--max_uniformity_samples', default=None, type=int,
+                        dest='max_uniformity_samples',
+                        help='maximum number of embeddings used to estimate the AU uniformity term (0=no cap)')
     parser.add_argument('--max-uniformity-pairs', '--max_uniformity_pairs', default=None, type=int,
                         dest='max_uniformity_pairs',
                         help='maximum random pairwise distances for AU uniformity when full pdist is too large')
@@ -325,6 +326,36 @@ def build_parser() -> argparse.ArgumentParser:
         action='store_false',
         help='KGAU: legacy reciprocal-relation tail training (default)',
     )
+    uniformity_full_pdist_group = parser.add_mutually_exclusive_group()
+    uniformity_full_pdist_group.add_argument(
+        '--uniformity-full-pdist', '--uniformity_full_pdist',
+        dest='uniformity_full_pdist',
+        action='store_true',
+        default=None,
+        help='KGAU: full-batch torch.pdist uniformity (GB-Magic au; no Monte Carlo pairs)',
+    )
+    uniformity_full_pdist_group.add_argument(
+        '--no-uniformity-full-pdist', '--no_uniformity_full_pdist',
+        dest='uniformity_full_pdist',
+        action='store_false',
+        help='KGAU: subsampled/random-pair uniformity (default)',
+    )
+    parser.add_argument('--lr-decay-preserve-optimizer', '--lr_decay_preserve_optimizer',
+                        dest='lr_decay_preserve_optimizer', action='store_true', default=None,
+                        help='On warm-up LR decay, scale param-group LRs in-place (GB-Magic) instead of rebuilding Adam')
+    parser.add_argument('--no-lr-decay-preserve-optimizer', '--no_lr_decay_preserve_optimizer',
+                        dest='lr_decay_preserve_optimizer', action='store_false',
+                        help='Rebuild optimizer on LR decay (legacy KGDirectAU default)')
+    parser.add_argument('--test-eval-last', '--test_eval_last', dest='test_eval_last',
+                        action='store_true', default=None,
+                        help='Evaluate test set from last_model.mdl (GB-Magic final checkpoint)')
+    parser.add_argument('--no-test-eval-last', '--no_test_eval_last', dest='test_eval_last',
+                        action='store_false', help='Do not evaluate test from last_model.mdl')
+    parser.add_argument('--test-eval-best', '--test_eval_best', dest='test_eval_best',
+                        action='store_true', default=None,
+                        help='Evaluate test set from best_model.mdl (best valid MRR checkpoint)')
+    parser.add_argument('--no-test-eval-best', '--no_test_eval_best', dest='test_eval_best',
+                        action='store_false', help='Do not evaluate test from best_model.mdl')
     report_au_group = parser.add_mutually_exclusive_group()
     report_au_group.add_argument(
         '--report-au', '--report_au',

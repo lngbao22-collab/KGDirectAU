@@ -96,7 +96,7 @@ def increment_trainer_global_step(trainer: Any) -> int:
 
 
 def _rebuild_trainer_optimizer(trainer: Any, new_lr: float) -> None:
-	"""Recreate the optimizer at a new LR (matches KnowledgeGraphEmbedding warm-up decay)."""
+	"""Recreate the optimizer at a new LR (legacy KnowledgeGraphEmbedding warm-up decay)."""
 
 	model = getattr(trainer, 'model', None)
 	args = getattr(trainer, 'args', None)
@@ -112,6 +112,13 @@ def _rebuild_trainer_optimizer(trainer: Any, new_lr: float) -> None:
 		param_group['lr'] = new_lr
 
 
+def _scale_optimizer_lrs(optimizer, scale: float) -> None:
+	"""Multiply every param-group LR by ``scale`` (GB-Magic / RotatE-style decay)."""
+
+	for group in optimizer.param_groups:
+		group['lr'] = float(group['lr']) * scale
+
+
 def maybe_decay_lr_at_step(trainer: Any, step: int) -> None:
 	"""KnowledgeGraphEmbedding-style LR decay: multiply LR by ``lr_decay_factor`` once ``step >= warm_up_steps``."""
 
@@ -121,8 +128,14 @@ def maybe_decay_lr_at_step(trainer: Any, step: int) -> None:
 		return
 
 	decay_factor = max(float(getattr(trainer, 'lr_decay_factor', 0.1)), 0.0)
-	new_lr = optimizer.param_groups[0]['lr'] * decay_factor
-	_rebuild_trainer_optimizer(trainer, new_lr)
+	args = getattr(trainer, 'args', None)
+	preserve = bool(getattr(args, 'lr_decay_preserve_optimizer', False)) if args is not None else False
+	if preserve:
+		_scale_optimizer_lrs(optimizer, decay_factor)
+		new_lr = float(optimizer.param_groups[0]['lr'])
+	else:
+		new_lr = float(optimizer.param_groups[0]['lr']) * decay_factor
+		_rebuild_trainer_optimizer(trainer, new_lr)
 
 	from utils.logger import logger
 
