@@ -9,7 +9,7 @@
   "kgau_bidirectional": true,
   "uniformity_full_pdist": true,
   "max_uniformity_samples": 0,
-  "normalize_au_vectors": false,
+  "normalize_au_vectors": true,
   "gamma_q": 1.0,
   "gamma_t": 1.0,
   "gamma_ent": 1.0,
