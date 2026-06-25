@@ -35,8 +35,16 @@ class KGEScorer(nn.Module):
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
 		t_emb: torch.Tensor,
+		*,
+		predict_head: bool = False,
 		**kwargs,
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-		"""Return (query, tail, head) tensors for alignment / uniformity losses."""
+		"""Return (query, align_target, head_entity) for alignment / uniformity losses.
 
+		Tail prediction (default): align ``build_query(h, r)`` with the tail entity.
+		Head prediction: align ``build_po_query(r, t)`` with the head entity (GB-Magic head-batch).
+		"""
+
+		if predict_head:
+			return self.build_po_query(r_emb, t_emb), h_emb, h_emb
 		return self.build_query(h_emb, r_emb), t_emb, h_emb

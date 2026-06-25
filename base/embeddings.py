@@ -152,6 +152,8 @@ def resolve_head_eval_mode(args: Any | None, *, eval_forward: bool) -> str:
 		return 'po_forward'
 
 	if 'kgau' in strategy:
+		if bool(getattr(args, 'kgau_bidirectional', False)):
+			return 'po_forward'
 		if use_reciprocal_relations(args):
 			return 'sp_inverse'
 		return 'po_forward'

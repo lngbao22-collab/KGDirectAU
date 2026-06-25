@@ -338,15 +338,19 @@ class KGAUStrategy(Evaluator):
 		super().__init__(args)
 		self.ngpus_per_node = ngpus_per_node
 		self.uses_text_inputs = _uses_text_inputs(args, model)
-		# Text encoders (SimKGC) already encode both directions in one forward triplet.
-		# Index KGE with reciprocal relations needs explicit inverse triplets so
-		# inverse-relation embeddings are trained (backward LP eval uses them).
-		add_backward_triplet = self.uses_text_inputs or use_reciprocal_relations(args)
+		self.kgau_bidirectional = (
+			config_bool(args, 'kgau_bidirectional', False) and not self.uses_text_inputs
+		)
+		# GB-Magic-style head/tail batches use forward relation at eval; reciprocal triplets
+		# are only needed for sp_inverse training (legacy KGAU path).
+		add_backward_triplet = self.uses_text_inputs or (
+			use_reciprocal_relations(args) and not self.kgau_bidirectional
+		)
 		self.train_examples = load_data(
 			args.train_path, add_forward_triplet=True, add_backward_triplet=add_backward_triplet)
 		logger.info(
-			'Training examples: %d (backward triplets=%s)',
-			len(self.train_examples), add_backward_triplet,
+			'Training examples: %d (backward triplets=%s, kgau_bidirectional=%s)',
+			len(self.train_examples), add_backward_triplet, self.kgau_bidirectional,
 		)
 		self.entity_dict = get_entity_dict()
 		self.model = model if model is not None else _load_encoder(args)
@@ -499,6 +503,8 @@ class KGAUStrategy(Evaluator):
 		warm_up_epochs = getattr(args, 'warm_up_epochs', None)
 		if warm_up_epochs is not None and getattr(args, 'warm_up_steps', None) is None:
 			num_batches = max(math.ceil(len(self.train_examples) / batch_size), 1)
+			if self.kgau_bidirectional:
+				num_batches *= 2
 			self.next_lr_decay_step = int(warm_up_epochs) * num_batches
 			logger.info(
 				'warm_up_epochs=%d -> warm_up_steps=%d (%d batches/epoch)',
@@ -509,6 +515,11 @@ class KGAUStrategy(Evaluator):
 		logger.info('KGAU au_deduplicate: %s', self.au_deduplicate)
 		if config_bool(args, 'entity_uniformity_batch', False):
 			logger.info('KGAU entity_uniformity_batch: batch cat(head, tail) (GB-Magic au style)')
+		if self.kgau_bidirectional:
+			logger.info(
+				'KGAU kgau_bidirectional: tail-batch + head-batch per epoch (GB-Magic); '
+				'head eval uses po_forward',
+			)
 		if self.criterion.gamma_active('ent') and self.uses_text_inputs:
 			ent_mode = 'deduplicated' if self.au_deduplicate else 'all batch'
 			logger.info(
@@ -594,18 +605,30 @@ class KGAUStrategy(Evaluator):
 		head_indices: torch.Tensor,
 		relation_indices: torch.Tensor,
 		tail_indices: torch.Tensor,
+		*,
+		predict_head: bool = False,
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-		"""Build deduplication keys for query (head, relation), tail, and head uniformity terms."""
+		"""Build deduplication keys for query, align-target, and head uniformity terms."""
 
 		device = head_indices.device
-		q_keys = torch.stack(
-			[
-				head_indices.to(device=device, dtype=torch.long),
-				relation_indices.to(device=device, dtype=torch.long),
-			],
-			dim=1,
-		)
-		t_keys = tail_indices.to(device=device, dtype=torch.long)
+		if predict_head:
+			q_keys = torch.stack(
+				[
+					relation_indices.to(device=device, dtype=torch.long),
+					tail_indices.to(device=device, dtype=torch.long),
+				],
+				dim=1,
+			)
+			t_keys = head_indices.to(device=device, dtype=torch.long)
+		else:
+			q_keys = torch.stack(
+				[
+					head_indices.to(device=device, dtype=torch.long),
+					relation_indices.to(device=device, dtype=torch.long),
+				],
+				dim=1,
+			)
+			t_keys = tail_indices.to(device=device, dtype=torch.long)
 		h_keys = head_indices.to(device=device, dtype=torch.long)
 		return q_keys, t_keys, h_keys
 
@@ -678,6 +701,8 @@ class KGAUStrategy(Evaluator):
 		head_indices: torch.Tensor,
 		relation_indices: torch.Tensor,
 		tail_indices: torch.Tensor,
+		*,
+		predict_head: bool = False,
 	) -> tuple[int, int]:
 		"""Count uniformity rows used for logging (unique keys or batch size)."""
 
@@ -686,7 +711,8 @@ class KGAUStrategy(Evaluator):
 			n_unique_t = int(tail_indices.numel()) if self.criterion.gamma_active('t') else 0
 			return n_unique_q, n_unique_t
 
-		q_keys, t_keys, _ = self._uniformity_keys(head_indices, relation_indices, tail_indices)
+		q_keys, t_keys, _ = self._uniformity_keys(
+			head_indices, relation_indices, tail_indices, predict_head=predict_head)
 		n_unique_q = int(distinct_first_indices(q_keys).numel()) if self.criterion.gamma_active('q') else 0
 		n_unique_t = int(distinct_first_indices(t_keys).numel()) if self.criterion.gamma_active('t') else 0
 		return n_unique_q, n_unique_t
@@ -805,10 +831,26 @@ class KGAUStrategy(Evaluator):
 		t_raw: torch.Tensor,
 		h_keys: torch.Tensor,
 		t_keys: torch.Tensor,
+		*,
+		head_indices: torch.Tensor | None = None,
+		tail_indices: torch.Tensor | None = None,
 	) -> torch.Tensor | None:
 		"""Entity vectors for ``gamma_ent``: batch dedup (text) or full table (embedding encoders)."""
 
 		if config_bool(self.args, 'entity_uniformity_batch', False) or self.uses_text_inputs:
+			if (
+				not self.uses_text_inputs
+				and head_indices is not None
+				and tail_indices is not None
+				and config_bool(self.args, 'entity_uniformity_batch', False)
+			):
+				model_obj = get_model_obj(model)
+				h_ent = model_obj.embed_s(head_indices)
+				t_ent = model_obj.embed_o(tail_indices)
+				if hasattr(model_obj, '_normalize_au_vector'):
+					h_ent = model_obj._normalize_au_vector(h_ent)
+					t_ent = model_obj._normalize_au_vector(t_ent)
+				return self._batch_entity_uniformity_vectors(h_ent, t_ent, h_keys, t_keys)
 			return self._batch_entity_uniformity_vectors(h_raw, t_raw, h_keys, t_keys)
 		return self._catalog_entity_uniformity_vectors(model)
 
@@ -864,6 +906,8 @@ class KGAUStrategy(Evaluator):
 		rs: torch.Tensor,
 		ts: torch.Tensor,
 		use_amp: bool,
+		*,
+		predict_head: bool = False,
 	) -> tuple[float, float, float, int, int, float, int]:
 		"""Run one optimizer step on a head/relation/tail batch.
 
@@ -872,15 +916,18 @@ class KGAUStrategy(Evaluator):
 		"""
 
 		total = ss.size(0)
-		n_uq_log, n_ut_log = self._count_unique_uniformity_keys(ss, rs, ts)
+		n_uq_log, n_ut_log = self._count_unique_uniformity_keys(
+			ss, rs, ts, predict_head=predict_head)
 		micro_batch = min(self._train_micro_batch_size(total), total)
 
 		if micro_batch >= total:
 			return self._train_au_tensor_batch_single(
 				model, ss, rs, ts, use_amp, n_uq_log, n_ut_log, total,
+				predict_head=predict_head,
 			)
 		return self._train_au_tensor_batch_micro(
 			model, ss, rs, ts, use_amp, n_uq_log, n_ut_log, total, micro_batch,
+			predict_head=predict_head,
 		)
 
 	def _au_representation_batch(
@@ -889,10 +936,12 @@ class KGAUStrategy(Evaluator):
 		ss: torch.Tensor,
 		rs: torch.Tensor,
 		ts: torch.Tensor,
+		*,
+		predict_head: bool = False,
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 		"""Fetch AU vectors via ``KGEModel.get_queries_targets`` (scorer-owned math)."""
 
-		return get_model_obj(model).get_queries_targets(ss, rs, ts)
+		return get_model_obj(model).get_queries_targets(ss, rs, ts, predict_head=predict_head)
 
 	def _train_au_tensor_batch_single(
 		self,
@@ -904,25 +953,31 @@ class KGAUStrategy(Evaluator):
 		n_uq_log: int,
 		n_ut_log: int,
 		total: int,
+		*,
+		predict_head: bool = False,
 	) -> tuple[float, float, float, int, int, float, int]:
 		"""Full-batch training step (DistMult-AU, ComplEx-AU, RotatE-AU, etc.)."""
 
 		self.optimizer.zero_grad()
-		q_keys, t_keys, h_keys = self._uniformity_keys(ss, rs, ts)
+		q_keys, t_keys, h_keys = self._uniformity_keys(ss, rs, ts, predict_head=predict_head)
 		batch_triples = torch.stack([ss, rs, ts], dim=1)
 		if use_amp:
 			with torch.amp.autocast(device_type='cuda'):
-				q_raw, t_raw, h_raw = self._au_representation_batch(model, ss, rs, ts)
+				q_raw, t_raw, h_raw = self._au_representation_batch(
+					model, ss, rs, ts, predict_head=predict_head)
 				ent_raw = self._entity_uniformity_vectors_for_loss(
-					model, h_raw, t_raw, h_keys, t_keys)
+					model, h_raw, t_raw, h_keys, t_keys,
+					head_indices=ss, tail_indices=ts)
 				loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
 					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 			self.scaler.scale(loss).backward()
 			self._optimizer_step(use_amp)
 		else:
-			q_raw, t_raw, h_raw = self._au_representation_batch(model, ss, rs, ts)
+			q_raw, t_raw, h_raw = self._au_representation_batch(
+				model, ss, rs, ts, predict_head=predict_head)
 			ent_raw = self._entity_uniformity_vectors_for_loss(
-				model, h_raw, t_raw, h_keys, t_keys)
+				model, h_raw, t_raw, h_keys, t_keys,
+				head_indices=ss, tail_indices=ts)
 			loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
 				q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 			loss.backward()
@@ -940,6 +995,8 @@ class KGAUStrategy(Evaluator):
 		n_ut_log: int,
 		total: int,
 		micro_batch: int,
+		*,
+		predict_head: bool = False,
 	) -> tuple[float, float, float, int, int, float, int]:
 		"""DaBR-only: gradient accumulation over micro-batches to avoid OOM."""
 
@@ -953,22 +1010,27 @@ class KGAUStrategy(Evaluator):
 		for start in range(0, total, micro_batch):
 			end = min(start + micro_batch, total)
 			fraction = (end - start) / total
-			q_keys, t_keys, h_keys = self._uniformity_keys(ss[start:end], rs[start:end], ts[start:end])
+			q_keys, t_keys, h_keys = self._uniformity_keys(
+				ss[start:end], rs[start:end], ts[start:end], predict_head=predict_head)
 			batch_triples = torch.stack([ss[start:end], rs[start:end], ts[start:end]], dim=1)
 			if use_amp:
 				with torch.amp.autocast(device_type='cuda'):
 					q_raw, t_raw, h_raw = self._au_representation_batch(
-						model, ss[start:end], rs[start:end], ts[start:end])
+						model, ss[start:end], rs[start:end], ts[start:end],
+						predict_head=predict_head)
 					ent_raw = self._entity_uniformity_vectors_for_loss(
-						model, h_raw, t_raw, h_keys, t_keys)
+						model, h_raw, t_raw, h_keys, t_keys,
+						head_indices=ss[start:end], tail_indices=ts[start:end])
 					loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
 						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 				self._backward_au_loss(loss, fraction, use_amp=True)
 			else:
 				q_raw, t_raw, h_raw = self._au_representation_batch(
-					model, ss[start:end], rs[start:end], ts[start:end])
+					model, ss[start:end], rs[start:end], ts[start:end],
+					predict_head=predict_head)
 				ent_raw = self._entity_uniformity_vectors_for_loss(
-					model, h_raw, t_raw, h_keys, t_keys)
+					model, h_raw, t_raw, h_keys, t_keys,
+					head_indices=ss[start:end], tail_indices=ts[start:end])
 				loss, l_align, l_unif, _, _, margin_active = self._au_loss_with_distinct_keys(
 					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 				self._backward_au_loss(loss, fraction, use_amp=False)
@@ -1097,21 +1159,23 @@ class KGAUStrategy(Evaluator):
 				if i % self.args.print_freq == 0:
 					progress.display(i)
 		else:
-			for batch_idx, (ss, rs, ts) in enumerate(
-				self._iter_batches(self.train_src, self.train_rel, self.train_dst, batch_size, shuffle=True),
-			):
-				loss, l_align, l_unif, n_uq, n_ut, margin_active, n_examples = self._train_au_tensor_batch(
-					model, ss, rs, ts, use_amp,
-				)
-				epoch_align_loss += l_align * n_examples
-				epoch_unif_loss += l_unif * n_examples
-				epoch_loss += loss * n_examples
-				epoch_unique_q += n_uq
-				epoch_unique_t += n_ut
-				epoch_margin_active += margin_active
-				epoch_batches += 1
+			directions = (False, True) if self.kgau_bidirectional else (False,)
+			for predict_head in directions:
+				for batch_idx, (ss, rs, ts) in enumerate(
+					self._iter_batches(self.train_src, self.train_rel, self.train_dst, batch_size, shuffle=True),
+				):
+					loss, l_align, l_unif, n_uq, n_ut, margin_active, n_examples = self._train_au_tensor_batch(
+						model, ss, rs, ts, use_amp, predict_head=predict_head,
+					)
+					epoch_align_loss += l_align * n_examples
+					epoch_unif_loss += l_unif * n_examples
+					epoch_loss += loss * n_examples
+					epoch_unique_q += n_uq
+					epoch_unique_t += n_ut
+					epoch_margin_active += margin_active
+					epoch_batches += 1
 
-		avg_count = max(len(self.train_examples), 1)
+		avg_count = max(len(self.train_examples) * (2 if self.kgau_bidirectional else 1), 1)
 		avg_loss = epoch_loss / avg_count
 		avg_align_loss = epoch_align_loss / avg_count
 		avg_unif_loss = epoch_unif_loss / avg_count

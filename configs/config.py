@@ -311,6 +311,20 @@ def build_parser() -> argparse.ArgumentParser:
         action='store_false',
         help='KGAU: entity uniformity on full entity table (default for index KGE)',
     )
+    kgau_bidirectional_group = parser.add_mutually_exclusive_group()
+    kgau_bidirectional_group.add_argument(
+        '--kgau-bidirectional', '--kgau_bidirectional',
+        dest='kgau_bidirectional',
+        action='store_true',
+        default=None,
+        help='KGAU: train tail-batch and head-batch per epoch (GB-Magic); eval head via po_forward',
+    )
+    kgau_bidirectional_group.add_argument(
+        '--no-kgau-bidirectional', '--no_kgau_bidirectional',
+        dest='kgau_bidirectional',
+        action='store_false',
+        help='KGAU: legacy reciprocal-relation tail training (default)',
+    )
     report_au_group = parser.add_mutually_exclusive_group()
     report_au_group.add_argument(
         '--report-au', '--report_au',

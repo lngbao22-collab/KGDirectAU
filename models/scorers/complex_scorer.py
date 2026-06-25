@@ -14,6 +14,8 @@ def build_scorer(args) -> ComplExScorer:
 class ComplExScorer(KGEScorer):
 	"""ComplEx score function with explicit 1-to-1 and 1-vs-All tensor paths."""
 
+	bidirectional_score_batch = True
+
 	def __init__(self, args=None):
 		super().__init__()
 		self.args = args
@@ -99,3 +101,10 @@ class ComplExScorer(KGEScorer):
 		h_re, h_im = self._split_complex(h_emb)
 		r_re, r_im = self._split_complex(r_emb)
 		return torch.cat([h_re * r_re - h_im * r_im, h_re * r_im + h_im * r_re], dim=-1)
+
+	def build_po_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+		"""Head-batch query: complex conjugate of ``r`` multiplied by ``t``."""
+
+		r_re, r_im = self._split_complex(r_emb)
+		t_re, t_im = self._split_complex(t_emb)
+		return torch.cat([r_re * t_re + r_im * t_im, r_re * t_im - r_im * t_re], dim=-1)

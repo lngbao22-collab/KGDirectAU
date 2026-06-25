@@ -258,13 +258,21 @@ class KGEModel(nn.Module):
 			return vectors.to(device) if device is not None else vectors
 		return self.entity_embeddings(device=device, **kwargs)
 
-	def get_queries_targets(self, s: torch.Tensor, p: torch.Tensor, o: torch.Tensor):
-		"""AU (query, tail, head) vectors — delegated to the scorer."""
+	def get_queries_targets(
+		self,
+		s: torch.Tensor,
+		p: torch.Tensor,
+		o: torch.Tensor,
+		*,
+		predict_head: bool = False,
+	):
+		"""AU (query, align_target, head_entity) vectors — delegated to the scorer."""
 
 		h = self.embed_s(s)
 		r = self.embed_p(p)
 		t = self.embed_o(o)
-		query, tail, head = self.scorer.au_representations(h, r, t, **self._scorer_kwargs(p))
+		scorer_kwargs = {**self._scorer_kwargs(p), 'predict_head': predict_head}
+		query, tail, head = self.scorer.au_representations(h, r, t, **scorer_kwargs)
 		if self.normalize_au_vectors:
 			query = self._normalize_au_vector(query)
 			tail = self._normalize_au_vector(tail)
