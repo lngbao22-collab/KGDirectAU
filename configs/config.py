@@ -404,6 +404,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--alignment-mode', '--alignment_mode', default=None, type=str,
                         dest='alignment_mode',
                         help='KGAU alignment: cosine, phase_residual, or sin_phase')
+    au_hybrid_group = parser.add_mutually_exclusive_group()
+    au_hybrid_group.add_argument(
+        '--au-hybrid-adversarial-bce', '--au_hybrid_adversarial_bce',
+        dest='au_hybrid_adversarial_bce',
+        action='store_true',
+        default=None,
+        help='add filtered adversarial BCE on native KGE scores alongside KGAU loss',
+    )
+    au_hybrid_group.add_argument(
+        '--no-au-hybrid-adversarial-bce', '--no_au_hybrid_adversarial_bce',
+        dest='au_hybrid_adversarial_bce',
+        action='store_false',
+        help='disable KGAU + adversarial BCE hybrid training',
+    )
+    parser.add_argument('--au-hybrid-au-weight', '--au_hybrid_au_weight', default=None, type=float,
+                        dest='au_hybrid_au_weight',
+                        help='weight on KGAU loss term in hybrid training (default 1.0)')
+    parser.add_argument('--au-hybrid-kge-weight', '--au_hybrid_kge_weight', default=None, type=float,
+                        dest='au_hybrid_kge_weight',
+                        help='weight on adversarial BCE term in hybrid training (default 1.0)')
     parser.add_argument('--transe-norm', '--transe_norm', default=None, type=int,
                         dest='transe_norm',
                         help='TransE distance norm: 1 (classic L1) or 2 (L2, TransE-AU)')

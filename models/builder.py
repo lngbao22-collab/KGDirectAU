@@ -1073,9 +1073,20 @@ def build_pipeline(args, ngpus_per_node: int = 1):
 		loss_fn = load_loss_fn_for_paradigm(args, paradigm)
 	else:
 		loss_fn = load_loss_fn(args)
-	train_triples = _prepare_train_triples(args, model) if paradigm in ('negsamp', 'kvsall') else None
-	if paradigm in ('kvsall', '1vsall', 'kgau'):
+	train_triples = (
+		_prepare_train_triples(args, model)
+		if paradigm in ('negsamp', 'kvsall')
+		or (paradigm == 'kgau' and config_bool(args, 'au_hybrid_adversarial_bce', False))
+		else None
+	)
+	if paradigm in ('kvsall', '1vsall'):
 		sampler = None
+	elif paradigm == 'kgau':
+		sampler = (
+			load_sampler(args, model, train_triples)
+			if config_bool(args, 'au_hybrid_adversarial_bce', False)
+			else None
+		)
 	elif paradigm == 'inbatch':
 		sampler = load_sampler(args)
 	else:
