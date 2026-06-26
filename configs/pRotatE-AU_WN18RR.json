@@ -12,10 +12,14 @@
   "uniformity_full_pdist": true,
   "max_uniformity_samples": 0,
   "normalize_au_vectors": false,
-  "gamma_q": 0.5,
-  "gamma_t": 0.5,
+  "gamma_q": 1.0,
+  "gamma_t": 1.0,
+  "gamma_ent": 1.0,
   "gamma_cross": 0,
-  "tuni": 4,
+  "average_uniformity_terms": true,
+  "entity_uniformity_batch": true,
+  "au_deduplicate": false,
+  "tuni": 2,
 
   "dim": 64,
 
