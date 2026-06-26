@@ -992,7 +992,7 @@ _is_text_model = _model_name not in {
     'transe', 'transe-au',
 }
 
-if getattr(args, 'normalize_phases', None) is None and _model_name in {'protate', 'protate-au'}:
+if getattr(args, 'normalize_phases', None) is None and _model_name in {'protate', 'protate-au', 'rotate-au'}:
     args.normalize_phases = True
 
 if _is_text_model:

@@ -1,42 +1,54 @@
 {
   "model": "ComplEx",
   "dataset": "WN18RR",
+
   "model_loss_path": "models/losses/pointwise_logistic_loss.py",
   "model_strategy_path": "models/strategies/negsamp_strategy.py",
   "model_sampler_path": "models/samplers/filtered_1_to_n_sampler.py",
-  "add_reciprocal_relations": true,
+
   "head_eval_mode": "po_forward",
+
   "dim": 128,
-  "batch_size": 512,
-  "epochs": 400,
-  "optim": "adagrad",
-  "lr": 0.52558,
-  "n_sample_o": 291,
-  "n_sample_s": 18,
+
+  "add_reciprocal_relations": true,
+
   "entity_dropout": 0.36,
   "relation_dropout": 0.31,
+  "regularize_p": 3,
   "entity_regularize_weight": 4.52e-06,
   "relation_regularize_weight": 4.19e-10,
   "entity_regularize_weighted": true,
   "relation_regularize_weighted": true,
-  "regularize_p": 3,
   "init_method": "uniform_",
   "init_uniform_a": -0.28,
-  "epoch_per_eval": 5,
+
+  "batch_size": 512,
+  "epochs": 400,
+  "optim": "adagrad",
+  "lr": 0.52558,
+  "weight_decay": 0,
   "lr_scheduler": "ReduceLROnPlateau",
   "lr_scheduler_mode": "max",
   "lr_scheduler_factor": 0.95,
   "lr_scheduler_patience": 5,
   "lr_scheduler_threshold": 0.0001,
+
+  "n_sample_o": 291,
+  "n_sample_s": 18,
+
+  "epoch_per_eval": 5,
   "eval_batch_size": 256,
+
   "early_stopping_patience": 10,
   "early_stopping_min_epochs": 50,
   "early_stopping_min_metric": 0.05,
+
   "max_to_keep": 0,
   "output_dir_prefix": "logs/ComplEx_WN18RR_softplus_negsamp",
-  "tie_rtol": 0.0001,
+
   "tie_handling": "rounded_mean_rank",
-  "weight_decay": 0,
+  "tie_rtol": 0.0001,
   "tie_atol": 1e-05,
+
   "normalize_lp_scores": false
 }

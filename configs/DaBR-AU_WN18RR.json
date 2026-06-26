@@ -1,24 +1,31 @@
 {
   "model": "DaBR-AU",
   "dataset": "WN18RR",
+
   "model_loss_path": "models/losses/au_loss.py",
   "model_strategy_path": "models/strategies/kgau_strategy.py",
+
   "head_eval_mode": "po_forward",
+
+  "gamma_q": 1.0,
+  "gamma_t": 1.0,
+  "gamma_ent": 0.0,
+  "gamma_h": 0.0,
+  "tuni": 2.0,
+
   "dim": 500,
+
+  "lmbda": 0.5,
+  "lmbda_two": 0.01,
+  "sample_freq": 1,
+  "lam": 0.5,
+
   "batch_size": 512,
   "epochs": 400,
   "optim": "adagrad",
   "lr": 0.1,
   "weight_decay": 0.1,
-  "sample_freq": 1,
-  "lam": 0.5,
-  "lmbda": 0.5,
-  "lmbda_two": 0.01,
-  "gamma_q": 1.0,
-  "gamma_t": 1.0,
-  "tuni": 2.0,
+
   "max_to_keep": 0,
-  "output_dir_prefix": "logs/DaBR-AU_WN18RR",
-  "gamma_h": 0.0,
-  "gamma_ent": 0.0
+  "output_dir_prefix": "logs/DaBR-AU_WN18RR"
 }

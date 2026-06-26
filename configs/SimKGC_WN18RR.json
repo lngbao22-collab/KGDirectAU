@@ -1,31 +1,37 @@
 {
   "model": "SimKGC",
   "dataset": "WN18RR",
+
   "model_loss_path": "models/losses/infonce_loss.py",
   "model_strategy_path": "models/strategies/inbatch_strategy.py",
   "model_sampler_path": "models/samplers/masking_sampler.py",
+
   "dim": 768,
-  "batch_size": 512,
-  "epochs": 400,
-  "lr": 5e-05,
-  "weight_decay": 0.0001,
-  "eval_every_n_step": 10000,
-  "lr_scheduler": "linear",
-  "warmup": 400,
+  "dropout": 0.1,
+
   "bert_encoder": "distilbert-base-uncased",
   "pooling": "mean",
-  "dropout": 0.1,
-  "infonce_t": 0.05,
   "additive_margin": 0.02,
   "finetune_t": true,
+  "infonce_t": 0.05,
   "pre_batch_weight": 0.5,
   "grad_clip": 10.0,
   "max_num_tokens": 50,
   "use_link_graph": true,
   "rerank_n_hop": 2,
+
+  "batch_size": 512,
+  "epochs": 400,
+  "lr": 5e-05,
+  "weight_decay": 0.0001,
+  "lr_scheduler": "linear",
+  "use_amp": true,
+
+  "eval_every_n_step": 10000,
+  "warmup": 400,
   "workers": 2,
   "print_freq": 20,
-  "use_amp": true,
+
   "max_to_keep": 0,
   "output_dir_prefix": "logs/SimKGC_WN18RR"
 }

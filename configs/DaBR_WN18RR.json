@@ -1,21 +1,29 @@
 {
   "model": "DaBR",
   "dataset": "WN18RR",
+
   "model_loss_path": "models/losses/pointwise_logistic_loss.py",
   "model_strategy_path": "models/strategies/negsamp_strategy.py",
   "model_sampler_path": "models/samplers/uniform_pointwise_sampler.py",
+
   "head_eval_mode": "po_forward",
+
   "dim": 100,
+
+  "lmbda": 0.5,
+  "lmbda_two": 0.01,
+  "lam": 0.5,
+
   "batch_size": 100,
   "epochs": 400,
   "optim": "adagrad",
   "lr": 0.1,
   "weight_decay": 0.1,
+
   "n_sample": 5,
-  "lam": 0.5,
-  "lmbda": 0.5,
-  "lmbda_two": 0.01,
+
   "eval_every_n_step": 400,
+
   "max_to_keep": 0,
   "output_dir_prefix": "logs/DaBR_WN18RR"
 }

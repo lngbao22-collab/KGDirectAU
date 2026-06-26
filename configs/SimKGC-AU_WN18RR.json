@@ -1,24 +1,23 @@
 {
   "model": "SimKGC-AU",
   "dataset": "WN18RR",
+
   "model_loss_path": "models/losses/au_loss.py",
   "model_strategy_path": "models/strategies/kgau_strategy.py",
+
   "head_eval_mode": "sp_inverse",
-  "dim": 768,
-  "batch_size": 512,
-  "epochs": 400,
-  "lr": 5e-05,
-  "weight_decay": 0.0001,
-  "eval_every_n_step": 10000,
-  "lr_scheduler": "linear",
-  "warmup": 400,
+
   "gamma_q": 1.0,
   "gamma_t": 1.0,
+  "gamma_ent": 0.0,
+  "gamma_h": 0.0,
   "tuni": 4.0,
-  "normalize_lp_scores": true,
+
+  "dim": 768,
+  "dropout": 0.1,
+
   "bert_encoder": "distilbert-base-uncased",
   "pooling": "mean",
-  "dropout": 0.1,
   "additive_margin": 0.02,
   "finetune_t": true,
   "pre_batch_weight": 0.5,
@@ -26,11 +25,21 @@
   "max_num_tokens": 50,
   "use_link_graph": true,
   "rerank_n_hop": 2,
+
+  "batch_size": 512,
+  "epochs": 400,
+  "lr": 5e-05,
+  "weight_decay": 0.0001,
+  "lr_scheduler": "linear",
+  "use_amp": true,
+
+  "eval_every_n_step": 10000,
+  "warmup": 400,
   "workers": 2,
   "print_freq": 20,
-  "use_amp": true,
+
   "max_to_keep": 0,
   "output_dir_prefix": "logs/SimKGC-AU_WN18RR",
-  "gamma_h": 0.0,
-  "gamma_ent": 0.0
+
+  "normalize_lp_scores": true
 }

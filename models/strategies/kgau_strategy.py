@@ -30,12 +30,27 @@ from utils.training_cadence import (
 	maybe_decay_lr_at_step,
 )
 from models.losses.au_loss import KGAULoss, distinct_first_indices, select_distinct_rows, _GAMMA_NAMES
+from models.scorers.protate_scorer import normalize_protate_phases
+from models.scorers.rotate_scorer import normalize_rotate_phases
 
 
 def _load_encoder(args) -> torch.nn.Module:
 	from models.builder import build_model
 
 	return build_model(args)
+
+
+def _resolve_normalize_phases_fn(args):
+	"""Return phase-wrapping hook for RotatE/pRotatE KGAU runs (matches negsamp_strategy)."""
+
+	if not config_bool(args, 'normalize_phases', False):
+		return None
+	model_name = str(getattr(args, 'model', '') or '').lower()
+	if 'protate' in model_name:
+		return normalize_protate_phases
+	if 'rotate' in model_name:
+		return normalize_rotate_phases
+	return None
 
 
 def _uses_text_inputs(args, model=None) -> bool:
@@ -518,6 +533,10 @@ class KGAUStrategy(Evaluator):
 			)
 		self.optimizer = _build_kgau_optimizer(args, self.model, self.criterion, self.weight_decay)
 		self.lr_scheduler = build_lr_scheduler(args, self.optimizer)
+		self._normalize_phases_fn = _resolve_normalize_phases_fn(args)
+		if self._normalize_phases_fn is not None:
+			logger.info('KGAU normalize_phases: enabled')
+			self._normalize_phases_fn(self.model)
 		init_step_cadence_state(self)
 		warm_up_epochs = getattr(args, 'warm_up_epochs', None)
 		if warm_up_epochs is not None and getattr(args, 'warm_up_steps', None) is None:
@@ -919,6 +938,8 @@ class KGAUStrategy(Evaluator):
 		self.criterion.clamp_learnable_gamma_adj()
 		self.criterion.clamp_learnable_alpha_adj()
 		self.criterion.clamp_learnable_tuni()
+		if self._normalize_phases_fn is not None:
+			self._normalize_phases_fn(self.model)
 		step = increment_trainer_global_step(self)
 		maybe_decay_lr_at_step(self, step)
 
