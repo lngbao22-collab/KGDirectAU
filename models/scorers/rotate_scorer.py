@@ -343,6 +343,10 @@ class RotatEScorer(KGEScorer):
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
 		t_emb: torch.Tensor,
+		*,
+		predict_head: bool = False,
 		**kwargs,
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+		if predict_head:
+			return self.build_po_query(r_emb, t_emb), h_emb, h_emb
 		return self.build_query(h_emb, r_emb), t_emb, h_emb
