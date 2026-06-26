@@ -19,9 +19,9 @@
   "average_uniformity_terms": true,
   "entity_uniformity_batch": true,
   "au_deduplicate": false,
-  "tuni": 2,
+  "tuni": 4,
 
-  "dim": 64,
+  "dim": 500,
 
   "margin": 6.0,
   "epsilon": 2.0,
