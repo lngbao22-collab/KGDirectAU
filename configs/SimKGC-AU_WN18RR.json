@@ -28,8 +28,8 @@
   "rerank_n_hop": 2,
   "workers": 2,
   "print_freq": 20,
-  "max_to_keep": 3,
   "use_amp": true,
+  "max_to_keep": 0,
   "output_dir_prefix": "logs/SimKGC-AU_WN18RR",
   "gamma_h": 0.0,
   "gamma_ent": 0.0

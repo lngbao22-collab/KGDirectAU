@@ -16,5 +16,6 @@
   "lmbda": 0.5,
   "lmbda_two": 0.01,
   "eval_every_n_step": 400,
+  "max_to_keep": 0,
   "output_dir_prefix": "logs/DaBR_WN18RR"
 }

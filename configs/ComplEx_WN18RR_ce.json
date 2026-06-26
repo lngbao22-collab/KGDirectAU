@@ -17,6 +17,7 @@
   "sparse_embeddings": true,
   "epoch_per_eval": 5,
   "eval_batch_size": 256,
+  "max_to_keep": 0,
   "output_dir_prefix": "logs/ComplEx_WN18RR_ce",
   "tie_rtol": 0.0001,
   "tie_handling": "rounded_mean_rank",

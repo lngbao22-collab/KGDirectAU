@@ -5,17 +5,14 @@
   "model_strategy_path": "models/strategies/kgau_strategy.py",
   "model_sampler_path": "",
   "head_eval_mode": "po_forward",
-
   "normalize_au_vectors": true,
   "gamma_q": 0.5,
   "gamma_t": 0.5,
   "gamma_cross": 0,
   "tuni": 4,
-
   "dim": 64,
   "adversarial_training": true,
   "margin": 200.0,
-
   "add_reciprocal_relations": false,
   "kgau_bidirectional": true,
   "uniformity_full_pdist": true,
@@ -32,20 +29,17 @@
   "test_eval_best": true,
   "shuffle_train": true,
   "use_amp": false,
-
   "n_sample": 0,
-
   "training_cadence": "epoch",
   "epoch_per_eval": 5,
   "test_batch_size": 8,
   "score_query_chunk_size": 256,
   "eval_candidate_chunk_size": 2048,
   "eval_entity_chunk_size": 4096,
-
   "early_stopping_patience": 10,
   "early_stopping_min_epochs": 50,
   "early_stopping_min_metric": 0.05,
-
+  "max_to_keep": 0,
   "output_dir_prefix": "logs/RotatE-AU_WN18RR",
   "tie_handling": "rounded_mean_rank",
   "tie_rtol": 0.0001,
