@@ -45,6 +45,6 @@
   "tie_handling": "rounded_mean_rank",
   "tie_rtol": 0.0001,
   "tie_atol": 1e-05,
-  "normalize_lp_scores": false,
+  "normalize_lp_scores": true,
   "report_au": true
 }
