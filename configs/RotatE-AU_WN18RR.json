@@ -9,6 +9,7 @@
   "gamma_q": 0.5,
   "gamma_t": 0.5,
   "gamma_cross": 0,
+  "regularization": 5e-06,
   "tuni": 4,
   "dim": 64,
   "adversarial_training": true,
@@ -22,7 +23,7 @@
   "optim": "adam",
   "lr": 5e-05,
   "weight_decay": 0.0,
-  "warm_up_epochs": 200,
+  "warm_up_steps": 40000,
   "lr_decay_factor": 0.1,
   "lr_decay_preserve_optimizer": true,
   "test_eval_last": true,
@@ -44,6 +45,6 @@
   "tie_handling": "rounded_mean_rank",
   "tie_rtol": 0.0001,
   "tie_atol": 1e-05,
-  "normalize_lp_scores": false,
+  "normalize_lp_scores": true,
   "report_au": true
 }
