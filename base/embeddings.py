@@ -237,8 +237,10 @@ def init_lookup_embedding(module: nn.Module, args: Any | None, dim: int, role: s
 	if not init_method:
 		model_name = str(getattr(args, 'model', '') or '').lower()
 		if any(name in model_name for name in ('rotate', 'protate', 'transe')):
-			margin = float(getattr(args, 'margin', 6.0))
-			epsilon = float(getattr(args, 'epsilon', 2.0))
+			margin_raw = getattr(args, 'margin', None)
+			margin = 6.0 if margin_raw is None else float(margin_raw)
+			epsilon_raw = getattr(args, 'epsilon', None)
+			epsilon = 2.0 if epsilon_raw is None else float(epsilon_raw)
 			bound = (margin + epsilon) / max(1, dim)
 			nn.init.uniform_(module.embedding.weight, a=-bound, b=bound)
 			return

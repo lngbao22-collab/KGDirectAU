@@ -47,8 +47,8 @@ class LookupEmbedder(nn.Module):
 			init_lookup_embedding(self, self.args, self.dim, role=self.role)
 			return
 		if any(name in model_name for name in ('rotate', 'protate', 'transe')):
-			margin = float(getattr(self.args, 'margin', 6.0))
-			epsilon = float(getattr(self.args, 'epsilon', 2.0))
+			margin = _float_arg(self.args, 'margin', 6.0)
+			epsilon = _float_arg(self.args, 'epsilon', 2.0)
 			bound = (margin + epsilon) / max(1, self.dim)
 			nn.init.uniform_(self.embedding.weight, a=-bound, b=bound)
 		else:
@@ -117,6 +117,13 @@ def _model_name(args) -> str:
 	return str(getattr(args, 'model', '') or '').lower()
 
 
+def _float_arg(args, name: str, default: float) -> float:
+	"""Read a float hyperparameter; treat JSON/CLI ``null`` like unset."""
+
+	raw = getattr(args, name, None)
+	return default if raw is None else float(raw)
+
+
 def _is_complex(args) -> bool:
 	return 'complex' in _model_name(args)
 
@@ -135,8 +142,8 @@ def _is_dabr(args) -> bool:
 
 
 def _embedding_range(args, dim: int) -> float:
-	margin = float(getattr(args, 'margin', 6.0))
-	epsilon = float(getattr(args, 'epsilon', 2.0))
+	margin = _float_arg(args, 'margin', 6.0)
+	epsilon = _float_arg(args, 'epsilon', 2.0)
 	return (margin + epsilon) / max(1, dim)
 
 
@@ -152,7 +159,7 @@ def _adversarial_gamma(args) -> float:
 def _adversarial_uniform_init(embedder: LookupEmbedder, args, dim: int) -> None:
 	"""Uniform init with range ``(gamma + 2) / dim`` (RotatE adversarial training)."""
 
-	epsilon = float(getattr(args, 'epsilon', 2.0))
+	epsilon = _float_arg(args, 'epsilon', 2.0)
 	embedding_range = (_adversarial_gamma(args) + epsilon) / max(dim, 1)
 	nn.init.uniform_(embedder.embedding.weight, a=-embedding_range, b=embedding_range)
 

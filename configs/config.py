@@ -934,6 +934,13 @@ for _name, _default in (('gamma_h', 0.0), ('gamma_ent', 0.0), ('gamma_cross', 0.
     if getattr(args, _name, None) is None:
         setattr(args, _name, _default)
 
+_model_name = str(getattr(args, 'model', '') or '').lower()
+if any(tag in _model_name for tag in ('rotate', 'protate', 'transe')):
+    if getattr(args, 'margin', None) is None:
+        args.margin = 6.0
+    if getattr(args, 'epsilon', None) is None:
+        args.epsilon = 2.0
+
 if getattr(args, 'workers', None) is None:
     args.workers = 0
 
