@@ -45,5 +45,7 @@
 
   "tie_handling": "rounded_mean_rank",
   "tie_rtol": 0.0001,
-  "tie_atol": 1e-05
+  "tie_atol": 1e-05,
+
+  "report_au": true
 }

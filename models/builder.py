@@ -382,6 +382,7 @@ def init_index_kge_trainer(trainer, model: nn.Module, args) -> None:
 	trainer.train_time = 0.0
 	trainer.valid_time = 0.0
 	trainer.total_time = 0.0
+	trainer.au_report_time = 0.0
 	trainer.memory_tracker = PhaseMemoryTracker()
 	trainer._cached_valid_exs = None
 	trainer._cached_valid_backward_exs = None
@@ -560,20 +561,21 @@ def _save_index_kge_checkpoint(
 
 def _kge_train_loop_result(trainer) -> dict:
 	from utils.memory import format_memory
-	from utils.logger import logger, time_per_train_epoch
+	from utils.logger import logger, log_run_timing
 
 	num_train_epochs = getattr(trainer, 'num_train_epochs', None)
-	epoch_time = time_per_train_epoch(trainer.train_time, num_train_epochs)
-	logger.info('[Timing] Training time (s): %.2f', round(trainer.train_time, 2))
-	logger.info('[Timing] Valid time (s): %.2f', round(trainer.valid_time, 2))
-	logger.info('[Timing] Total run time (s): %.2f', round(trainer.total_time, 2))
-	if epoch_time is not None:
-		logger.info('[Timing] Time per training epoch (s): %.2f', round(epoch_time, 2))
+	from utils.au_reporter import finalize_au_report
+	finalize_au_report(trainer)
+	epoch_time = log_run_timing(
+		train_time=trainer.train_time,
+		valid_time=trainer.valid_time,
+		total_time=trainer.total_time,
+		num_train_epochs=num_train_epochs,
+		au_report_time=getattr(trainer, 'au_report_time', 0.0),
+	)
 	logger.info('[Memory] Training peak: %s', format_memory(trainer.memory_tracker.train_peak_mb))
 	logger.info('[Memory] Eval peak: %s', format_memory(trainer.memory_tracker.eval_peak_mb))
 	logger.info('[Memory] Peak memory: %s', format_memory(trainer.memory_tracker.peak_memory_mb))
-	from utils.au_reporter import finalize_au_report
-	finalize_au_report(trainer)
 	return {
 		'best_epoch': None if trainer.best_metric is None else trainer.best_metric.get('epoch', 0) + 1,
 		'best_step': None if trainer.best_metric is None else trainer.best_metric.get('step'),
@@ -856,7 +858,7 @@ def run_kge_train_loop(trainer) -> dict:
 
 	import time
 
-	from utils.logger import logger, time_per_train_epoch
+	from utils.logger import logger, log_run_timing
 	from utils.memory import format_memory
 	from utils.training_cadence import get_trainer_global_step, resolve_max_steps, uses_step_cadence
 
@@ -885,18 +887,18 @@ def run_kge_train_loop(trainer) -> dict:
 
 	trainer.num_train_epochs = num_train_epochs
 	trainer.total_time = time.time() - total_start
-	epoch_time = time_per_train_epoch(trainer.train_time, num_train_epochs)
-	logger.info(f"[Timing] Training time (s): {round(trainer.train_time, 2)}")
-	logger.info(f"[Timing] Valid time (s): {round(trainer.valid_time, 2)}")
-	logger.info(f"[Timing] Total run time (s): {round(trainer.total_time, 2)}")
-	if epoch_time is not None:
-		logger.info('[Timing] Time per training epoch (s): %.2f', round(epoch_time, 2))
+	from utils.au_reporter import finalize_au_report
+	finalize_au_report(trainer)
+	epoch_time = log_run_timing(
+		train_time=trainer.train_time,
+		valid_time=trainer.valid_time,
+		total_time=trainer.total_time,
+		num_train_epochs=num_train_epochs,
+		au_report_time=getattr(trainer, 'au_report_time', 0.0),
+	)
 	logger.info('[Memory] Training peak: %s', format_memory(trainer.memory_tracker.train_peak_mb))
 	logger.info('[Memory] Eval peak: %s', format_memory(trainer.memory_tracker.eval_peak_mb))
 	logger.info('[Memory] Peak memory: %s', format_memory(trainer.memory_tracker.peak_memory_mb))
-
-	from utils.au_reporter import finalize_au_report
-	finalize_au_report(trainer)
 
 	return {
 		'best_epoch': None if trainer.best_metric is None else trainer.best_metric.get('epoch'),

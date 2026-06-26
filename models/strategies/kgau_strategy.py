@@ -22,7 +22,7 @@ from models.builder import build_lr_scheduler, config_bool, config_int, load_att
 from models.losses.loss_utilities import compute_adversarial_negsamp_losses_chunked
 from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, last_model_path, save_checkpoint
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
-from utils.logger import AverageMeter, ProgressMeter, logger, time_per_train_epoch
+from utils.logger import AverageMeter, ProgressMeter, logger, log_run_timing
 from utils.memory import PhaseMemoryTracker, format_memory
 from utils.training_cadence import (
 	init_step_cadence_state,
@@ -571,6 +571,7 @@ class KGAUStrategy(Evaluator):
 		self.train_time = 0.0
 		self.valid_time = 0.0
 		self.total_time = 0.0
+		self.au_report_time = 0.0
 		self.memory_tracker = PhaseMemoryTracker()
 
 	def _resolve_relation_index(self, relation: str) -> int:
@@ -1674,18 +1675,18 @@ class KGAUStrategy(Evaluator):
 				break
 
 		self.total_time = time.time() - total_start_time
-		epoch_time = time_per_train_epoch(self.train_time, num_train_epochs)
-		logger.info('[Timing] Training time (s): %.2f', round(self.train_time, 2))
-		logger.info('[Timing] Valid time (s): %.2f', round(self.valid_time, 2))
-		logger.info('[Timing] Total run time (s): %.2f', round(self.total_time, 2))
-		if epoch_time is not None:
-			logger.info('[Timing] Time per training epoch (s): %.2f', round(epoch_time, 2))
+		from utils.au_reporter import finalize_au_report
+		finalize_au_report(self)
+		epoch_time = log_run_timing(
+			train_time=self.train_time,
+			valid_time=self.valid_time,
+			total_time=self.total_time,
+			num_train_epochs=num_train_epochs,
+			au_report_time=self.au_report_time,
+		)
 		logger.info('[Memory] Training peak: %s', format_memory(self.memory_tracker.train_peak_mb))
 		logger.info('[Memory] Eval peak: %s', format_memory(self.memory_tracker.eval_peak_mb))
 		logger.info('[Memory] Peak memory: %s', format_memory(self.memory_tracker.peak_memory_mb))
-
-		from utils.au_reporter import finalize_au_report
-		finalize_au_report(self)
 
 		return {
 			'best_epoch': None if self.best_metric is None else self.best_metric.get('epoch'),

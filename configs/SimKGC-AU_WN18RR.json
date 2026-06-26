@@ -41,5 +41,6 @@
   "max_to_keep": 0,
   "output_dir_prefix": "logs/SimKGC-AU_WN18RR",
 
-  "normalize_lp_scores": true
+  "normalize_lp_scores": true,
+  "report_au": true
 }

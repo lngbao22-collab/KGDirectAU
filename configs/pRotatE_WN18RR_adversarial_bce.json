@@ -13,6 +13,8 @@
   "adversarial_training": true,
   "adversarial_temperature": 0.5,
   "margin": 6.0,
+  "epsilon": 2.0,
+  "modulus": 0.008,
 
   "batch_size": 512,
   "epochs": 400,
@@ -43,5 +45,6 @@
   "tie_rtol": 0.0001,
   "tie_atol": 1e-05,
 
-  "normalize_lp_scores": false
+  "normalize_lp_scores": false,
+  "report_au": true
 }

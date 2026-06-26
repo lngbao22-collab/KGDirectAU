@@ -10,8 +10,11 @@
 
   "dim": 500,
 
+  "adversarial_training": true,
   "adversarial_temperature": 0.5,
   "margin": 6.0,
+  "epsilon": 2.0,
+  "modulus": 0.008,
 
   "batch_size": 512,
   "epochs": 400,
@@ -32,5 +35,7 @@
   "normalize_phases": true,
 
   "max_to_keep": 0,
-  "output_dir_prefix": "logs/pRotatE_WN18RR"
+  "output_dir_prefix": "logs/pRotatE_WN18RR",
+
+  "report_au": true
 }

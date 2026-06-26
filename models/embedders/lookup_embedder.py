@@ -136,7 +136,8 @@ def _is_dabr(args) -> bool:
 
 def _embedding_range(args, dim: int) -> float:
 	margin = float(getattr(args, 'margin', 6.0))
-	return (margin + 2.0) / max(1, dim)
+	epsilon = float(getattr(args, 'epsilon', 2.0))
+	return (margin + epsilon) / max(1, dim)
 
 
 def _adversarial_gamma(args) -> float:
@@ -151,7 +152,7 @@ def _adversarial_gamma(args) -> float:
 def _adversarial_uniform_init(embedder: LookupEmbedder, args, dim: int) -> None:
 	"""Uniform init with range ``(gamma + 2) / dim`` (RotatE adversarial training)."""
 
-	epsilon = 2.0
+	epsilon = float(getattr(args, 'epsilon', 2.0))
 	embedding_range = (_adversarial_gamma(args) + epsilon) / max(dim, 1)
 	nn.init.uniform_(embedder.embedding.weight, a=-embedding_range, b=embedding_range)
 

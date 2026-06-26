@@ -509,7 +509,11 @@ def build_parser() -> argparse.ArgumentParser:
         help='Disable adversarial negative sampling',
     )
     parser.add_argument('--margin', default=None, type=float,
-                        help='RotatE/pRotatE embedding margin')
+                        help='RotatE/pRotatE embedding margin (gamma in KnowledgeGraphEmbedding)')
+    parser.add_argument('--epsilon', default=None, type=float,
+                        help='RotatE/pRotatE embedding_range epsilon (default 2.0; range = (margin+epsilon)/dim)')
+    parser.add_argument('--modulus', default=None, type=float,
+                        help='pRotatE score modulus (default 0.5 * embedding_range)')
     parser.add_argument('--l-norm', '--l_norm', default=None, type=float, dest='l_norm',
                         help='RotatE distance Lp norm')
     parser.add_argument('--adversarial-temperature', '--adversarial_temperature',

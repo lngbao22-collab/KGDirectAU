@@ -6,9 +6,12 @@
   "model_strategy_path": "models/strategies/kgau_strategy.py",
   "model_sampler_path": "",
 
-  "head_eval_mode": "sp_inverse",
+  "head_eval_mode": "po_forward",
 
-  "normalize_au_vectors": true,
+  "kgau_bidirectional": true,
+  "uniformity_full_pdist": true,
+  "max_uniformity_samples": 0,
+  "normalize_au_vectors": false,
   "gamma_q": 0.5,
   "gamma_t": 0.5,
   "gamma_cross": 0,
@@ -16,7 +19,11 @@
 
   "dim": 64,
 
-  "add_reciprocal_relations": true,
+  "margin": 6.0,
+  "epsilon": 2.0,
+  "modulus": 0.0625,
+
+  "add_reciprocal_relations": false,
 
   "batch_size": 512,
   "epochs": 400,

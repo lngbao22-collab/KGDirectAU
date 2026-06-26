@@ -16,6 +16,10 @@
 
   "dim": 64,
 
+  "margin": 9.0,
+  "epsilon": 2.0,
+  "modulus": 0.0859375,
+
   "add_reciprocal_relations": true,
 
   "batch_size": 1024,

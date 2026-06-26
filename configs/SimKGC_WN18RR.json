@@ -33,5 +33,7 @@
   "print_freq": 20,
 
   "max_to_keep": 0,
-  "output_dir_prefix": "logs/SimKGC_WN18RR"
+  "output_dir_prefix": "logs/SimKGC_WN18RR",
+
+  "report_au": true
 }

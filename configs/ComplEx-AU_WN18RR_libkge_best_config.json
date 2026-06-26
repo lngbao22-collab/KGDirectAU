@@ -73,5 +73,6 @@
 
   "normalize_lp_scores": false,
 
-  "task": "both"
+  "task": "both",
+  "report_au": true
 }

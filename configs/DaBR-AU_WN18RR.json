@@ -27,5 +27,7 @@
   "weight_decay": 0.1,
 
   "max_to_keep": 0,
-  "output_dir_prefix": "logs/DaBR-AU_WN18RR"
+  "output_dir_prefix": "logs/DaBR-AU_WN18RR",
+
+  "report_au": true
 }

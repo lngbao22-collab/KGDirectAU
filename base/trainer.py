@@ -12,7 +12,7 @@ from data.dataset import Dataset
 from data.dataloader import collate
 from utils.checkpoint import save_checkpoint, best_model_path, last_model_path
 from utils.device import report_num_trainable_parameters
-from utils.logger import logger, time_per_train_epoch
+from utils.logger import logger, log_run_timing
 from utils.memory import PhaseMemoryTracker, format_memory
 
 
@@ -29,6 +29,7 @@ class Trainer(ABC):
         self.train_time = 0.0
         self.valid_time = 0.0
         self.total_time = 0.0
+        self.au_report_time = 0.0
         self.memory_tracker = PhaseMemoryTracker()
 
         self._setup_training()
@@ -84,15 +85,21 @@ class Trainer(ABC):
             self.memory_tracker.end_phase('train')
             self.train_time += time.time() - epoch_train_start
             num_train_epochs = epoch + 1
+            from utils.au_reporter import report_au_after_epoch
+            report_au_after_epoch(self, epoch)
             self._run_eval(epoch=epoch)
 
+        from utils.au_reporter import finalize_au_report
+        finalize_au_report(self)
+
         self.total_time = time.time() - total_start_time
-        epoch_time = time_per_train_epoch(self.train_time, num_train_epochs)
-        logger.info(f"[Timing] Training time (s): {round(self.train_time, 2)}")
-        logger.info(f"[Timing] Valid time (s): {round(self.valid_time, 2)}")
-        logger.info(f"[Timing] Total run time (s): {round(self.total_time, 2)}")
-        if epoch_time is not None:
-            logger.info('[Timing] Time per training epoch (s): %.2f', round(epoch_time, 2))
+        epoch_time = log_run_timing(
+            train_time=self.train_time,
+            valid_time=self.valid_time,
+            total_time=self.total_time,
+            num_train_epochs=num_train_epochs,
+            au_report_time=self.au_report_time,
+        )
         logger.info('[Memory] Training peak: %s', format_memory(self.memory_tracker.train_peak_mb))
         logger.info('[Memory] Eval peak: %s', format_memory(self.memory_tracker.eval_peak_mb))
         logger.info('[Memory] Peak memory: %s', format_memory(self.memory_tracker.peak_memory_mb))

@@ -570,16 +570,30 @@ class AUReporter:
 		self._save_charts()
 
 
+def _accumulate_au_report_time(trainer, elapsed: float) -> None:
+	if elapsed <= 0.0:
+		return
+	trainer.au_report_time = getattr(trainer, 'au_report_time', 0.0) + elapsed
+
+
 def attach_au_reporter(trainer, args) -> None:
 	if not report_au_enabled(args):
 		return
+	trainer.au_report_time = 0.0
 	trainer.au_reporter = AUReporter(args, trainer)
 
 
 def report_au_after_epoch(trainer, epoch: int) -> None:
 	reporter = getattr(trainer, 'au_reporter', None)
-	if reporter is not None:
+	if reporter is None:
+		return
+	import time
+
+	start = time.time()
+	try:
 		reporter.on_epoch_end(epoch)
+	finally:
+		_accumulate_au_report_time(trainer, time.time() - start)
 
 
 def report_au_validation(trainer, epoch: int, metric_dict: dict | None) -> None:
@@ -590,5 +604,12 @@ def report_au_validation(trainer, epoch: int, metric_dict: dict | None) -> None:
 
 def finalize_au_report(trainer) -> None:
 	reporter = getattr(trainer, 'au_reporter', None)
-	if reporter is not None:
+	if reporter is None:
+		return
+	import time
+
+	start = time.time()
+	try:
 		reporter.finalize()
+	finally:
+		_accumulate_au_report_time(trainer, time.time() - start)
