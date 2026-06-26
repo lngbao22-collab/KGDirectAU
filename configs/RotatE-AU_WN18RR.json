@@ -13,7 +13,7 @@
   "tuni": 4,
   "dim": 64,
   "adversarial_training": true,
-  "margin": 200.0,
+  "margin": 6.0,
   "add_reciprocal_relations": false,
   "kgau_bidirectional": true,
   "uniformity_full_pdist": true,
@@ -45,6 +45,6 @@
   "tie_handling": "rounded_mean_rank",
   "tie_rtol": 0.0001,
   "tie_atol": 1e-05,
-  "normalize_lp_scores": true,
+  "normalize_lp_scores": false,
   "report_au": true
 }
