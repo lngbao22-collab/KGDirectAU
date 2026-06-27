@@ -2,10 +2,12 @@
 # Minimum Python version: 3.8+ (enforce outside pip requirements)
 
 # Core ML libraries
-# Install torch separately with the CUDA wheel that matches your NVIDIA driver.
+# Install torch from the PyTorch CUDA index that matches your NVIDIA driver (nvidia-smi "CUDA Version").
+# Do NOT rely on plain `pip install torch` — PyPI may pull a cu130+ build that needs a newer driver.
+# Example (driver CUDA 12.8, e.g. 570.x): pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 # Example (CUDA 12.1): pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 # Example (CPU-only fallback): pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-torch>=2.0
+# torch is installed separately; see commands above.
 transformers>=4.15
 
 # Tokenization backends (some pretrained tokenizers need these)

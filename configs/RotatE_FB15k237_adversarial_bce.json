@@ -27,7 +27,7 @@
 
   "n_sample": 256,
   "neg_score_chunk_size": 128,
-  "neg_weight_chunk_size": 256,
+  "neg_weight_chunk_size": 128,
 
   "training_cadence": "epoch",
   "epoch_per_eval": 5,
