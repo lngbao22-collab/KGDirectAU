@@ -25,7 +25,7 @@
   "use_amp": true,
 
   "n_sample": 1024,
-  "regularization": 5e-06,
+  "regularization": 0.000002,
 
   "training_cadence": "epoch",
   "epoch_per_eval": 5,
