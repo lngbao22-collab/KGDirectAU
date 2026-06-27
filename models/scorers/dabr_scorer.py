@@ -111,6 +111,14 @@ class DaBRScorer(KGEScorer):
 		return score_s - para * cls._additive_penalty(h_emb, dr_emb, t_emb)
 
 	@staticmethod
+	def regularization(quaternion: torch.Tensor) -> torch.Tensor:
+		"""Mean squared norm per quaternion component (official DaBR ``regularization``)."""
+
+		size = quaternion.size(-1) // 4
+		r, i, j, k = torch.split(quaternion, size, dim=-1)
+		return torch.mean(r ** 2) + torch.mean(i ** 2) + torch.mean(j ** 2) + torch.mean(k ** 2)
+
+	@staticmethod
 	def _coalesce_para(para: float | torch.Tensor | None, default: float) -> float:
 		if para is None:
 			return default
@@ -153,6 +161,36 @@ class DaBRScorer(KGEScorer):
 			h_emb.unsqueeze(1),
 			dr_emb.unsqueeze(1),
 			all_t_embs.unsqueeze(0),
+		)
+		return score_s - para_value * add_penalty
+
+	def score_po_(
+		self,
+		all_h_embs: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+		dr_emb: torch.Tensor | None = None,
+		para: float | torch.Tensor | None = None,
+	) -> torch.Tensor:
+		"""Return 1-vs-all head scores with fixed relation and tail (``po_forward`` eval)."""
+
+		if dr_emb is None:
+			dr_emb = torch.zeros_like(t_emb)
+		para_value = self._coalesce_para(para, self.para)
+		num_heads = all_h_embs.size(0)
+		batch_size = r_emb.size(0)
+		all_h_exp = all_h_embs.unsqueeze(0).expand(batch_size, num_heads, -1)
+		r_exp = self._normalize_quaternion(r_emb).unsqueeze(1).expand(-1, num_heads, -1)
+		flat_h = all_h_exp.reshape(batch_size * num_heads, -1)
+		flat_r = r_exp.reshape(batch_size * num_heads, -1)
+		hr = self._quat_mul(flat_h, flat_r).view(batch_size, num_heads, -1)
+		r_inv_norm = self._normalize_quaternion(self._quat_inv(r_emb)).unsqueeze(1)
+		tr = self._quat_mul_q(t_emb.unsqueeze(1), r_inv_norm)
+		score_s = -torch.sum(hr * tr, dim=-1)
+		add_penalty = self._additive_penalty(
+			all_h_exp,
+			dr_emb.unsqueeze(1).expand(-1, num_heads, -1),
+			t_emb.unsqueeze(1).expand(-1, num_heads, -1),
 		)
 		return score_s - para_value * add_penalty
 

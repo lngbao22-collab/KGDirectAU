@@ -1,6 +1,9 @@
 """Pointwise negative sampling for DaBR training (Bernoulli corruption)."""
 
+from __future__ import annotations
+
 from collections import defaultdict
+import random
 
 import torch
 
@@ -10,6 +13,7 @@ from data.dict_hub import get_entity_dict, get_relation_id_map
 
 
 _BERN_PROB_CACHE: torch.Tensor | None = None
+_TRAIN_CORRUPT_CACHE: tuple[dict[tuple[int, int], set[int]], dict[tuple[int, int], set[int]]] | None = None
 
 
 def _get_bern_prob(num_relations: int) -> torch.Tensor:
@@ -17,8 +21,8 @@ def _get_bern_prob(num_relations: int) -> torch.Tensor:
 
     For each relation ``r`` we compute ``tph`` (average tails per head) and ``htp``
     (average heads per tail) over the training triples, then set the probability of
-    corrupting the **head** to ``tph / (tph + htp)``. This matches the official DaBR
-    training (``con.set_bern(1)``) and the existing ``BernoulliListwiseSampler``.
+    corrupting the **head** to ``htp / (htp + tph)``. This matches the official DaBR
+    C++ sampler (``right_mean / (right_mean + left_mean)`` with ``set_bern(1)``).
     The table is computed once and cached for the lifetime of the process.
     """
 
@@ -54,10 +58,57 @@ def _get_bern_prob(num_relations: int) -> torch.Tensor:
         tph = sum(len(tails) for tails in edges[relation].values()) / max(len(edges[relation]), 1)
         htp = sum(len(heads) for heads in rev_edges[relation].values()) / max(len(rev_edges[relation]), 1)
         if relation < bern_prob.size(0):
-            bern_prob[relation] = tph / (tph + htp) if (tph + htp) > 0 else 0.5
+            bern_prob[relation] = htp / (htp + tph) if (htp + tph) > 0 else 0.5
 
     _BERN_PROB_CACHE = bern_prob
     return bern_prob
+
+
+def _get_train_corrupt_indices() -> tuple[dict[tuple[int, int], set[int]], dict[tuple[int, int], set[int]]]:
+    """Build filtered-corruption lookup tables from training triples (OpenKE-style)."""
+
+    global _TRAIN_CORRUPT_CACHE
+    if _TRAIN_CORRUPT_CACHE is not None:
+        return _TRAIN_CORRUPT_CACHE
+
+    entity_dict = get_entity_dict()
+    relation_to_idx = get_relation_id_map() or {}
+    hr_to_tails: dict[tuple[int, int], set[int]] = defaultdict(set)
+    rt_to_heads: dict[tuple[int, int], set[int]] = defaultdict(set)
+
+    train_path = getattr(args, 'train_path', '')
+    examples = (
+        load_data(train_path, add_forward_triplet=True, add_backward_triplet=False)
+        if train_path
+        else []
+    )
+    for example in examples:
+        try:
+            head = entity_dict.entity_to_idx(example.head_id)
+            tail = entity_dict.entity_to_idx(example.tail_id)
+            relation = _relation_to_idx(example.relation, relation_to_idx)
+        except KeyError:
+            continue
+        hr_to_tails[(head, relation)].add(tail)
+        rt_to_heads[(relation, tail)].add(head)
+
+    _TRAIN_CORRUPT_CACHE = (hr_to_tails, rt_to_heads)
+    return _TRAIN_CORRUPT_CACHE
+
+
+def _sample_filtered_entity(exclude: set[int], num_entities: int, *, max_tries: int = 64) -> int:
+    """Sample an entity index that is not in ``exclude`` (uniform over the complement)."""
+
+    if num_entities <= 0:
+        return 0
+    if len(exclude) >= num_entities:
+        return random.randrange(num_entities)
+    for _ in range(max_tries):
+        candidate = random.randrange(num_entities)
+        if candidate not in exclude:
+            return candidate
+    allowed = [idx for idx in range(num_entities) if idx not in exclude]
+    return random.choice(allowed) if allowed else random.randrange(num_entities)
 
 
 def get_pointwise_negatives(batch: dict, num_neg: int, num_entities: int) -> dict:
@@ -83,19 +134,37 @@ def get_pointwise_negatives(batch: dict, num_neg: int, num_entities: int) -> dic
 
     bern_prob = _get_bern_prob(len(relation_to_idx)).to(device)
     head_corrupt_prob = bern_prob[rels.clamp(max=bern_prob.size(0) - 1)]
+    hr_to_tails, rt_to_heads = _get_train_corrupt_indices()
 
     neg_heads = []
     neg_rels = []
     neg_tails = []
 
+    heads_list = heads.tolist()
+    rels_list = rels.tolist()
+    tails_list = tails.tolist()
+
     # For each positive triple, generate `num_neg` Bernoulli corruptions:
-    # corrupt the head with probability tph/(tph+htp), otherwise corrupt the tail.
+    # corrupt the head with probability htp/(htp+tph), otherwise corrupt the tail.
+    # Known true neighbors are excluded (filtered corruption, OpenKE-style).
     for _ in range(num_neg):
         corrupt_head = torch.rand(n, device=device) < head_corrupt_prob
-        # sample random entity ids
-        random_entities = torch.randint(0, num_entities, (n,), device=device)
-        nh = torch.where(corrupt_head, random_entities, heads)
-        nt = torch.where(~corrupt_head, random_entities, tails)
+        nh = torch.empty(n, dtype=torch.long, device=device)
+        nt = torch.empty(n, dtype=torch.long, device=device)
+        for idx in range(n):
+            head = heads_list[idx]
+            relation = rels_list[idx]
+            tail = tails_list[idx]
+            if bool(corrupt_head[idx].item()):
+                exclude = set(rt_to_heads.get((relation, tail), ()))
+                exclude.add(head)
+                nh[idx] = _sample_filtered_entity(exclude, num_entities)
+                nt[idx] = tail
+            else:
+                exclude = set(hr_to_tails.get((head, relation), ()))
+                exclude.add(tail)
+                nh[idx] = head
+                nt[idx] = _sample_filtered_entity(exclude, num_entities)
         neg_heads.append(nh)
         neg_rels.append(rels)
         neg_tails.append(nt)
