@@ -35,7 +35,6 @@
   "lr": 5e-05,
   "weight_decay": 0.0,
   "shuffle_train": true,
-  "use_amp": true,
 
   "n_sample": 0,
 

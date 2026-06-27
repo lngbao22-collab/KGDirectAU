@@ -21,7 +21,7 @@
   "weight_decay": 0.0,
   "warm_up_steps": 50000,
   "lr_decay_factor": 0.1,
-  "lr_decay_preserve_optimizer": true,
+  "lr_decay_preserve_optimizer": false,
   "shuffle_train": true,
   "use_amp": true,
 
