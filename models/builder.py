@@ -472,14 +472,41 @@ def _kge_resolve_link_prediction_path(path: str) -> str:
 	return path
 
 
-def _kge_extract_monitor_value(metric_dict: dict, train_loss: float | None = None):
+def _kge_resolve_monitor_metric(args) -> str:
+	return str(getattr(args, 'valid_metric', None) or 'mrr')
+
+
+def _kge_metric_value(metric_dict: dict | None, metric_name: str):
+	if not metric_dict:
+		return None
+	if metric_name in metric_dict:
+		return metric_dict[metric_name]
+	aliases = {
+		'hit@10': ('hits@10',),
+		'hits@10': ('hit@10',),
+		'hit@3': ('hits@3',),
+		'hits@3': ('hit@3',),
+		'hit@1': ('hits@1',),
+		'hits@1': ('hit@1',),
+	}
+	for alt in aliases.get(metric_name, ()):
+		if alt in metric_dict:
+			return metric_dict[alt]
+	return None
+
+
+def _kge_extract_monitor_value(metric_dict: dict, train_loss: float | None = None, args=None):
+	monitor_name = _kge_resolve_monitor_metric(args) if args is not None else 'mrr'
+	value = _kge_metric_value(metric_dict, monitor_name)
+	if value is not None:
+		return value
 	if metric_dict and 'mrr' in metric_dict:
 		return metric_dict['mrr']
 	if metric_dict and 'loss' in metric_dict:
 		return -metric_dict['loss']
 	if train_loss is not None:
 		return -float(train_loss)
-	for value in metric_dict.values():
+	for key, value in (metric_dict or {}).items():
 		if isinstance(value, (int, float)):
 			return value
 	return None
@@ -580,6 +607,8 @@ def _kge_train_loop_result(trainer) -> dict:
 		'best_epoch': None if trainer.best_metric is None else trainer.best_metric.get('epoch', 0) + 1,
 		'best_step': None if trainer.best_metric is None else trainer.best_metric.get('step'),
 		'best_mrr': None if trainer.best_metric is None else trainer.best_metric.get('score'),
+		'best_monitor_metric': None if trainer.best_metric is None else trainer.best_metric.get('metric'),
+		'best_monitor_score': None if trainer.best_metric is None else trainer.best_metric.get('score'),
 		'train_time': trainer.train_time,
 		'valid_time': trainer.valid_time,
 		'total_time': trainer.total_time,
@@ -591,12 +620,18 @@ def _kge_train_loop_result(trainer) -> dict:
 
 
 def _update_index_kge_best_metric(trainer, metric_dict: dict, epoch: int, step: int | None = None) -> bool:
-	if not metric_dict or 'mrr' not in metric_dict:
+	monitor_name = _kge_resolve_monitor_metric(trainer.args)
+	monitor_value = _kge_metric_value(metric_dict, monitor_name)
+	if monitor_value is None:
 		return False
-	monitor_value = metric_dict['mrr']
 	is_best = trainer.best_metric is None or monitor_value > trainer.best_metric.get('score', float('-inf'))
 	if is_best:
-		payload = {'score': monitor_value, 'metrics': metric_dict, 'epoch': epoch}
+		payload = {
+			'score': monitor_value,
+			'metric': monitor_name,
+			'metrics': metric_dict,
+			'epoch': epoch,
+		}
 		if step is not None:
 			payload['step'] = step
 		trainer.best_metric = payload
@@ -654,12 +689,13 @@ def _kge_update_early_stopping_bad_count(
 	bad_counts: int,
 	min_metric,
 ) -> int:
-	if not metric_dict or 'mrr' not in metric_dict:
+	monitor_name = _kge_resolve_monitor_metric(trainer.args)
+	if _kge_metric_value(metric_dict, monitor_name) is None:
 		return bad_counts
 	if is_best:
 		return 0
-	best_mrr = None if trainer.best_metric is None else trainer.best_metric.get('score')
-	if min_metric is None or (best_mrr is not None and best_mrr >= float(min_metric)):
+	best_score = None if trainer.best_metric is None else trainer.best_metric.get('score')
+	if min_metric is None or (best_score is not None and best_score >= float(min_metric)):
 		return bad_counts + 1
 	return bad_counts
 
@@ -699,15 +735,17 @@ def run_epoch_based_kge_train_loop(trainer, dataloader=None) -> dict:
 		report_au_validation(trainer, epoch, metric_dict if validated else None)
 
 		is_best = False
-		if validated and metric_dict and 'mrr' in metric_dict:
-			is_best = _update_index_kge_best_metric(trainer, metric_dict, epoch)
-			bad_counts = _kge_update_early_stopping_bad_count(
-				trainer,
-				metric_dict=metric_dict,
-				is_best=is_best,
-				bad_counts=bad_counts,
-				min_metric=min_metric,
-			)
+		if validated and metric_dict:
+			monitor_name = _kge_resolve_monitor_metric(trainer.args)
+			if _kge_metric_value(metric_dict, monitor_name) is not None:
+				is_best = _update_index_kge_best_metric(trainer, metric_dict, epoch)
+				bad_counts = _kge_update_early_stopping_bad_count(
+					trainer,
+					metric_dict=metric_dict,
+					is_best=is_best,
+					bad_counts=bad_counts,
+					min_metric=min_metric,
+				)
 
 		_save_index_kge_checkpoint(trainer, epoch, is_best)
 
@@ -715,7 +753,11 @@ def run_epoch_based_kge_train_loop(trainer, dataloader=None) -> dict:
 		step_lr_scheduler(lr_scheduler, metric_dict)
 
 		if patience is not None and bad_counts >= patience and (epoch + 1) >= min_epochs:
-			logger.info('[EARLY STOP] No validation MRR improvement for %d evaluations.', patience)
+			logger.info(
+				'[EARLY STOP] No validation %s improvement for %d evaluations.',
+				_kge_resolve_monitor_metric(trainer.args),
+				patience,
+			)
 			break
 
 	trainer.num_train_epochs = epoch + 1
@@ -903,6 +945,8 @@ def run_kge_train_loop(trainer) -> dict:
 	return {
 		'best_epoch': None if trainer.best_metric is None else trainer.best_metric.get('epoch'),
 		'best_mrr': None if trainer.best_metric is None else trainer.best_metric.get('score'),
+		'best_monitor_metric': None if trainer.best_metric is None else trainer.best_metric.get('metric'),
+		'best_monitor_score': None if trainer.best_metric is None else trainer.best_metric.get('score'),
 		'train_time': trainer.train_time,
 		'valid_time': trainer.valid_time,
 		'total_time': trainer.total_time,

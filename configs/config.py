@@ -565,6 +565,14 @@ def build_parser() -> argparse.ArgumentParser:
                         help='DaBR primary lambda')
     parser.add_argument('--lmbda-two', '--lmbda_two', default=None, type=float,
                         dest='lmbda_two', help='DaBR secondary lambda')
+    parser.add_argument('--entity-reg-weight', '--entity_reg_weight', default=None, type=float,
+                        dest='entity_reg_weight', help='DaBR entity quaternion regularization weight')
+    parser.add_argument('--relation-reg-weight', '--relation_reg_weight', default=None, type=float,
+                        dest='relation_reg_weight', help='DaBR relation/drift quaternion regularization weight')
+    parser.add_argument('--n-batches', '--n_batches', default=None, type=int,
+                        dest='n_batches', help='Training batches per epoch (OpenKE nbatches; sets batch_size)')
+    parser.add_argument('--valid-metric', '--valid_metric', default=None, type=str,
+                        dest='valid_metric', help='Validation metric for checkpointing (e.g. mrr, hit@10)')
 
     # L3 regularization and weighted LibKGE-style flags.
     parser.add_argument('--regularize-p', '--regularize_p', default=None, type=int,

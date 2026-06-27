@@ -467,10 +467,19 @@ class NegSampStrategy:
 
 	def _dabr_regularization(self, pos_triples: torch.Tensor) -> torch.Tensor | None:
 		model_obj = get_model_obj(self.model)
-		if not hasattr(model_obj, 'regularization'):
+		scorer = getattr(model_obj, 'scorer', None)
+		reg_fn = getattr(model_obj, 'regularization', None) or getattr(scorer, 'regularization', None)
+		if reg_fn is None:
 			return None
-		entity_reg_weight = float(getattr(self.args, 'entity_reg_weight', 0.0))
-		relation_reg_weight = float(getattr(self.args, 'relation_reg_weight', 0.0))
+
+		entity_reg_weight = getattr(self.args, 'entity_reg_weight', None)
+		if entity_reg_weight is None:
+			entity_reg_weight = getattr(self.args, 'lmbda', 0.0)
+		relation_reg_weight = getattr(self.args, 'relation_reg_weight', None)
+		if relation_reg_weight is None:
+			relation_reg_weight = getattr(self.args, 'lmbda_two', 0.0)
+		entity_reg_weight = float(entity_reg_weight or 0.0)
+		relation_reg_weight = float(relation_reg_weight or 0.0)
 		if entity_reg_weight <= 0.0 and relation_reg_weight <= 0.0:
 			return None
 
@@ -481,8 +490,8 @@ class NegSampStrategy:
 		if dr_embedder is None:
 			return None
 		dr = dr_embedder
-		reg_ent = model_obj.regularization(h) + model_obj.regularization(t)
-		reg_rel = model_obj.regularization(r) + model_obj.regularization(dr)
+		reg_ent = reg_fn(h) + reg_fn(t)
+		reg_rel = reg_fn(r) + reg_fn(dr)
 		return (entity_reg_weight * reg_ent) + (relation_reg_weight * reg_rel)
 
 	def train_epoch(self, dataloader: Iterable | None, epoch: int) -> float:
