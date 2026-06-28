@@ -30,7 +30,7 @@
   "neg_weight_chunk_size": 256,
 
   "training_cadence": "epoch",
-  "epoch_per_eval": 10,
+  "epoch_per_eval": 5,
   "test_batch_size": 16,
   "score_query_chunk_size": 256,
   "eval_candidate_chunk_size": 2048,
