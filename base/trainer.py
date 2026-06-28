@@ -87,7 +87,9 @@ class Trainer(ABC):
             num_train_epochs = epoch + 1
             from utils.au_reporter import report_au_after_epoch
             report_au_after_epoch(self, epoch)
-            self._run_eval(epoch=epoch)
+            from models.builder import _kge_should_validate
+            if _kge_should_validate(self.args, epoch):
+                self._run_eval(epoch=epoch)
 
         from utils.au_reporter import finalize_au_report
         finalize_au_report(self)

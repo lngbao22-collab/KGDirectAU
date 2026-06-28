@@ -310,12 +310,23 @@ class InBatchStrategy(Evaluator):
 				valid_eval_path = self.args.valid_path
 
 		if valid_eval_path and os.path.exists(valid_eval_path):
+			from base.evaluator import _supports_kge_1vsall_eval
+
 			valid_entity_dict = get_entity_dict()
 			valid_output_path = os.path.join(self.args.output_dir, 'valid_link_prediction.log')
+			model_obj = get_model_obj(self.model)
+			cached_entity_embs = None
+			if _supports_kge_1vsall_eval(model_obj):
+				logger.info('[EVAL] Encoding %d entities (shared for forward + backward)...', len(valid_entity_dict.entity_exs))
+				cached_entity_embs = model_obj.embed_all_entities()
 			forward_metrics = self.evaluate_link_prediction_inplace(
-				self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=True)
+				self.model, valid_eval_path, valid_entity_dict, valid_output_path,
+				eval_forward=True, all_entity_embs=cached_entity_embs,
+			)
 			backward_metrics = self.evaluate_link_prediction_inplace(
-				self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=False)
+				self.model, valid_eval_path, valid_entity_dict, valid_output_path,
+				eval_forward=False, all_entity_embs=cached_entity_embs,
+			)
 			metric_dict.update(
 				log_bidirectional_link_metrics(f'[EPOCH {epoch}] Valid', forward_metrics, backward_metrics)
 			)
@@ -326,11 +337,16 @@ class InBatchStrategy(Evaluator):
 
 	@torch.no_grad()
 	def _run_eval(self, epoch, step=0) -> dict:
-		eval_start = __import__('time').time()
+		import time
+
+		logger.info('[EVAL] Starting validation for epoch %d...', epoch)
+		eval_start = time.time()
 		self.memory_tracker.begin_phase()
 		metric_dict = self.eval_epoch(epoch)
 		self.memory_tracker.end_phase('eval')
-		self.valid_time += __import__('time').time() - eval_start
+		eval_elapsed = time.time() - eval_start
+		self.valid_time += eval_elapsed
+		logger.info('[EVAL] Finished validation for epoch %d in %.1fs', epoch, eval_elapsed)
 		monitor_value = self._extract_monitor_value(metric_dict)
 		is_best = monitor_value is not None and (
 			self.best_metric is None or monitor_value > self.best_metric.get('score', float('-inf'))

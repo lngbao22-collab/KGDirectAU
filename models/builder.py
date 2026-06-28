@@ -920,7 +920,8 @@ def run_kge_train_loop(trainer) -> dict:
 		from utils.au_reporter import report_au_after_epoch
 		report_au_after_epoch(trainer, epoch)
 		if max_steps is None:
-			trainer._run_eval(epoch=epoch)
+			if _kge_should_validate(trainer.args, epoch):
+				trainer._run_eval(epoch=epoch)
 		elif getattr(trainer, '_stop_training', False) or get_trainer_global_step(trainer) >= max_steps:
 			break
 

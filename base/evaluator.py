@@ -286,6 +286,7 @@ def _evaluate_kge_link_prediction(
 	eval_forward: bool,
 	filter_known: bool,
 	args=None,
+	all_entity_embs: torch.Tensor | None = None,
 ) -> list[int]:
 	"""Fast filtered link prediction for ``KGEModel`` instances."""
 
@@ -299,7 +300,9 @@ def _evaluate_kge_link_prediction(
 		else list(examples)
 	)
 	h_all, r_all, t_all = _examples_to_query_index_tensors(scoring_examples, entity_dict, model)
-	all_entity_embs = model.embed_all_entities()
+	if all_entity_embs is None:
+		logger.info('[EVAL] Encoding %d entities for link prediction (%s)...', len(entity_dict.entity_exs), head_eval_mode)
+		all_entity_embs = model.embed_all_entities()
 	inverse_map = None
 	if head_eval_mode in {'po_inverse', 'sp_inverse'}:
 		rel_to_idx = getattr(model, 'rel_to_idx', None) or {}
@@ -849,7 +852,17 @@ class Evaluator:
         return metrics_cls
 
     @torch.inference_mode()
-    def evaluate_link_prediction_inplace(self, model, eval_path, entity_dict, output_log_path, batch_size=None, eval_forward=True, examples=None) -> dict:
+    def evaluate_link_prediction_inplace(
+        self,
+        model,
+        eval_path,
+        entity_dict,
+        output_log_path,
+        batch_size=None,
+        eval_forward=True,
+        examples=None,
+        all_entity_embs: torch.Tensor | None = None,
+    ) -> dict:
         """Evaluate link prediction using the model's forward pass."""
         batch_size = self._eval_batch_size(batch_size)
         model = get_model_obj(model)
@@ -861,6 +874,8 @@ class Evaluator:
             examples = load_data(eval_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
 
         if _supports_kge_1vsall_eval(model):
+            direction = 'forward' if eval_forward else 'backward'
+            logger.info('[EVAL] Link prediction (%s) on %d queries...', direction, len(examples))
             ranks = _evaluate_kge_link_prediction(
                 model,
                 examples,
@@ -869,6 +884,7 @@ class Evaluator:
                 eval_forward=eval_forward,
                 filter_known=True,
                 args=self.args,
+                all_entity_embs=all_entity_embs,
             )
             return ranking_metrics_from_ranks(ranks)
 
