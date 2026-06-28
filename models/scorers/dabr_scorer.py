@@ -126,6 +126,62 @@ class DaBRScorer(KGEScorer):
 			return float(para.item())
 		return float(para)
 
+	def _entity_chunk_size(self, batch_size: int, embed_dim: int) -> int:
+		"""Candidate chunk size for 1-vs-all scoring (controls peak GPU memory)."""
+
+		configured = int(getattr(self.args, 'eval_entity_chunk_size', 256) or 256)
+		bytes_budget = int(
+			getattr(self.args, 'eval_entity_chunk_bytes', 128 * 1024 * 1024) or 128 * 1024 * 1024
+		)
+		# DaBR quaternion 1-vs-all scoring materializes several [B, C, D] tensors.
+		per_candidate = max(1, batch_size * embed_dim * 4 * 12)
+		memory_limit = max(1, bytes_budget // per_candidate)
+		return max(1, min(configured, memory_limit))
+
+	def _score_sp_candidate_chunk(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb_chunk: torch.Tensor,
+		dr_emb: torch.Tensor,
+		para_value: float,
+	) -> torch.Tensor:
+		hr = self._quat_mul(h_emb, r_emb).unsqueeze(1)
+		r_inv_norm = self._normalize_quaternion(self._quat_inv(r_emb)).unsqueeze(1)
+		tr = self._quat_mul_q(t_emb_chunk.unsqueeze(0), r_inv_norm)
+		score_s = -torch.sum(hr * tr, dim=-1)
+		add_penalty = self._additive_penalty(
+			h_emb.unsqueeze(1),
+			dr_emb.unsqueeze(1),
+			t_emb_chunk.unsqueeze(0),
+		)
+		return score_s - para_value * add_penalty
+
+	def _score_po_candidate_chunk(
+		self,
+		h_emb_chunk: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+		dr_emb: torch.Tensor,
+		para_value: float,
+	) -> torch.Tensor:
+		num_heads = h_emb_chunk.size(0)
+		batch_size = r_emb.size(0)
+		all_h_exp = h_emb_chunk.unsqueeze(0).expand(batch_size, num_heads, -1)
+		r_exp = self._normalize_quaternion(r_emb).unsqueeze(1).expand(-1, num_heads, -1)
+		flat_h = all_h_exp.reshape(batch_size * num_heads, -1)
+		flat_r = r_exp.reshape(batch_size * num_heads, -1)
+		hr = self._quat_mul(flat_h, flat_r).view(batch_size, num_heads, -1)
+		r_inv_norm = self._normalize_quaternion(self._quat_inv(r_emb)).unsqueeze(1)
+		tr = self._quat_mul_q(t_emb.unsqueeze(1), r_inv_norm)
+		score_s = -torch.sum(hr * tr, dim=-1)
+		add_penalty = self._additive_penalty(
+			all_h_exp,
+			dr_emb.unsqueeze(1).expand(-1, num_heads, -1),
+			t_emb.unsqueeze(1).expand(-1, num_heads, -1),
+		)
+		return score_s - para_value * add_penalty
+
 	def score_spo(
 		self,
 		h_emb: torch.Tensor,
@@ -153,16 +209,24 @@ class DaBRScorer(KGEScorer):
 		if dr_emb is None:
 			dr_emb = torch.zeros_like(h_emb)
 		para_value = self._coalesce_para(para, self.para)
-		hr = self._quat_mul(h_emb, r_emb).unsqueeze(1)
-		r_inv_norm = self._normalize_quaternion(self._quat_inv(r_emb)).unsqueeze(1)
-		tr = self._quat_mul_q(all_t_embs.unsqueeze(0), r_inv_norm)
-		score_s = -torch.sum(hr * tr, dim=-1)
-		add_penalty = self._additive_penalty(
-			h_emb.unsqueeze(1),
-			dr_emb.unsqueeze(1),
-			all_t_embs.unsqueeze(0),
-		)
-		return score_s - para_value * add_penalty
+		num_candidates = all_t_embs.size(0)
+		batch_size = h_emb.size(0)
+		embed_dim = all_t_embs.size(-1)
+		chunk_size = self._entity_chunk_size(batch_size, embed_dim)
+		if num_candidates <= chunk_size:
+			return self._score_sp_candidate_chunk(h_emb, r_emb, all_t_embs, dr_emb, para_value)
+
+		scores = h_emb.new_empty(batch_size, num_candidates)
+		for start in range(0, num_candidates, chunk_size):
+			end = min(start + chunk_size, num_candidates)
+			scores[:, start:end] = self._score_sp_candidate_chunk(
+				h_emb,
+				r_emb,
+				all_t_embs[start:end],
+				dr_emb,
+				para_value,
+			)
+		return scores
 
 	def score_po_(
 		self,
@@ -179,20 +243,22 @@ class DaBRScorer(KGEScorer):
 		para_value = self._coalesce_para(para, self.para)
 		num_heads = all_h_embs.size(0)
 		batch_size = r_emb.size(0)
-		all_h_exp = all_h_embs.unsqueeze(0).expand(batch_size, num_heads, -1)
-		r_exp = self._normalize_quaternion(r_emb).unsqueeze(1).expand(-1, num_heads, -1)
-		flat_h = all_h_exp.reshape(batch_size * num_heads, -1)
-		flat_r = r_exp.reshape(batch_size * num_heads, -1)
-		hr = self._quat_mul(flat_h, flat_r).view(batch_size, num_heads, -1)
-		r_inv_norm = self._normalize_quaternion(self._quat_inv(r_emb)).unsqueeze(1)
-		tr = self._quat_mul_q(t_emb.unsqueeze(1), r_inv_norm)
-		score_s = -torch.sum(hr * tr, dim=-1)
-		add_penalty = self._additive_penalty(
-			all_h_exp,
-			dr_emb.unsqueeze(1).expand(-1, num_heads, -1),
-			t_emb.unsqueeze(1).expand(-1, num_heads, -1),
-		)
-		return score_s - para_value * add_penalty
+		embed_dim = all_h_embs.size(-1)
+		chunk_size = self._entity_chunk_size(batch_size, embed_dim)
+		if num_heads <= chunk_size:
+			return self._score_po_candidate_chunk(all_h_embs, r_emb, t_emb, dr_emb, para_value)
+
+		scores = r_emb.new_empty(batch_size, num_heads)
+		for start in range(0, num_heads, chunk_size):
+			end = min(start + chunk_size, num_heads)
+			scores[:, start:end] = self._score_po_candidate_chunk(
+				all_h_embs[start:end],
+				r_emb,
+				t_emb,
+				dr_emb,
+				para_value,
+			)
+		return scores
 
 	def au_representations(
 		self,
