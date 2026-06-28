@@ -1022,23 +1022,10 @@ class KGAUStrategy(Evaluator):
 	):
 		model_obj = get_model_obj(self.model)
 		scorer = model_obj.scorer
-		if mode == 'tail-batch':
-			h_emb = model_obj.embed_s(h)
-			r_emb = model_obj.embed_p(r)
-			t_emb = model_obj.embed_o(t)
-			pos_scores = scorer.score_spo(h_emb, r_emb, t_emb)
-			return {
-				'mode': mode,
-				'h_emb': h_emb,
-				'r_emb': r_emb,
-				't_emb': t_emb,
-				'pos_scores': pos_scores,
-			}
-
 		h_emb = model_obj.embed_s(h)
 		r_emb = model_obj.embed_p(r)
 		t_emb = model_obj.embed_o(t)
-		pos_scores = scorer.score_po(h_emb, r_emb, t_emb)
+		pos_scores = scorer.score_spo(h_emb, r_emb, t_emb)
 		return {
 			'mode': mode,
 			'h_emb': h_emb,

@@ -60,8 +60,6 @@ class NegSampStrategy:
 		self.use_amp = bool(getattr(args, 'use_amp', False)) and torch.cuda.is_available()
 		device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
 		self.scaler = torch.amp.GradScaler(device_type, enabled=self.use_amp)
-		self._slot_modes = ['head-batch', 'tail-batch']
-		self._slot_step = 0
 		self._pointwise_mode = hasattr(self.sampler, 'num_entities') or type(self.sampler).__name__ == 'PointwiseNegSampler'
 		model_name = str(getattr(args, 'model', '') or '').lower()
 		self._normalize_phases_fn = None
@@ -96,6 +94,25 @@ class NegSampStrategy:
 		scorer = getattr(model_obj, 'scorer', None)
 		return scorer is not None and hasattr(scorer, 'score_spo_candidates') and hasattr(scorer, 'score_po_candidates')
 
+	def _positive_scores(
+		self,
+		h: torch.Tensor,
+		r: torch.Tensor,
+		t: torch.Tensor,
+		*,
+		model_obj=None,
+	):
+		"""Tail-mode positive scores (KnowledgeGraphEmbedding ``mode='single'`` recipe)."""
+
+		model_obj = model_obj or get_model_obj(self.model)
+		h_emb = model_obj.embed_s(h)
+		r_emb = model_obj.embed_p(r)
+		t_emb = model_obj.embed_o(t)
+		scorer = model_obj.scorer
+		if hasattr(scorer, 'score_spo'):
+			return scorer.score_spo(h_emb, r_emb, t_emb)
+		return self.model.score_spo(h, r, t)
+
 	def _candidate_scoring_context(
 		self,
 		h: torch.Tensor,
@@ -107,24 +124,10 @@ class NegSampStrategy:
 		if not self._supports_batched_candidate_scoring(model_obj):
 			return None
 
-		scorer = model_obj.scorer
-		if mode == 'tail-batch':
-			h_emb = model_obj.embed_s(h)
-			r_emb = model_obj.embed_p(r)
-			t_emb = model_obj.embed_o(t)
-			pos_scores = scorer.score_spo(h_emb, r_emb, t_emb)
-			return {
-				'mode': mode,
-				'h_emb': h_emb,
-				'r_emb': r_emb,
-				't_emb': t_emb,
-				'pos_scores': pos_scores,
-			}
-
 		h_emb = model_obj.embed_s(h)
 		r_emb = model_obj.embed_p(r)
 		t_emb = model_obj.embed_o(t)
-		pos_scores = scorer.score_po(h_emb, r_emb, t_emb)
+		pos_scores = self._positive_scores(h, r, t, model_obj=model_obj)
 		return {
 			'mode': mode,
 			'h_emb': h_emb,
@@ -165,22 +168,23 @@ class NegSampStrategy:
 		if dataloader is not None:
 			yield from dataloader
 			return
-		yield from self._iter_train_batches(epoch)
+		if self._pointwise_mode or self.train_triples is None:
+			yield from self._iter_train_batches(epoch)
+			return
+		yield from self._iter_bidirectional_train_batches(epoch)
 
-	def train_batch(self, batch, epoch: int) -> float:
+	def train_batch(self, batch, epoch: int, *, mode: str | None = None) -> float:
 		del epoch
+		batch, mode = self._unpack_training_batch(batch, mode)
 		self.model.train()
 		self.optimizer.zero_grad(set_to_none=True)
-		current_mode = None if self._pointwise_mode else self._slot_modes[self._slot_step % 2]
-		if not self._pointwise_mode:
-			self._slot_step += 1
 
-		sample_result = self.sampler.sample(batch, current_mode)
+		sample_result = self.sampler.sample(batch, mode)
 		if len(sample_result) == 4:
-			pos_batch, neg_batch, weights, mode = sample_result
+			pos_batch, neg_batch, weights, sampled_mode = sample_result
+			mode = sampled_mode
 		else:
 			pos_batch, neg_batch, weights = sample_result
-			mode = current_mode
 
 		if isinstance(batch, dict):
 			for key in batch:
@@ -253,32 +257,72 @@ class NegSampStrategy:
 
 		return float(loss.item())
 
+	def _unpack_training_batch(self, batch, mode: str | None) -> tuple[torch.Tensor | dict, str | None]:
+		if (
+			mode is None
+			and isinstance(batch, (tuple, list))
+			and len(batch) == 2
+			and isinstance(batch[1], str)
+		):
+			return batch[0], batch[1]
+		return batch, mode
+
+	def _shuffled_triples(self, epoch: int, *, stream: str) -> torch.Tensor:
+		triples = self.train_triples
+		if not self.shuffle_train:
+			return triples
+		generator = torch.Generator()
+		seed = int(getattr(self.args, 'seed', 0) or 0) + int(epoch)
+		stream_offsets = {'head': 1_000_003, 'tail': 2_000_003}
+		generator.manual_seed(seed + stream_offsets.get(stream, 0))
+		return triples[torch.randperm(triples.size(0), generator=generator)]
+
+	@staticmethod
+	def _batch_chunks(triples: torch.Tensor, batch_size: int):
+		for start in range(0, len(triples), batch_size):
+			yield triples[start:start + batch_size]
+
+	def _iter_bidirectional_train_batches(self, epoch: int):
+		"""Alternate tail/head batches from independent shuffles (KGE ``BidirectionalOneShotIterator``)."""
+
+		batch_size = max(getattr(self.args, 'batch_size', 1024), 1)
+		head_batches = list(
+			self._batch_chunks(self._shuffled_triples(epoch, stream='head'), batch_size)
+		)
+		tail_batches = list(
+			self._batch_chunks(self._shuffled_triples(epoch, stream='tail'), batch_size)
+		)
+		head_idx = 0
+		tail_idx = 0
+		step = 0
+		while head_idx < len(head_batches) or tail_idx < len(tail_batches):
+			step += 1
+			if step % 2 == 0:
+				if head_idx < len(head_batches):
+					yield head_batches[head_idx], 'head-batch'
+					head_idx += 1
+				elif tail_idx < len(tail_batches):
+					yield tail_batches[tail_idx], 'tail-batch'
+					tail_idx += 1
+				else:
+					break
+			elif tail_idx < len(tail_batches):
+				yield tail_batches[tail_idx], 'tail-batch'
+				tail_idx += 1
+			elif head_idx < len(head_batches):
+				yield head_batches[head_idx], 'head-batch'
+				head_idx += 1
+			else:
+				break
+
 	def _iter_train_batches(self, epoch: int):
 		if self.train_dataloader is not None:
 			yield from self.train_dataloader
 			return
 
 		batch_size = max(getattr(self.args, 'batch_size', 1024), 1)
-		triples = self.train_triples
-		if self.shuffle_train:
-			generator = torch.Generator()
-			generator.manual_seed(int(getattr(self.args, 'seed', 0) or 0) + int(epoch))
-			permutation = torch.randperm(triples.size(0), generator=generator)
-			triples = triples[permutation]
-		for start in range(0, len(triples), batch_size):
-			yield triples[start:start + batch_size]
-
-	def _score_triple(
-		self,
-		h: torch.Tensor,
-		r: torch.Tensor,
-		t: torch.Tensor,
-		*,
-		predict_head: bool,
-	) -> torch.Tensor:
-		if predict_head and hasattr(get_model_obj(self.model).scorer, 'score_po'):
-			return self.model.score_po(r, t, s=h)
-		return self.model.score_spo(h, r, t)
+		for chunk in self._batch_chunks(self._shuffled_triples(epoch, stream='tail'), batch_size):
+			yield chunk
 
 	def _score_filtered_negatives(
 		self,
@@ -304,8 +348,7 @@ class NegSampStrategy:
 				raise ValueError(f'Unsupported negative-sampling mode: {mode}')
 			return context['pos_scores'], neg_scores
 
-		predict_head = mode == 'head-batch'
-		pos_scores = self._score_triple(h, r, t, predict_head=predict_head)
+		pos_scores = self._positive_scores(h, r, t)
 
 		batch_size, num_neg = neg_entity_ids.shape
 		if mode == 'tail-batch':
@@ -376,8 +419,7 @@ class NegSampStrategy:
 		if context is not None:
 			pos_scores = context['pos_scores']
 		else:
-			predict_head = mode == 'head-batch'
-			pos_scores = self._score_triple(h, r, t, predict_head=predict_head)
+			pos_scores = self._positive_scores(h, r, t)
 		num_neg = int(neg_entity_ids.size(1))
 
 		def score_neg_columns(start: int, end: int) -> torch.Tensor:

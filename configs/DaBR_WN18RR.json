@@ -46,7 +46,7 @@
 
 
 
-  "epoch_per_eval": 400,
+  "epoch_per_eval": 100,
 
   "eval_batch_size": 64,
 
