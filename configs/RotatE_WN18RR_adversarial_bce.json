@@ -21,8 +21,9 @@
   "weight_decay": 0.0,
   "warm_up_steps": 40000,
   "lr_decay_factor": 0.1,
+  "lr_decay_preserve_optimizer": false,
   "shuffle_train": true,
-  "use_amp": true,
+  "use_amp": false,
 
   "n_sample": 1024,
   "neg_score_chunk_size": 128,
