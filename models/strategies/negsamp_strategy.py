@@ -428,6 +428,11 @@ class NegSampStrategy:
 	def _compute_loss(self, pos_scores: torch.Tensor, neg_scores: torch.Tensor, weights) -> torch.Tensor:
 		"""Dispatch to negsamp-style loss or row-wise softmax fallback."""
 
+		if self._pointwise_mode:
+			# Pointwise DaBR uses one loss term per scored triple; subsampling weights
+			# are not defined at positive-row granularity.
+			weights = None
+
 		try:
 			return self.loss_fn(pos_scores, neg_scores, weights)
 		except TypeError:

@@ -213,14 +213,16 @@ class PointwiseNegSampler:
             sampled['relation'][pos_size:],
             sampled['tail_id'][pos_size:],
         ], dim=-1)
-        return pos_triples, neg_triples, sampled['labels'], mode
+        return pos_triples, neg_triples, None, mode
 
 
 def build_sampler(args, train_triples, model):
     """Construct a pointwise Bernoulli sampler for DaBR-style training."""
 
+    from models.builder import _resolve_nentity
+
     del train_triples
-    num_entities = model.ent_embeddings.num_embeddings
+    num_entities = _resolve_nentity(args, model)
     return PointwiseNegSampler(args, num_entities)
 
 
