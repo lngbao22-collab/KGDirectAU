@@ -23,7 +23,8 @@ class ContrastiveTrainingState(nn.Module):
 		)
 		self.add_margin = float(getattr(args, 'additive_margin', 0.0))
 		self.batch_size = int(getattr(args, 'batch_size', 512))
-		self.pre_batch = int(getattr(args, 'pre_batch', 0))
+		pre_batch = getattr(args, 'pre_batch', None)
+		self.pre_batch = int(pre_batch if pre_batch is not None else 0)
 		num_pre_batch_vectors = max(1, self.pre_batch) * self.batch_size
 		random_vector = torch.randn(num_pre_batch_vectors, hidden_size)
 		self.register_buffer(

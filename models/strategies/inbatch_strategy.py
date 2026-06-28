@@ -15,6 +15,7 @@ from metrics.ranking import topk_accuracy as accuracy
 from models.builder import import_module_from_path, init_index_kge_trainer, load_attr_from_path, load_loss_fn, run_kge_train_loop
 from utils.checkpoint import best_model_path, last_model_path, save_checkpoint
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
+from utils.logger import AverageMeter, ProgressMeter, logger
 from utils.training_cadence import init_step_cadence_state
 from utils.memory import PhaseMemoryTracker, format_memory
 
