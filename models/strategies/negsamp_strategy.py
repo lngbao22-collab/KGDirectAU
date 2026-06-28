@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Iterable
 
 import torch
@@ -101,13 +102,19 @@ class NegSampStrategy:
 		t: torch.Tensor,
 		*,
 		model_obj=None,
+		h_emb: torch.Tensor | None = None,
+		r_emb: torch.Tensor | None = None,
+		t_emb: torch.Tensor | None = None,
 	):
 		"""Tail-mode positive scores (KnowledgeGraphEmbedding ``mode='single'`` recipe)."""
 
 		model_obj = model_obj or get_model_obj(self.model)
-		h_emb = model_obj.embed_s(h)
-		r_emb = model_obj.embed_p(r)
-		t_emb = model_obj.embed_o(t)
+		if h_emb is None:
+			h_emb = model_obj.embed_s(h)
+		if r_emb is None:
+			r_emb = model_obj.embed_p(r)
+		if t_emb is None:
+			t_emb = model_obj.embed_o(t)
 		scorer = model_obj.scorer
 		if hasattr(scorer, 'score_spo'):
 			return scorer.score_spo(h_emb, r_emb, t_emb)
@@ -127,7 +134,16 @@ class NegSampStrategy:
 		h_emb = model_obj.embed_s(h)
 		r_emb = model_obj.embed_p(r)
 		t_emb = model_obj.embed_o(t)
-		pos_scores = self._positive_scores(h, r, t, model_obj=model_obj)
+		# Share one embedding lookup with negative scoring (pos always uses tail-mode spo).
+		pos_scores = self._positive_scores(
+			h,
+			r,
+			t,
+			model_obj=model_obj,
+			h_emb=h_emb,
+			r_emb=r_emb,
+			t_emb=t_emb,
+		)
 		return {
 			'mode': mode,
 			'h_emb': h_emb,
@@ -176,6 +192,8 @@ class NegSampStrategy:
 	def train_batch(self, batch, epoch: int, *, mode: str | None = None) -> float:
 		del epoch
 		batch, mode = self._unpack_training_batch(batch, mode)
+		if not self._pointwise_mode and mode is None:
+			raise ValueError('Filtered negative-sampling requires an explicit head-batch or tail-batch mode')
 		self.model.train()
 		self.optimizer.zero_grad(set_to_none=True)
 
@@ -255,7 +273,13 @@ class NegSampStrategy:
 		if self._normalize_phases_fn is not None:
 			self._normalize_phases_fn(self.model)
 
-		return float(loss.item())
+		loss_value = float(loss.detach().item())
+		if not math.isfinite(loss_value):
+			raise FloatingPointError(
+				f'Non-finite training loss ({loss_value}) in {mode} batch; '
+				'check embeddings/scores for NaN/Inf'
+			)
+		return loss_value
 
 	def _unpack_training_batch(self, batch, mode: str | None) -> tuple[torch.Tensor | dict, str | None]:
 		if (

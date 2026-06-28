@@ -48,5 +48,5 @@
   "tie_atol": 1e-05,
 
   "normalize_lp_scores": false,
-  "report_au": true
+  "report_au": false
 }
