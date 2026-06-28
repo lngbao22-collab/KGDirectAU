@@ -113,6 +113,15 @@ def build_parser() -> argparse.ArgumentParser:
                         help='learning-rate scheduler')
     parser.add_argument('--max-num-tokens', default=None, type=int,
                         help='maximum number of tokens for text-based models')
+    parser.add_argument('--encode-micro-batch-size', '--encode_micro_batch_size', default=None, type=int,
+                        dest='encode_micro_batch_size',
+                        help='chunk size for BERT encode passes (0 = full batch; default 64 when batch_size > 64)')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--encode-checkpoint', '--encode_checkpoint', dest='encode_checkpoint',
+                       action='store_true', default=None,
+                       help='checkpoint BERT encode chunks to reduce GPU memory during training')
+    group.add_argument('--no-encode-checkpoint', '--no_encode_checkpoint', dest='encode_checkpoint',
+                       action='store_false', help='disable BERT encode checkpointing')
     parser.add_argument('--max-uniformity-samples', '--max_uniformity_samples', default=None, type=int,
                         dest='max_uniformity_samples',
                         help='maximum number of embeddings used to estimate the AU uniformity term (0=no cap)')

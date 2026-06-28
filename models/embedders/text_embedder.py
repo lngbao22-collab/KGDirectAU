@@ -40,6 +40,28 @@ def pool_output(
 	return nn.functional.normalize(output_vector, dim=1)
 
 
+def _resolve_encode_micro_batch_size(args: Any, batch_size: int) -> int:
+	"""Cap BERT encode chunks to limit activation memory on single-GPU training."""
+
+	explicit = getattr(args, 'encode_micro_batch_size', None)
+	if explicit is not None:
+		explicit = int(explicit)
+		return batch_size if explicit <= 0 else min(explicit, batch_size)
+	train_batch = int(getattr(args, 'batch_size', batch_size))
+	if batch_size > 64 or train_batch > 64:
+		return min(batch_size, 64)
+	return batch_size
+
+
+def _use_encode_checkpoint(args: Any, *, training: bool) -> bool:
+	if not training:
+		return False
+	value = getattr(args, 'encode_checkpoint', None)
+	if value is not None:
+		return bool(value)
+	return int(getattr(args, 'batch_size', 512)) > 64
+
+
 class _BertTextEncoder(nn.Module):
 	"""Shared BERT encode + pool path."""
 
@@ -52,7 +74,7 @@ class _BertTextEncoder(nn.Module):
 		self.encoder = shared_encoder if shared_encoder is not None else AutoModel.from_pretrained(args.bert_encoder)
 		self.pooling = getattr(args, 'pooling', 'mean')
 
-	def encode(
+	def _encode_once(
 		self,
 		token_ids: torch.Tensor,
 		mask: torch.Tensor,
@@ -67,6 +89,47 @@ class _BertTextEncoder(nn.Module):
 		last_hidden_state = outputs.last_hidden_state
 		cls_output = last_hidden_state[:, 0, :]
 		return pool_output(self.pooling, cls_output, mask, last_hidden_state)
+
+	def encode(
+		self,
+		token_ids: torch.Tensor,
+		mask: torch.Tensor,
+		token_type_ids: torch.Tensor,
+	) -> torch.Tensor:
+		batch_size = token_ids.size(0)
+		micro = _resolve_encode_micro_batch_size(self.args, batch_size)
+		use_checkpoint = _use_encode_checkpoint(self.args, training=self.training)
+
+		if micro >= batch_size:
+			if use_checkpoint:
+				return torch.utils.checkpoint.checkpoint(
+					self._encode_once,
+					token_ids,
+					mask,
+					token_type_ids,
+					use_reentrant=False,
+				)
+			return self._encode_once(token_ids, mask, token_type_ids)
+
+		chunks = []
+		for start in range(0, batch_size, micro):
+			end = min(start + micro, batch_size)
+			chunk_ids = token_ids[start:end]
+			chunk_mask = mask[start:end]
+			chunk_type_ids = token_type_ids[start:end]
+			if use_checkpoint:
+				chunks.append(
+					torch.utils.checkpoint.checkpoint(
+						self._encode_once,
+						chunk_ids,
+						chunk_mask,
+						chunk_type_ids,
+						use_reentrant=False,
+					)
+				)
+			else:
+				chunks.append(self._encode_once(chunk_ids, chunk_mask, chunk_type_ids))
+		return torch.cat(chunks, dim=0)
 
 
 class TextEntityEmbedder(_BertTextEncoder):

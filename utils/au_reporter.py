@@ -19,6 +19,7 @@ from models.strategies.kgau_strategy import (
 	_scheduled_gamma_mult,
 	_scheduled_tuni_value,
 )
+from base.model import resolve_relation_index
 from utils.device import get_model_obj, move_to_cuda
 from utils.logger import logger
 
@@ -334,7 +335,8 @@ class AUReporter:
 			[entity_dict.entity_to_idx(example.head_id) for example in examples], dtype=torch.long,
 		)
 		relation_indices = torch.tensor(
-			[relation_to_idx[example.relation] for example in examples], dtype=torch.long,
+			[resolve_relation_index(example.relation, relation_to_idx) for example in examples],
+			dtype=torch.long,
 		)
 		tail_indices = torch.tensor(
 			[entity_dict.entity_to_idx(example.tail_id) for example in examples], dtype=torch.long,
