@@ -167,7 +167,8 @@ class RotatEScorer(KGEScorer):
 			end = min(start + chunk_size, num_candidates)
 			re_score = q_re.unsqueeze(1) - cand_re[start:end].unsqueeze(0)
 			im_score = q_im.unsqueeze(1) - cand_im[start:end].unsqueeze(0)
-			scores[:, start:end] = self.margin - torch.sqrt(re_score ** 2 + im_score ** 2).sum(dim=-1)
+			diff_abs = self._abs_complex(re_score, im_score)
+			scores[:, start:end] = self.margin - diff_abs.sum(dim=-1)
 		return scores
 
 	def _rotate_query(
@@ -336,7 +337,8 @@ class RotatEScorer(KGEScorer):
 		else:
 			re_score = h_re * r_re - h_im * r_im - t_re
 			im_score = h_re * r_im + h_im * r_re - t_im
-		return self.margin - torch.sqrt(re_score ** 2 + im_score ** 2).sum(dim=-1)
+		diff_abs = self._abs_complex(re_score, im_score)
+		return self.margin - diff_abs.sum(dim=-1)
 
 	def au_representations(
 		self,

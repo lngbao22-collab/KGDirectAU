@@ -101,12 +101,13 @@ class NegSampStrategy:
 		r: torch.Tensor,
 		t: torch.Tensor,
 		*,
+		mode: str = 'tail-batch',
 		model_obj=None,
 		h_emb: torch.Tensor | None = None,
 		r_emb: torch.Tensor | None = None,
 		t_emb: torch.Tensor | None = None,
 	):
-		"""Tail-mode positive scores (KnowledgeGraphEmbedding ``mode='single'`` recipe)."""
+		"""Positive triple scores aligned with the active head/tail corruption mode."""
 
 		model_obj = model_obj or get_model_obj(self.model)
 		if h_emb is None:
@@ -116,6 +117,8 @@ class NegSampStrategy:
 		if t_emb is None:
 			t_emb = model_obj.embed_o(t)
 		scorer = model_obj.scorer
+		if mode == 'head-batch' and hasattr(scorer, 'score_po'):
+			return scorer.score_po(h_emb, r_emb, t_emb)
 		if hasattr(scorer, 'score_spo'):
 			return scorer.score_spo(h_emb, r_emb, t_emb)
 		return self.model.score_spo(h, r, t)
@@ -134,11 +137,11 @@ class NegSampStrategy:
 		h_emb = model_obj.embed_s(h)
 		r_emb = model_obj.embed_p(r)
 		t_emb = model_obj.embed_o(t)
-		# Share one embedding lookup with negative scoring (pos always uses tail-mode spo).
 		pos_scores = self._positive_scores(
 			h,
 			r,
 			t,
+			mode=mode,
 			model_obj=model_obj,
 			h_emb=h_emb,
 			r_emb=r_emb,
@@ -372,7 +375,7 @@ class NegSampStrategy:
 				raise ValueError(f'Unsupported negative-sampling mode: {mode}')
 			return context['pos_scores'], neg_scores
 
-		pos_scores = self._positive_scores(h, r, t)
+		pos_scores = self._positive_scores(h, r, t, mode=mode)
 
 		batch_size, num_neg = neg_entity_ids.shape
 		if mode == 'tail-batch':
@@ -443,7 +446,7 @@ class NegSampStrategy:
 		if context is not None:
 			pos_scores = context['pos_scores']
 		else:
-			pos_scores = self._positive_scores(h, r, t)
+			pos_scores = self._positive_scores(h, r, t, mode=mode)
 		num_neg = int(neg_entity_ids.size(1))
 
 		def score_neg_columns(start: int, end: int) -> torch.Tensor:
