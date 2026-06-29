@@ -423,6 +423,7 @@ class TextKGEModel(KGEModel):
 		head_mask=None,
 		head_token_type_ids=None,
 		only_ent_embedding=False,
+		encode_hr_only=False,
 		src: torch.Tensor | None = None,
 		rel: torch.Tensor | None = None,
 		dst: torch.Tensor | None = None,
@@ -438,9 +439,23 @@ class TextKGEModel(KGEModel):
 				tail_token_type_ids,
 			)
 
+		if encode_hr_only:
+			hr_vector = self.query_embedder.encode(hr_token_ids, hr_mask, hr_token_type_ids)
+			return {'hr_vector': hr_vector}
+
 		hr_vector = self.query_embedder.encode(hr_token_ids, hr_mask, hr_token_type_ids)
-		tail_vector = self.ent_embedder.encode(tail_token_ids, tail_mask, tail_token_type_ids)
-		head_vector = self.ent_embedder.encode(head_token_ids, head_mask, head_token_type_ids)
+		use_self_negative = self.training and bool(getattr(self.args, 'use_self_negative', False))
+		if use_self_negative and head_token_ids is not None:
+			batch_size = tail_token_ids.size(0)
+			combined_ids = torch.cat([tail_token_ids, head_token_ids], dim=0)
+			combined_mask = torch.cat([tail_mask, head_mask], dim=0)
+			combined_type_ids = torch.cat([tail_token_type_ids, head_token_type_ids], dim=0)
+			combined = self.ent_embedder.encode(combined_ids, combined_mask, combined_type_ids)
+			tail_vector = combined[:batch_size]
+			head_vector = combined[batch_size:]
+		else:
+			tail_vector = self.ent_embedder.encode(tail_token_ids, tail_mask, tail_token_type_ids)
+			head_vector = None
 		return {
 			'hr_vector': hr_vector,
 			'tail_vector': tail_vector,
@@ -470,8 +485,8 @@ class TextKGEModel(KGEModel):
 		labels = torch.arange(batch_size, device=hr_vector.device)
 
 		logits = hr_vector.mm(tail_vector.t())
-		if self.training:
-			logits -= torch.zeros(logits.size(), device=logits.device).fill_diagonal_(self.add_margin)
+		if self.training and self.add_margin:
+			logits.diagonal().sub_(self.add_margin)
 		logits = logits * self.log_inv_t.exp()
 
 		triplet_mask = batch_dict.get('triplet_mask', None)

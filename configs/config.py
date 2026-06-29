@@ -105,6 +105,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--eval-interval-epochs', '--eval_interval_epochs', default=None, type=int,
                         dest='eval_interval_epochs',
                         help='run validation every N epochs (always runs on last epoch)')
+    parser.add_argument('--valid-link-prediction-epochs', '--valid_link_prediction_epochs', default=None, type=int,
+                        dest='valid_link_prediction_epochs',
+                        help='run full link-prediction eval every N epochs (0=skip LP during training)')
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--enable-extra-epoch-metrics', '--enable_extra_epoch_metrics',
                        dest='enable_extra_epoch_metrics', action='store_true', default=False,

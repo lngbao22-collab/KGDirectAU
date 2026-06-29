@@ -58,26 +58,34 @@ class InBatchStrategy(Evaluator):
 		logger.info('Total training steps: {}, warmup steps: {}'.format(num_training_steps, args.warmup))
 		self.scheduler = self._create_lr_scheduler(num_training_steps)
 
-		self.train_loader = torch.utils.data.DataLoader(
-			train_dataset,
-			batch_size=args.batch_size,
-			shuffle=True,
-			collate_fn=collate,
-			num_workers=args.workers,
-			pin_memory=True,
-			drop_last=True,
-		)
+		train_loader_kwargs = {
+			'dataset': train_dataset,
+			'batch_size': args.batch_size,
+			'shuffle': True,
+			'collate_fn': collate,
+			'num_workers': args.workers,
+			'pin_memory': True,
+			'drop_last': True,
+		}
+		if int(args.workers) > 0:
+			train_loader_kwargs['persistent_workers'] = True
+			train_loader_kwargs['prefetch_factor'] = 4
+		self.train_loader = torch.utils.data.DataLoader(**train_loader_kwargs)
 
 		self.valid_loader = None
 		if valid_dataset:
-			self.valid_loader = torch.utils.data.DataLoader(
-				valid_dataset,
-				batch_size=args.batch_size * 2,
-				shuffle=True,
-				collate_fn=collate,
-				num_workers=args.workers,
-				pin_memory=True,
-			)
+			valid_loader_kwargs = {
+				'dataset': valid_dataset,
+				'batch_size': args.batch_size * 2,
+				'shuffle': True,
+				'collate_fn': collate,
+				'num_workers': args.workers,
+				'pin_memory': True,
+			}
+			if int(args.workers) > 0:
+				valid_loader_kwargs['persistent_workers'] = True
+				valid_loader_kwargs['prefetch_factor'] = 4
+			self.valid_loader = torch.utils.data.DataLoader(**valid_loader_kwargs)
 
 		self.memory_tracker = PhaseMemoryTracker()
 		self.best_epoch = None
@@ -123,6 +131,40 @@ class InBatchStrategy(Evaluator):
 		if raw is None:
 			raw = getattr(self.args, 'valid_steps', 10000)
 		return max(int(raw or 10000), 1)
+
+	def _should_run_link_prediction(self, epoch: int) -> bool:
+		raw = getattr(self.args, 'valid_link_prediction_epochs', None)
+		if raw is None:
+			return True
+		interval = int(raw)
+		if interval <= 0:
+			return False
+		return (epoch + 1) % interval == 0 or epoch == self.args.epochs - 1
+
+	def _encode_all_entities_for_eval(self) -> torch.Tensor:
+		from data.dataset import Dataset, Example
+
+		entity_examples = [
+			Example(head_id='', relation='', tail_id=entity_ex.entity_id)
+			for entity_ex in get_entity_dict().entity_exs
+		]
+		batch_size = max(int(getattr(self.args, 'eval_batch_size', 128) or 128), 512)
+		entity_loader = torch.utils.data.DataLoader(
+			Dataset(path='', examples=entity_examples, task=self.args.dataset),
+			num_workers=0,
+			batch_size=batch_size,
+			collate_fn=collate,
+			shuffle=False,
+		)
+		entity_vectors = []
+		use_cuda = torch.cuda.is_available()
+		for batch_dict in entity_loader:
+			batch_dict['only_ent_embedding'] = True
+			if use_cuda:
+				batch_dict = move_to_cuda(batch_dict)
+			outputs = call_model_forward(self.model, batch_dict)
+			entity_vectors.append(outputs['ent_vectors'])
+		return torch.cat(entity_vectors, dim=0)
 
 	def _grad_clip_value(self) -> float:
 		raw = getattr(self.args, 'grad_clip', None)
@@ -308,16 +350,19 @@ class InBatchStrategy(Evaluator):
 
 		valid_mrr = None
 		valid_eval_path = self._resolve_valid_eval_path()
-		if valid_eval_path and os.path.exists(valid_eval_path):
+		if valid_eval_path and os.path.exists(valid_eval_path) and self._should_run_link_prediction(epoch):
 			valid_entity_dict = get_entity_dict()
 			valid_output_path = os.path.join(self.args.output_dir, 'valid_link_prediction.log')
+			entity_embs = self._encode_all_entities_for_eval()
 			forward_metrics = self.evaluate_link_prediction_inplace(
 				self.model, valid_eval_path, valid_entity_dict, valid_output_path,
 				eval_forward=True,
+				all_entity_embs=entity_embs,
 			)
 			backward_metrics = self.evaluate_link_prediction_inplace(
 				self.model, valid_eval_path, valid_entity_dict, valid_output_path,
 				eval_forward=False,
+				all_entity_embs=entity_embs,
 			)
 			if forward_metrics and backward_metrics:
 				metric_dict.update(

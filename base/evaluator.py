@@ -299,11 +299,12 @@ def _evaluate_simkgc_link_prediction(
 	*,
 	filter_known: bool = True,
 	args=None,
+	all_entity_embs: torch.Tensor | None = None,
 ) -> dict:
 	"""Chunked link prediction for token-input models (reference SimKGC ``compute_metrics`` path)."""
 
 	from data.dataset import Dataset, Example
-	from data.dataloader import collate
+	from data.dataloader import collate, collate_hr
 	from metrics.ranking import rerank_by_graph
 	from utils.device import call_model_forward, move_to_cuda
 
@@ -317,35 +318,39 @@ def _evaluate_simkgc_link_prediction(
 		Dataset(path='', examples=scoring_examples, task=eval_args.dataset),
 		num_workers=0,
 		batch_size=batch_size,
-		collate_fn=collate,
+		collate_fn=collate_hr,
 		shuffle=False,
 	)
 	for batch_dict in data_loader:
+		batch_dict['encode_hr_only'] = True
 		if use_cuda:
 			batch_dict = move_to_cuda(batch_dict)
 		outputs = call_model_forward(model, batch_dict)
 		hr_vectors.append(outputs['hr_vector'])
 	hr_tensor = torch.cat(hr_vectors, dim=0)
 
-	entity_examples = [
-		Example(head_id='', relation='', tail_id=entity_ex.entity_id)
-		for entity_ex in entity_dict.entity_exs
-	]
-	entity_loader = torch.utils.data.DataLoader(
-		Dataset(path='', examples=entity_examples, task=eval_args.dataset),
-		num_workers=0,
-		batch_size=max(batch_size, 512),
-		collate_fn=collate,
-		shuffle=False,
-	)
-	entity_vectors = []
-	for batch_dict in entity_loader:
-		batch_dict['only_ent_embedding'] = True
-		if use_cuda:
-			batch_dict = move_to_cuda(batch_dict)
-		outputs = call_model_forward(model, batch_dict)
-		entity_vectors.append(outputs['ent_vectors'])
-	entities_tensor = torch.cat(entity_vectors, dim=0)
+	if all_entity_embs is None:
+		entity_examples = [
+			Example(head_id='', relation='', tail_id=entity_ex.entity_id)
+			for entity_ex in entity_dict.entity_exs
+		]
+		entity_loader = torch.utils.data.DataLoader(
+			Dataset(path='', examples=entity_examples, task=eval_args.dataset),
+			num_workers=0,
+			batch_size=max(batch_size, 512),
+			collate_fn=collate,
+			shuffle=False,
+		)
+		entity_vectors = []
+		for batch_dict in entity_loader:
+			batch_dict['only_ent_embedding'] = True
+			if use_cuda:
+				batch_dict = move_to_cuda(batch_dict)
+			outputs = call_model_forward(model, batch_dict)
+			entity_vectors.append(outputs['ent_vectors'])
+		entities_tensor = torch.cat(entity_vectors, dim=0)
+	else:
+		entities_tensor = all_entity_embs
 
 	device = hr_tensor.device
 	entities_tensor = entities_tensor.to(device)
@@ -999,6 +1004,7 @@ class Evaluator:
                 batch_size,
                 filter_known=True,
                 args=self.args,
+                all_entity_embs=all_entity_embs,
             )
 
         if _supports_kge_1vsall_eval(inner_model):

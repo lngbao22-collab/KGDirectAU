@@ -38,13 +38,14 @@ def call_model_forward(model: nn.Module, batch_dict: dict) -> dict:
         hr_token_ids=batch_dict['hr_token_ids'],
         hr_mask=batch_dict['hr_mask'],
         hr_token_type_ids=batch_dict['hr_token_type_ids'],
-        tail_token_ids=batch_dict['tail_token_ids'],
-        tail_mask=batch_dict['tail_mask'],
-        tail_token_type_ids=batch_dict['tail_token_type_ids'],
-        head_token_ids=batch_dict['head_token_ids'],
-        head_mask=batch_dict['head_mask'],
-        head_token_type_ids=batch_dict['head_token_type_ids'],
+        tail_token_ids=batch_dict.get('tail_token_ids'),
+        tail_mask=batch_dict.get('tail_mask'),
+        tail_token_type_ids=batch_dict.get('tail_token_type_ids'),
+        head_token_ids=batch_dict.get('head_token_ids'),
+        head_mask=batch_dict.get('head_mask'),
+        head_token_type_ids=batch_dict.get('head_token_type_ids'),
         only_ent_embedding=batch_dict.get('only_ent_embedding', False),
+        encode_hr_only=batch_dict.get('encode_hr_only', False),
     )
 
 

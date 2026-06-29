@@ -24,6 +24,7 @@
   "rerank_n_hop": 2,
 
   "batch_size": 512,
+  "shared_encoder": true,
   "epochs": 50,
   "lr": 5e-05,
   "weight_decay": 0.0001,
@@ -32,16 +33,17 @@
 
   "eval_batch_size": 128,
   "eval_every_n_step": 10000,
-  "eval_interval_epochs": 1,
+  "eval_interval_epochs": 5,
+  "valid_link_prediction_epochs": 5,
   "chunk_size": 8192,
   "warmup": 400,
-  "workers": 2,
+  "workers": 4,
   "print_freq": 20,
 
   "max_to_keep": 3,
   "output_dir_prefix": "logs/SimKGC_WN18RR",
 
-  "epoch_per_eval": 1,
+  "epoch_per_eval": 5,
   "early_stopping_patience": 5,
   "early_stopping_min_epochs": 10,
   "early_stopping_min_metric": 0.05
