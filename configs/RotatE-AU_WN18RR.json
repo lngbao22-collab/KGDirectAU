@@ -19,7 +19,7 @@
   "entity_uniformity_batch": true,
   "au_deduplicate": false,
   "gamma_cross": 0,
-  "tuni": 4,
+  "tuni": 2,
 
   "dim": 64,
 
