@@ -291,6 +291,43 @@ def _evaluate_kge_1vsall_batch(
 	return _ranks_from_score_matrix(scores, target_indices)
 
 
+def _encode_simkgc_entity_embeddings(
+	model,
+	entity_dict,
+	batch_size: int,
+	*,
+	args=None,
+) -> torch.Tensor:
+	"""Encode all entity vectors once for SimKGC link prediction."""
+
+	from data.dataset import Dataset, Example
+	from data.dataloader import collate
+	from utils.device import call_model_forward, move_to_cuda
+
+	eval_args = args if args is not None else global_args
+	use_cuda = torch.cuda.is_available()
+	entity_examples = [
+		Example(head_id='', relation='', tail_id=entity_ex.entity_id)
+		for entity_ex in entity_dict.entity_exs
+	]
+	logger.info('[EVAL] Encoding %d entities for link prediction...', len(entity_examples))
+	entity_loader = torch.utils.data.DataLoader(
+		Dataset(path='', examples=entity_examples, task=eval_args.dataset),
+		num_workers=0,
+		batch_size=max(batch_size, 512),
+		collate_fn=collate,
+		shuffle=False,
+	)
+	entity_vectors = []
+	for batch_dict in entity_loader:
+		batch_dict['only_ent_embedding'] = True
+		if use_cuda:
+			batch_dict = move_to_cuda(batch_dict)
+		outputs = call_model_forward(model, batch_dict)
+		entity_vectors.append(outputs['ent_vectors'])
+	return torch.cat(entity_vectors, dim=0)
+
+
 def _evaluate_simkgc_link_prediction(
 	model,
 	examples: Sequence[Example],
@@ -303,8 +340,8 @@ def _evaluate_simkgc_link_prediction(
 ) -> dict:
 	"""Chunked link prediction for token-input models (reference SimKGC ``compute_metrics`` path)."""
 
-	from data.dataset import Dataset, Example
-	from data.dataloader import collate, collate_hr
+	from data.dataset import Dataset
+	from data.dataloader import collate_hr
 	from metrics.ranking import rerank_by_graph
 	from utils.device import call_model_forward, move_to_cuda
 
@@ -313,6 +350,7 @@ def _evaluate_simkgc_link_prediction(
 	use_cuda = torch.cuda.is_available()
 
 	scoring_examples = list(examples)
+	logger.info('[EVAL] Encoding %d query vectors for link prediction...', len(scoring_examples))
 	hr_vectors = []
 	data_loader = torch.utils.data.DataLoader(
 		Dataset(path='', examples=scoring_examples, task=eval_args.dataset),
@@ -330,26 +368,11 @@ def _evaluate_simkgc_link_prediction(
 	hr_tensor = torch.cat(hr_vectors, dim=0)
 
 	if all_entity_embs is None:
-		entity_examples = [
-			Example(head_id='', relation='', tail_id=entity_ex.entity_id)
-			for entity_ex in entity_dict.entity_exs
-		]
-		entity_loader = torch.utils.data.DataLoader(
-			Dataset(path='', examples=entity_examples, task=eval_args.dataset),
-			num_workers=0,
-			batch_size=max(batch_size, 512),
-			collate_fn=collate,
-			shuffle=False,
+		entities_tensor = _encode_simkgc_entity_embeddings(
+			model, entity_dict, batch_size, args=eval_args,
 		)
-		entity_vectors = []
-		for batch_dict in entity_loader:
-			batch_dict['only_ent_embedding'] = True
-			if use_cuda:
-				batch_dict = move_to_cuda(batch_dict)
-			outputs = call_model_forward(model, batch_dict)
-			entity_vectors.append(outputs['ent_vectors'])
-		entities_tensor = torch.cat(entity_vectors, dim=0)
 	else:
+		logger.info('[EVAL] Reusing cached entity embeddings (%d entities)...', all_entity_embs.size(0))
 		entities_tensor = all_entity_embs
 
 	device = hr_tensor.device
@@ -1150,8 +1173,45 @@ class Evaluator:
         eval_path: str,
         entity_dict,
         output_dir: str,
-    ) -> dict[str, dict]:
+    ) -> dict:
         """Run test link prediction with cosine and native KGE scorers."""
+
+        inner_model = get_model_obj(self.model)
+        batch_size = self._eval_batch_size()
+
+        if _supports_simkgc_link_eval(inner_model):
+            logger.info('[TEST] Link prediction (SimKGC cosine scorer)...')
+            log_path = os.path.join(output_dir, 'test_link_prediction.log')
+            entity_embs = _encode_simkgc_entity_embeddings(
+                self.model, entity_dict, batch_size, args=self.args,
+            )
+            forward_metrics = self.evaluate_link_prediction_inplace(
+                self.model,
+                eval_path,
+                entity_dict,
+                log_path,
+                eval_forward=True,
+                all_entity_embs=entity_embs,
+            )
+            backward_metrics = self.evaluate_link_prediction_inplace(
+                self.model,
+                eval_path,
+                entity_dict,
+                log_path,
+                eval_forward=False,
+                all_entity_embs=entity_embs,
+            )
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            return log_bidirectional_link_metrics(
+                '[TEST] Link prediction',
+                forward_metrics,
+                backward_metrics,
+            )
+
+        cached_entity_embs = None
+        if _supports_kge_1vsall_eval(inner_model):
+            cached_entity_embs = inner_model.embed_all_entities()
 
         dual_metrics: dict[str, dict] = {}
         for label, normalize in (('cosine', True), ('original', False)):
@@ -1163,6 +1223,7 @@ class Evaluator:
                     entity_dict,
                     log_path,
                     eval_forward=True,
+                    all_entity_embs=cached_entity_embs,
                 )
                 backward_metrics = self.evaluate_link_prediction_inplace(
                     self.model,
@@ -1170,6 +1231,7 @@ class Evaluator:
                     entity_dict,
                     log_path,
                     eval_forward=False,
+                    all_entity_embs=cached_entity_embs,
                 )
             dual_metrics[label] = log_bidirectional_link_metrics(
                 f'[TEST] Link prediction ({label} scorer)',
