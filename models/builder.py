@@ -140,7 +140,10 @@ def bind_model(
 
 		from models.embedders.text_embedder import TextQueryEmbedder
 
-		query_embedder = TextQueryEmbedder(args, shared_encoder=deepcopy(ent_embedder.encoder))
+		if getattr(args, 'shared_encoder', False):
+			query_embedder = TextQueryEmbedder(args, shared_encoder=ent_embedder.encoder)
+		else:
+			query_embedder = TextQueryEmbedder(args, shared_encoder=deepcopy(ent_embedder.encoder))
 		return TextKGEModel(ent_embedder, query_embedder, scorer, args)
 
 	return KGEModel(ent_embedder, rel_embedder, scorer, args, aux_embedders=aux_embedders)

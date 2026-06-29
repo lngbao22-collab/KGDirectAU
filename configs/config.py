@@ -99,12 +99,29 @@ def build_parser() -> argparse.ArgumentParser:
                         help='dropout rate')
     parser.add_argument('--epochs', default=None, type=int,
                         help='number of epochs to run')
-    parser.add_argument('--eval-every-n-step', default=None, type=int,
-                        help='evaluate every n steps')
+    parser.add_argument('--eval-every-n-step', '--eval_every_n_step', default=None, type=int,
+                        dest='eval_every_n_step',
+                        help='evaluate every n steps (default: 10000 for SimKGC)')
+    parser.add_argument('--eval-interval-epochs', '--eval_interval_epochs', default=None, type=int,
+                        dest='eval_interval_epochs',
+                        help='run validation every N epochs (always runs on last epoch)')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--enable-extra-epoch-metrics', '--enable_extra_epoch_metrics',
+                       dest='enable_extra_epoch_metrics', action='store_true', default=False,
+                       help='enable additional expensive per-epoch validation metrics')
+    group.add_argument('--no-enable-extra-epoch-metrics', '--no_enable_extra_epoch_metrics',
+                       dest='enable_extra_epoch_metrics', action='store_false',
+                       help='disable expensive per-epoch validation metrics (default)')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--shared-encoder', '--shared_encoder', dest='shared_encoder',
+                       action='store_true', default=False,
+                       help='use one BERT encoder for query and entity text (SimKGC)')
+    group.add_argument('--no-shared-encoder', '--no_shared_encoder', dest='shared_encoder',
+                       action='store_false', help='use separate hr and tail BERT encoders (default)')
     parser.add_argument('--finetune-t', action='store_true',
                         help='make InfoNCE temperature trainable')
-    parser.add_argument('--grad-clip', default=None, type=float,
-                        help='gradient clipping')
+    parser.add_argument('--grad-clip', '--grad_clip', default=None, type=float, dest='grad_clip',
+                        help='gradient clipping (default: 10.0 for SimKGC training)')
     parser.add_argument('--is-test', action='store_true',
                         help='run test-mode evaluation')
     parser.add_argument('--lr', '--learning-rate', default=None, type=float, dest='lr',

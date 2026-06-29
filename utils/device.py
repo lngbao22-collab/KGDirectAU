@@ -24,7 +24,39 @@ def init_hardware(args) -> int:
     if torch.cuda.is_available():
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
+        try:
+            torch.set_float32_matmul_precision('high')
+        except Exception:
+            pass
     return ngpus_per_node
+
+
+def call_model_forward(model: nn.Module, batch_dict: dict) -> dict:
+    """Call ``model.forward`` with explicit kwargs (DataParallel-safe, SimKGC-style)."""
+
+    return model(
+        hr_token_ids=batch_dict['hr_token_ids'],
+        hr_mask=batch_dict['hr_mask'],
+        hr_token_type_ids=batch_dict['hr_token_type_ids'],
+        tail_token_ids=batch_dict['tail_token_ids'],
+        tail_mask=batch_dict['tail_mask'],
+        tail_token_type_ids=batch_dict['tail_token_type_ids'],
+        head_token_ids=batch_dict['head_token_ids'],
+        head_mask=batch_dict['head_mask'],
+        head_token_type_ids=batch_dict['head_token_type_ids'],
+        only_ent_embedding=batch_dict.get('only_ent_embedding', False),
+    )
+
+
+def setup_data_parallel(model: nn.Module) -> nn.Module:
+    """Wrap *model* with DataParallel when multiple GPUs are available."""
+
+    if torch.cuda.device_count() > 1:
+        return torch.nn.DataParallel(model).cuda()
+    if torch.cuda.is_available():
+        return model.cuda()
+    logger.info('No gpu will be used')
+    return model
 
 
 def setup_cuda(enable: bool = True, seed: Optional[int] = None, benchmark: bool = True, deterministic: bool = False) -> torch.device:

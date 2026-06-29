@@ -432,52 +432,97 @@ class TextKGEModel(KGEModel):
 			return self.score_spo(src, rel, dst)
 
 		if only_ent_embedding:
-			ent_vectors = self.ent_embedder.encode(
+			return self.predict_ent_embedding(
 				tail_token_ids,
 				tail_mask,
 				tail_token_type_ids,
 			)
-			return {'ent_vectors': ent_vectors.detach()}
 
 		hr_vector = self.query_embedder.encode(hr_token_ids, hr_mask, hr_token_type_ids)
 		tail_vector = self.ent_embedder.encode(tail_token_ids, tail_mask, tail_token_type_ids)
-		need_head = (
-			head_token_ids is not None
-			and self.training
-			and bool(getattr(self.args, 'use_self_negative', False))
-		)
-		head_vector = (
-			self.ent_embedder.encode(head_token_ids, head_mask, head_token_type_ids)
-			if need_head
-			else None
-		)
+		head_vector = self.ent_embedder.encode(head_token_ids, head_mask, head_token_type_ids)
 		return {
 			'hr_vector': hr_vector,
 			'tail_vector': tail_vector,
 			'head_vector': head_vector,
 		}
 
-	def compute_logits(self, output_dict: dict, batch_dict: dict) -> dict:
-		"""InfoNCE logits for triple classification eval (legacy interface)."""
+	@torch.no_grad()
+	def predict_ent_embedding(
+		self,
+		tail_token_ids,
+		tail_mask,
+		tail_token_type_ids,
+		**kwargs,
+	) -> dict:
+		ent_vectors = self.ent_embedder.encode(
+			tail_token_ids,
+			tail_mask,
+			tail_token_type_ids,
+		)
+		return {'ent_vectors': ent_vectors.detach()}
 
-		from models.losses.infonce_loss import compute_infonce_logits
+	def compute_logits(self, output_dict: dict, batch_dict: dict) -> dict:
+		"""InfoNCE logits with masking, pre-batch, and self-negative terms (SimKGC-style)."""
 
 		hr_vector, tail_vector = output_dict['hr_vector'], output_dict['tail_vector']
 		batch_size = hr_vector.size(0)
 		labels = torch.arange(batch_size, device=hr_vector.device)
-		logits = compute_infonce_logits(
-			query_vec=hr_vector,
-			candidate_vec=tail_vector,
-			temp=self.log_inv_t,
-			margin=self.add_margin if self.training else 0.0,
-		)
+
+		logits = hr_vector.mm(tail_vector.t())
+		if self.training:
+			logits -= torch.zeros(logits.size(), device=logits.device).fill_diagonal_(self.add_margin)
+		logits = logits * self.log_inv_t.exp()
+
+		triplet_mask = batch_dict.get('triplet_mask', None)
+		if triplet_mask is not None:
+			logits.masked_fill_(~triplet_mask.to(hr_vector.device), -1e4)
+
+		if self.pre_batch > 0 and self.training:
+			pre_batch_logits = self._compute_pre_batch_logits(hr_vector, tail_vector, batch_dict)
+			logits = torch.cat([logits, pre_batch_logits], dim=-1)
+
+		if getattr(self.args, 'use_self_negative', False) and self.training:
+			head_vector = output_dict['head_vector']
+			self_neg_logits = torch.sum(hr_vector * head_vector, dim=1) * self.log_inv_t.exp()
+			self_negative_mask = batch_dict.get('self_negative_mask', None)
+			if self_negative_mask is None:
+				self_negative_mask = torch.ones(batch_size, dtype=torch.bool, device=hr_vector.device)
+			else:
+				self_negative_mask = self_negative_mask.to(hr_vector.device).bool()
+			self_neg_logits.masked_fill_(~self_negative_mask, -1e4)
+			logits = torch.cat([logits, self_neg_logits.unsqueeze(1)], dim=-1)
+
 		return {
 			'logits': logits,
 			'labels': labels,
 			'inv_t': self.log_inv_t.detach().exp(),
 			'hr_vector': hr_vector.detach(),
 			'tail_vector': tail_vector.detach(),
+			'head_vector': output_dict['head_vector'].detach() if output_dict.get('head_vector') is not None else None,
 		}
+
+	def _compute_pre_batch_logits(
+		self,
+		hr_vector: torch.Tensor,
+		tail_vector: torch.Tensor,
+		batch_dict: dict,
+	) -> torch.Tensor:
+		from models.samplers.masking_sampler import construct_mask
+
+		assert tail_vector.size(0) == self.batch_size
+		batch_exs = batch_dict['batch_data']
+		pre_batch_logits = hr_vector.mm(self.pre_batch_vectors.clone().t())
+		pre_batch_logits = pre_batch_logits * self.log_inv_t.exp() * float(getattr(self.args, 'pre_batch_weight', 0.5))
+		if self.pre_batch_exs[-1] is not None:
+			pre_triplet_mask = construct_mask(batch_exs, self.pre_batch_exs).to(hr_vector.device)
+			pre_batch_logits.masked_fill_(~pre_triplet_mask, -1e4)
+
+		self.pre_batch_vectors[self.offset:(self.offset + self.batch_size)] = tail_vector.data.clone()
+		self.pre_batch_exs[self.offset:(self.offset + self.batch_size)] = batch_exs
+		self.offset = (self.offset + self.batch_size) % len(self.pre_batch_exs)
+
+		return pre_batch_logits
 
 	def entity_embeddings(
 		self,

@@ -300,24 +300,52 @@ def _evaluate_simkgc_link_prediction(
 	filter_known: bool = True,
 	args=None,
 ) -> dict:
-	"""Chunked link prediction for token-input models (SimKGC ``compute_metrics`` path)."""
+	"""Chunked link prediction for token-input models (reference SimKGC ``compute_metrics`` path)."""
 
+	from data.dataset import Dataset, Example
+	from data.dataloader import collate
 	from metrics.ranking import rerank_by_graph
+	from utils.device import call_model_forward, move_to_cuda
 
 	eval_args = args if args is not None else global_args
-	model = get_model_obj(model)
 	model.eval()
+	use_cuda = torch.cuda.is_available()
 
 	scoring_examples = list(examples)
-	hr_tensor, _ = model.predict_by_examples(scoring_examples, batch_size=batch_size)
+	hr_vectors = []
+	data_loader = torch.utils.data.DataLoader(
+		Dataset(path='', examples=scoring_examples, task=eval_args.dataset),
+		num_workers=0,
+		batch_size=batch_size,
+		collate_fn=collate,
+		shuffle=False,
+	)
+	for batch_dict in data_loader:
+		if use_cuda:
+			batch_dict = move_to_cuda(batch_dict)
+		outputs = call_model_forward(model, batch_dict)
+		hr_vectors.append(outputs['hr_vector'])
+	hr_tensor = torch.cat(hr_vectors, dim=0)
+
 	entity_examples = [
 		Example(head_id='', relation='', tail_id=entity_ex.entity_id)
 		for entity_ex in entity_dict.entity_exs
 	]
-	entities_tensor = model.predict_by_entities(
-		entity_examples,
+	entity_loader = torch.utils.data.DataLoader(
+		Dataset(path='', examples=entity_examples, task=eval_args.dataset),
+		num_workers=0,
 		batch_size=max(batch_size, 512),
+		collate_fn=collate,
+		shuffle=False,
 	)
+	entity_vectors = []
+	for batch_dict in entity_loader:
+		batch_dict['only_ent_embedding'] = True
+		if use_cuda:
+			batch_dict = move_to_cuda(batch_dict)
+		outputs = call_model_forward(model, batch_dict)
+		entity_vectors.append(outputs['ent_vectors'])
+	entities_tensor = torch.cat(entity_vectors, dim=0)
 
 	device = hr_tensor.device
 	entities_tensor = entities_tensor.to(device)
@@ -952,19 +980,20 @@ class Evaluator:
     ) -> dict:
         """Evaluate link prediction using the model's forward pass."""
         batch_size = self._eval_batch_size(batch_size)
-        model = get_model_obj(model)
-        model.eval()
+        eval_model = model
+        inner_model = get_model_obj(model)
+        inner_model.eval()
         if not os.path.exists(eval_path):
             logger.info(f"[EVAL] {eval_path} not found, skip link prediction evaluation.")
             return {}
         if examples is None:
             examples = load_data(eval_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
 
-        if _supports_simkgc_link_eval(model):
+        if _supports_simkgc_link_eval(inner_model):
             direction = 'forward' if eval_forward else 'backward'
             logger.info('[EVAL] Link prediction (%s) on %d queries (SimKGC path)...', direction, len(examples))
             return _evaluate_simkgc_link_prediction(
-                model,
+                eval_model,
                 examples,
                 entity_dict,
                 batch_size,
@@ -972,11 +1001,11 @@ class Evaluator:
                 args=self.args,
             )
 
-        if _supports_kge_1vsall_eval(model):
+        if _supports_kge_1vsall_eval(inner_model):
             direction = 'forward' if eval_forward else 'backward'
             logger.info('[EVAL] Link prediction (%s) on %d queries...', direction, len(examples))
             ranks = _evaluate_kge_link_prediction(
-                model,
+                inner_model,
                 examples,
                 entity_dict,
                 batch_size,
@@ -987,6 +1016,7 @@ class Evaluator:
             )
             return ranking_metrics_from_ranks(ranks)
 
+        model = inner_model
         predict_head = (not eval_forward) and _uses_head_batch_scoring(model)
         scoring_examples = _coerce_forward_examples(examples) if predict_head else list(examples)
 

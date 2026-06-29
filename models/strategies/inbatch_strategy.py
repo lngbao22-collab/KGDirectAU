@@ -2,22 +2,22 @@
 
 import json
 import os
+import time
 
 import torch
 from torch.optim import AdamW
 from transformers import get_cosine_schedule_with_warmup, get_linear_schedule_with_warmup
 
 from base.evaluator import Evaluator, log_bidirectional_link_metrics
-from data.dataset import Dataset
+from data.dataset import Dataset, load_data
 from data.dataloader import collate
 from data.dict_hub import build_tokenizer, get_entity_dict
 from metrics.ranking import topk_accuracy as accuracy
-from models.builder import import_module_from_path, init_index_kge_trainer, load_attr_from_path, load_loss_fn, run_kge_train_loop
+from models.builder import import_module_from_path, init_index_kge_trainer, load_attr_from_path, load_loss_fn
 from utils.checkpoint import best_model_path, last_model_path, save_checkpoint
-from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
-from utils.logger import AverageMeter, ProgressMeter, logger
-from utils.training_cadence import init_step_cadence_state
-from utils.memory import PhaseMemoryTracker, format_memory
+from utils.device import call_model_forward, get_model_obj, move_to_cuda, report_num_trainable_parameters, setup_data_parallel
+from utils.logger import AverageMeter, ProgressMeter, logger, log_run_timing
+from utils.memory import PhaseMemoryTracker
 
 
 class InBatchStrategy(Evaluator):
@@ -40,8 +40,9 @@ class InBatchStrategy(Evaluator):
 
 		warmup_data_structures()
 		init_index_kge_trainer(self, model, args)
+		self._setup_training()
 		self.criterion = loss_fn if loss_fn is not None else load_loss_fn(args)
-		self._load_loss_and_sampler_helpers(args)
+		self._load_loss_helpers(args)
 
 		self.optimizer = AdamW(
 			[p for p in self.model.parameters() if p.requires_grad],
@@ -78,27 +79,23 @@ class InBatchStrategy(Evaluator):
 				pin_memory=True,
 			)
 
-		if args.use_amp:
-			self.scaler = torch.cuda.amp.GradScaler()
+		self.memory_tracker = PhaseMemoryTracker()
+		self.best_epoch = None
+		self.early_stop_wait = 0
 
-		init_step_cadence_state(self)
+	def _setup_training(self) -> None:
+		"""Match reference SimKGC: DataParallel on multi-GPU, else single CUDA device."""
 
-	def _load_loss_and_sampler_helpers(self, args) -> None:
+		self.model = setup_data_parallel(self.model)
+		self.device = next(self.model.parameters()).device
+
+	def _load_loss_helpers(self, args) -> None:
 		loss_path = getattr(args, 'model_loss_path', '') or 'models/losses/infonce_loss.py'
 		try:
 			self.ModelOutput = load_attr_from_path(loss_path, 'ModelOutput')
-			self.compute_infonce_logits = load_attr_from_path(loss_path, 'compute_infonce_logits')
 		except Exception:
 			loss_mod = import_module_from_path(loss_path)
 			self.ModelOutput = getattr(loss_mod, 'ModelOutput')
-			self.compute_infonce_logits = getattr(loss_mod, 'compute_infonce_logits')
-
-		sampler_path = getattr(args, 'model_sampler_path', '') or 'models/samplers/masking_sampler.py'
-		try:
-			self.construct_mask = load_attr_from_path(sampler_path, 'construct_mask')
-		except Exception:
-			sampler_mod = import_module_from_path(sampler_path)
-			self.construct_mask = getattr(sampler_mod, 'construct_mask')
 
 	def _create_lr_scheduler(self, num_training_steps):
 		if self.args.lr_scheduler == 'linear':
@@ -115,63 +112,74 @@ class InBatchStrategy(Evaluator):
 			)
 		raise ValueError(f'Unknown lr scheduler: {self.args.lr_scheduler}')
 
+	def _eval_interval_epochs(self) -> int:
+		raw = getattr(self.args, 'eval_interval_epochs', None)
+		if raw is None:
+			raw = getattr(self.args, 'epoch_per_eval', 1)
+		return max(int(raw or 1), 1)
+
+	def _eval_every_n_step(self) -> int:
+		raw = getattr(self.args, 'eval_every_n_step', None)
+		if raw is None:
+			raw = getattr(self.args, 'valid_steps', 10000)
+		return max(int(raw or 10000), 1)
+
+	def _grad_clip_value(self) -> float:
+		raw = getattr(self.args, 'grad_clip', None)
+		return 10.0 if raw is None else float(raw)
+
 	def train_loop(self) -> dict:
-		return run_kge_train_loop(self)
+		"""Reference SimKGC ``Trainer.train_loop`` cadence (train time separate from validation)."""
 
-	def _compute_logits(self, output_dict: dict, batch_dict: dict) -> dict:
-		model = get_model_obj(self.model)
-		hr_vector, tail_vector = output_dict['hr_vector'], output_dict['tail_vector']
-		batch_size = hr_vector.size(0)
-		labels = torch.arange(batch_size, device=hr_vector.device)
+		if self.args.use_amp and not hasattr(self, 'scaler'):
+			self.scaler = torch.cuda.amp.GradScaler()
 
-		logits = self.compute_infonce_logits(
-			query_vec=hr_vector,
-			candidate_vec=tail_vector,
-			temp=model.log_inv_t,
-			margin=model.add_margin if model.training else 0.0,
-		)
+		total_start = time.time()
+		train_time = 0.0
+		valid_time = 0.0
 
-		triplet_mask = batch_dict.get('triplet_mask', None)
-		if triplet_mask is not None:
-			logits.masked_fill_(~triplet_mask.to(hr_vector.device), -1e4)
+		for epoch in range(self.args.epochs):
+			epoch_train_start = time.time()
+			self.memory_tracker.begin_phase()
+			self.train_epoch(epoch)
+			self.memory_tracker.end_phase('train')
+			train_time += time.time() - epoch_train_start
 
-		if model.pre_batch > 0 and model.training:
-			pre_batch_logits = self._compute_pre_batch_logits(model, hr_vector, tail_vector, batch_dict)
-			logits = torch.cat([logits, pre_batch_logits], dim=-1)
-
-		if self.args.use_self_negative and model.training:
-			head_vector = output_dict['head_vector']
-			self_neg_logits = torch.sum(hr_vector * head_vector, dim=1) * model.log_inv_t.exp()
-			self_negative_mask = batch_dict.get('self_negative_mask', None)
-			if self_negative_mask is None:
-				self_negative_mask = torch.ones(batch_size, dtype=torch.bool, device=hr_vector.device)
+			should_run_eval = (
+				(epoch + 1) % self._eval_interval_epochs() == 0
+				or epoch == self.args.epochs - 1
+			)
+			if should_run_eval:
+				val_start = time.time()
+				self._run_eval(epoch=epoch)
+				valid_time += time.time() - val_start
 			else:
-				self_negative_mask = self_negative_mask.to(hr_vector.device).bool()
-			self_neg_logits.masked_fill_(~self_negative_mask, -1e4)
-			logits = torch.cat([logits, self_neg_logits.unsqueeze(1)], dim=-1)
+				logger.info(
+					'Skip validation at epoch %d (eval every %d epochs)',
+					epoch,
+					self._eval_interval_epochs(),
+				)
 
+		self.train_time = train_time
+		self.valid_time = valid_time
+		self.total_time = time.time() - total_start
+		self.num_train_epochs = self.args.epochs
+		log_run_timing(
+			train_time=train_time,
+			valid_time=valid_time,
+			total_time=self.total_time,
+			num_train_epochs=self.num_train_epochs,
+		)
+		logger.info('[Timing] Training time (s): %s', round(train_time, 2))
+		logger.info('[Timing] Total run time (s): %s', round(self.total_time, 2))
 		return {
-			'logits': logits,
-			'labels': labels,
-			'inv_t': model.log_inv_t.detach().exp(),
-			'hr_vector': hr_vector.detach(),
-			'tail_vector': tail_vector.detach(),
+			'train_time': train_time,
+			'valid_time': valid_time,
+			'total_time': self.total_time,
+			'num_train_epochs': self.num_train_epochs,
+			'best_metric': self.best_metric,
+			'best_checkpoint_path': self.best_checkpoint_path,
 		}
-
-	def _compute_pre_batch_logits(self, model, hr_vector: torch.Tensor, tail_vector: torch.Tensor, batch_dict: dict) -> torch.Tensor:
-		assert tail_vector.size(0) == model.batch_size
-		batch_exs = batch_dict['batch_data']
-		pre_batch_logits = self.compute_infonce_logits(hr_vector, model.pre_batch_vectors.clone(), model.log_inv_t)
-		pre_batch_logits *= model.args.pre_batch_weight
-		if model.pre_batch_exs[-1] is not None:
-			pre_triplet_mask = self.construct_mask(batch_exs, model.pre_batch_exs).to(hr_vector.device)
-			pre_batch_logits.masked_fill_(~pre_triplet_mask, -1e4)
-
-		model.pre_batch_vectors[model.offset:(model.offset + model.batch_size)] = tail_vector.data.clone()
-		model.pre_batch_exs[model.offset:(model.offset + model.batch_size)] = batch_exs
-		model.offset = (model.offset + model.batch_size) % len(model.pre_batch_exs)
-
-		return pre_batch_logits
 
 	def _compute_infonce_loss(
 		self,
@@ -197,17 +205,8 @@ class InBatchStrategy(Evaluator):
 			prefix='Epoch: [{}]'.format(epoch),
 		)
 
-		from utils.training_cadence import (
-			increment_trainer_global_step,
-			maybe_decay_lr_at_step,
-			resolve_max_steps,
-			resolve_valid_steps,
-			should_stop_at_step,
-		)
-
-		eval_interval = resolve_valid_steps(self.args)
-		if eval_interval is None:
-			eval_interval = getattr(self.args, 'eval_every_n_step', None)
+		eval_every_n_step = self._eval_every_n_step()
+		grad_clip = self._grad_clip_value()
 
 		for i, batch_dict in enumerate(self.train_loader):
 			self.model.train()
@@ -218,11 +217,11 @@ class InBatchStrategy(Evaluator):
 
 			if self.args.use_amp:
 				with torch.amp.autocast(device_type='cuda'):
-					outputs = self.model(**batch_dict)
+					outputs = call_model_forward(self.model, batch_dict)
 			else:
-				outputs = self.model(**batch_dict)
+				outputs = call_model_forward(self.model, batch_dict)
 
-			outputs = self._compute_logits(output_dict=outputs, batch_dict=batch_dict)
+			outputs = get_model_obj(self.model).compute_logits(output_dict=outputs, batch_dict=batch_dict)
 			outputs = self.ModelOutput(**outputs)
 			logits, labels = outputs.logits, outputs.labels
 			assert logits.size(0) == batch_size
@@ -232,35 +231,31 @@ class InBatchStrategy(Evaluator):
 			acc1, acc3 = accuracy(logits, labels, topk=(1, 3))
 			top1.update(acc1.item(), batch_size)
 			top3.update(acc3.item(), batch_size)
-			inv_t.update(outputs.inv_t, 1)
+			inv_t.update(outputs.inv_t.item() if torch.is_tensor(outputs.inv_t) else outputs.inv_t, 1)
 			losses.update(loss.item(), batch_size)
 
 			self.optimizer.zero_grad()
-			grad_clip = getattr(self.args, 'grad_clip', None)
+			step_taken = True
 			if self.args.use_amp:
+				prev_scale = self.scaler.get_scale()
 				self.scaler.scale(loss).backward()
 				self.scaler.unscale_(self.optimizer)
-				if grad_clip is not None:
-					torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
+				torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
 				self.scaler.step(self.optimizer)
 				self.scaler.update()
+				step_taken = self.scaler.get_scale() >= prev_scale
 			else:
 				loss.backward()
-				if grad_clip is not None:
-					torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
+				torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
 				self.optimizer.step()
-			self.scheduler.step()
 
-			step = increment_trainer_global_step(self)
-			maybe_decay_lr_at_step(self, step)
+			if step_taken:
+				self.scheduler.step()
 
 			if i % self.args.print_freq == 0:
 				progress.display(i)
-			if eval_interval and step % int(eval_interval) == 0:
-				self._run_eval(epoch=epoch, step=step)
-			if resolve_max_steps(self.args) is not None and should_stop_at_step(self, step):
-				self._stop_training = True
-				break
+			if (i + 1) % eval_every_n_step == 0:
+				self._run_eval(epoch=epoch, step=i + 1)
 
 		logger.info('Learning rate: {}'.format(self.scheduler.get_last_lr()[0]))
 		log_str = f"[EPOCH {epoch}] Loss: {losses.avg:.4f} | Acc@1: {top1.avg:.2f} | Acc@3: {top3.avg:.2f}"
@@ -268,47 +263,51 @@ class InBatchStrategy(Evaluator):
 
 	@torch.no_grad()
 	def eval_epoch(self, epoch) -> dict:
+		"""In-batch contrastive validation only (link prediction runs in ``_run_eval``)."""
+
 		metric_dict = {}
-		if self.valid_loader:
-			losses = AverageMeter('Loss', ':.4')
-			top1 = AverageMeter('Acc@1', ':6.2f')
-			top3 = AverageMeter('Acc@3', ':6.2f')
+		if not self.valid_loader:
+			return metric_dict
 
-			for _, batch_dict in enumerate(self.valid_loader):
-				self.model.eval()
-				if torch.cuda.is_available():
-					batch_dict = move_to_cuda(batch_dict)
-				batch_size = len(batch_dict['batch_data'])
+		losses = AverageMeter('Loss', ':.4')
+		top1 = AverageMeter('Acc@1', ':6.2f')
+		top3 = AverageMeter('Acc@3', ':6.2f')
 
-				outputs = self.model(**batch_dict)
-				outputs = self._compute_logits(output_dict=outputs, batch_dict=batch_dict)
-				outputs = self.ModelOutput(**outputs)
-				logits, labels = outputs.logits, outputs.labels
-				loss = self._compute_infonce_loss(logits, labels, batch_size, symmetric=False)
-				losses.update(loss.item(), batch_size)
+		for _, batch_dict in enumerate(self.valid_loader):
+			self.model.eval()
+			if torch.cuda.is_available():
+				batch_dict = move_to_cuda(batch_dict)
+			batch_size = len(batch_dict['batch_data'])
 
-				acc1, acc3 = accuracy(logits, labels, topk=(1, 3))
-				top1.update(acc1.item(), batch_size)
-				top3.update(acc3.item(), batch_size)
+			outputs = call_model_forward(self.model, batch_dict)
+			outputs = get_model_obj(self.model).compute_logits(output_dict=outputs, batch_dict=batch_dict)
+			outputs = self.ModelOutput(**outputs)
+			logits, labels = outputs.logits, outputs.labels
+			loss = self._compute_infonce_loss(logits, labels, batch_size, symmetric=False)
+			losses.update(loss.item(), batch_size)
 
-			metric_dict.update({
-				'Acc@1': round(top1.avg, 3),
-				'Acc@3': round(top3.avg, 3),
-				'loss': round(losses.avg, 3),
-			})
+			acc1, acc3 = accuracy(logits, labels, topk=(1, 3))
+			top1.update(acc1.item(), batch_size)
+			top3.update(acc3.item(), batch_size)
 
-		valid_eval_path = None
-		if self.args.valid_path:
-			if self.args.valid_path.endswith('_w_label.txt'):
-				cand_txt = self.args.valid_path.replace('valid_w_label.txt', 'valid.txt')
-				cand_json = self.args.valid_path.replace('valid_w_label.txt', 'valid.txt.json')
-				if os.path.exists(cand_json):
-					valid_eval_path = cand_json
-				elif os.path.exists(cand_txt):
-					valid_eval_path = cand_txt
-			elif self.args.valid_path.endswith('.txt.json') or self.args.valid_path.endswith('.txt'):
-				valid_eval_path = self.args.valid_path
+		metric_dict.update({
+			'Acc@1': round(top1.avg, 3),
+			'Acc@3': round(top3.avg, 3),
+			'loss': round(losses.avg, 3),
+		})
+		if metric_dict:
+			logger.info('Epoch {}, valid metric: {}'.format(epoch, json.dumps(metric_dict)))
+		return metric_dict
 
+	@torch.no_grad()
+	def _run_eval(self, epoch, step=0) -> dict:
+		logger.info('[EVAL] Starting validation for epoch %d...', epoch)
+		eval_start = time.time()
+		self.memory_tracker.begin_phase()
+		metric_dict = self.eval_epoch(epoch)
+
+		valid_mrr = None
+		valid_eval_path = self._resolve_valid_eval_path()
 		if valid_eval_path and os.path.exists(valid_eval_path):
 			valid_entity_dict = get_entity_dict()
 			valid_output_path = os.path.join(self.args.output_dir, 'valid_link_prediction.log')
@@ -320,36 +319,31 @@ class InBatchStrategy(Evaluator):
 				self.model, valid_eval_path, valid_entity_dict, valid_output_path,
 				eval_forward=False,
 			)
-			metric_dict.update(
-				log_bidirectional_link_metrics(f'[EPOCH {epoch}] Valid', forward_metrics, backward_metrics)
-			)
+			if forward_metrics and backward_metrics:
+				metric_dict.update(
+					log_bidirectional_link_metrics(f'[EPOCH {epoch}] Valid', forward_metrics, backward_metrics)
+				)
+				try:
+					valid_mrr = round((forward_metrics.get('mrr', 0) + backward_metrics.get('mrr', 0)) / 2, 4)
+					metric_dict['mrr'] = valid_mrr
+				except Exception:
+					valid_mrr = None
 
-		if metric_dict:
-			logger.info('Epoch {}, valid metric: {}'.format(epoch, json.dumps(metric_dict)))
-		return metric_dict
-
-	@torch.no_grad()
-	def _run_eval(self, epoch, step=0) -> dict:
-		import time
-
-		logger.info('[EVAL] Starting validation for epoch %d...', epoch)
-		eval_start = time.time()
-		self.memory_tracker.begin_phase()
-		metric_dict = self.eval_epoch(epoch)
 		self.memory_tracker.end_phase('eval')
 		eval_elapsed = time.time() - eval_start
-		self.valid_time += eval_elapsed
 		logger.info('[EVAL] Finished validation for epoch %d in %.1fs', epoch, eval_elapsed)
-		monitor_value = self._extract_monitor_value(metric_dict)
-		is_best = monitor_value is not None and (
-			self.best_metric is None or monitor_value > self.best_metric.get('score', float('-inf'))
+
+		is_best = valid_mrr is not None and (
+			self.best_metric is None or valid_mrr > self.best_metric.get('mrr', self.best_metric.get('score', float('-inf')))
 		)
 		if is_best:
-			self.best_metric = {'score': monitor_value, 'metrics': metric_dict, 'epoch': epoch}
+			self.best_metric = {'mrr': valid_mrr, 'score': valid_mrr, 'metrics': metric_dict, 'epoch': epoch}
+			self.best_epoch = epoch
+			logger.info('[BEST] epoch=%d valid_mrr=%s', epoch, valid_mrr)
 
 		saved_checkpoint_path = save_checkpoint({
 			'epoch': epoch,
-			'best_epoch': epoch if is_best else None,
+			'best_epoch': epoch if is_best else getattr(self, 'best_epoch', None),
 			'best_metric': self.best_metric,
 			'args': self.args.__dict__,
 			'state_dict': get_model_obj(self.model).state_dict(),
@@ -360,16 +354,20 @@ class InBatchStrategy(Evaluator):
 			self.best_checkpoint_path = saved_checkpoint_path
 		return metric_dict
 
-	def _extract_monitor_value(self, metric_dict, valid_metric='mrr'):
-		if not metric_dict:
+	def _resolve_valid_eval_path(self) -> str | None:
+		if not self.args.valid_path:
 			return None
-		if valid_metric in metric_dict:
-			return metric_dict[valid_metric]
-		if 'loss' in metric_dict:
-			return -metric_dict['loss']
-		for value in metric_dict.values():
-			if isinstance(value, (int, float)):
-				return value
+		if os.path.exists(self.args.valid_path):
+			return self.args.valid_path
+		if self.args.valid_path.endswith('_w_label.txt'):
+			cand_json = self.args.valid_path.replace('valid_w_label.txt', 'valid.txt.json')
+			cand_txt = self.args.valid_path.replace('valid_w_label.txt', 'valid.txt')
+			if os.path.exists(cand_json):
+				return cand_json
+			if os.path.exists(cand_txt):
+				return cand_txt
+		if self.args.valid_path.endswith('.txt.json') or self.args.valid_path.endswith('.txt'):
+			return self.args.valid_path if os.path.exists(self.args.valid_path) else None
 		return None
 
 

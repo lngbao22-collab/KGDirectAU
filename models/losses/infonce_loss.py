@@ -15,6 +15,7 @@ class ModelOutput:
 	inv_t: torch.Tensor
 	hr_vector: torch.Tensor
 	tail_vector: torch.Tensor
+	head_vector: torch.Tensor | None = None
 
 
 def compute_listwise_loss(scores: torch.Tensor, truth_indices: torch.Tensor) -> torch.Tensor:
