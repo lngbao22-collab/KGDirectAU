@@ -18,7 +18,7 @@
   "gamma_cross": 0,
   "average_uniformity_terms": true,
   "entity_uniformity_batch": true,
-  "au_deduplicate": false,
+  "au_deduplicate": true,
   "tuni": 4,
 
   "dim": 100,
