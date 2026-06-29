@@ -56,6 +56,10 @@ def collate(batch_data: List[dict]) -> dict:
 	)
 
 	batch_exs = [ex['obj'] for ex in batch_data]
+	needs_contrastive_mask = (
+		not args.is_test
+		and all(getattr(ex, 'tail_id', None) for ex in batch_exs)
+	)
 	batch_dict = {
 		'hr_token_ids': hr_token_ids,
 		'hr_mask': hr_mask,
@@ -67,11 +71,31 @@ def collate(batch_data: List[dict]) -> dict:
 		'head_mask': head_mask,
 		'head_token_type_ids': head_token_type_ids,
 		'batch_data': batch_exs,
-		'triplet_mask': construct_mask(row_exs=batch_exs) if not args.is_test else None,
-		'self_negative_mask': construct_self_negative_mask(batch_exs) if not args.is_test else None,
+		'triplet_mask': construct_mask(row_exs=batch_exs) if needs_contrastive_mask else None,
+		'self_negative_mask': construct_self_negative_mask(batch_exs) if needs_contrastive_mask else None,
 	}
 
 	return batch_dict
+
+
+def collate_hr(batch_data: List[dict]) -> dict:
+	"""Collate head-relation query batches without contrastive masks."""
+
+	hr_token_ids, hr_mask = to_indices_and_mask(
+		[torch.LongTensor(ex['hr_token_ids']) for ex in batch_data],
+		pad_token_id=get_tokenizer().pad_token_id,
+	)
+	hr_token_type_ids = to_indices_and_mask(
+		[torch.LongTensor(ex['hr_token_type_ids']) for ex in batch_data],
+		need_mask=False,
+	)
+
+	return {
+		'hr_token_ids': hr_token_ids,
+		'hr_mask': hr_mask,
+		'hr_token_type_ids': hr_token_type_ids,
+		'batch_data': [ex['obj'] for ex in batch_data],
+	}
 
 
 def collate_pointwise(batch_data: List[dict]) -> dict:

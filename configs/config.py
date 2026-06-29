@@ -115,13 +115,13 @@ def build_parser() -> argparse.ArgumentParser:
                         help='maximum number of tokens for text-based models')
     parser.add_argument('--encode-micro-batch-size', '--encode_micro_batch_size', default=None, type=int,
                         dest='encode_micro_batch_size',
-                        help='chunk size for BERT encode passes (0 = full batch; default 64 when batch_size > 64)')
+                        help='chunk size for BERT encode passes (0 or omit = full batch; set e.g. 64 to save GPU memory)')
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--encode-checkpoint', '--encode_checkpoint', dest='encode_checkpoint',
-                       action='store_true', default=None,
+                       action='store_true', default=False,
                        help='checkpoint BERT encode chunks to reduce GPU memory during training')
     group.add_argument('--no-encode-checkpoint', '--no_encode_checkpoint', dest='encode_checkpoint',
-                       action='store_false', help='disable BERT encode checkpointing')
+                       action='store_false', help='disable BERT encode checkpointing (default)')
     parser.add_argument('--max-uniformity-samples', '--max_uniformity_samples', default=None, type=int,
                         dest='max_uniformity_samples',
                         help='maximum number of embeddings used to estimate the AU uniformity term (0=no cap)')
@@ -130,7 +130,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help='maximum random pairwise distances for AU uniformity when full pdist is too large')
     parser.add_argument('--max-to-keep', default=None, type=int,
                         help='max rolling checkpoint_epoch*.mdl files to keep; 0 = only best_model.mdl and last_model.mdl')
-    parser.add_argument('--neighbor-weight', default=None, type=float,
+    parser.add_argument('--neighbor-weight', default=0.0, type=float,
                         help='reranking weight')
     parser.add_argument('--pooling', default=None, type=str,
                         help='pooling strategy for text encoders')
@@ -140,7 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help='weight for pre-batch negatives')
     parser.add_argument('-p', '--print-freq', default=None, type=int,
                         help='logging frequency')
-    parser.add_argument('--rerank-n-hop', default=None, type=int,
+    parser.add_argument('--rerank-n-hop', default=2, type=int,
                         help='neighbor hops for reranking during evaluation')
     parser.add_argument('--seed', default=None, type=int,
                         help='random seed')

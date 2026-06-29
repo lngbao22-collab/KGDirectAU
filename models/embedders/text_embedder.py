@@ -9,7 +9,7 @@ import torch.nn as nn
 import tqdm
 from transformers import AutoConfig, AutoModel
 
-from data.dataloader import collate
+from data.dataloader import collate, collate_hr
 from data.dataset import Dataset, Example
 from data.dict_hub import get_entity_dict, get_relation_id_map
 
@@ -41,25 +41,23 @@ def pool_output(
 
 
 def _resolve_encode_micro_batch_size(args: Any, batch_size: int) -> int:
-	"""Cap BERT encode chunks to limit activation memory on single-GPU training."""
+	"""Cap BERT encode chunks to limit activation memory on single-GPU training.
+
+	SimKGC runs full-batch encodes by default. Set ``encode_micro_batch_size`` to a
+	positive value (e.g. 64) only when GPU memory is tight.
+	"""
 
 	explicit = getattr(args, 'encode_micro_batch_size', None)
-	if explicit is not None:
-		explicit = int(explicit)
-		return batch_size if explicit <= 0 else min(explicit, batch_size)
-	train_batch = int(getattr(args, 'batch_size', batch_size))
-	if batch_size > 64 or train_batch > 64:
-		return min(batch_size, 64)
-	return batch_size
+	if explicit is None:
+		return batch_size
+	explicit = int(explicit)
+	return batch_size if explicit <= 0 else min(explicit, batch_size)
 
 
 def _use_encode_checkpoint(args: Any, *, training: bool) -> bool:
 	if not training:
 		return False
-	value = getattr(args, 'encode_checkpoint', None)
-	if value is not None:
-		return bool(value)
-	return int(getattr(args, 'batch_size', 512)) > 64
+	return bool(getattr(args, 'encode_checkpoint', False))
 
 
 class _BertTextEncoder(nn.Module):
@@ -310,7 +308,7 @@ class TextQueryEmbedder(_BertTextEncoder):
 		data_loader = torch.utils.data.DataLoader(
 			Dataset(path='', examples=examples, task=self.args.dataset),
 			batch_size=min(len(examples), max(getattr(self.args, 'batch_size', 512), 512)),
-			collate_fn=collate,
+			collate_fn=collate_hr,
 			shuffle=False,
 			num_workers=0,
 		)

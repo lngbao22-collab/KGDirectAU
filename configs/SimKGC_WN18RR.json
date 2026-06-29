@@ -20,9 +20,12 @@
   "grad_clip": 10.0,
   "max_num_tokens": 50,
   "use_link_graph": true,
-  "rerank_n_hop": 0,
+  "neighbor_weight": 0.05,
+  "rerank_n_hop": 2,
 
   "batch_size": 512,
+  "encode_micro_batch_size": 0,
+  "encode_checkpoint": false,
   "epochs": 50,
   "lr": 5e-05,
   "weight_decay": 0.0001,
