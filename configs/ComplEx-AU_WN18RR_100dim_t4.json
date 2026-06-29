@@ -18,10 +18,8 @@
   "gamma_cross": 0,
   "average_uniformity_terms": true,
   "entity_uniformity_batch": true,
-  "au_deduplicate": true,
+  "au_deduplicate": false,
   "tuni": 4,
-  "learnable_uniformity_scale": true,
-  "log_uniformity_lr": 0.00001,
 
   "dim": 100,
 
@@ -34,9 +32,9 @@
   "optim": "adam",
   "lr": 0.002,
   "weight_decay": 0.0,
-  "warm_up_epochs": 200,
+  "warm_up_epochs": 40,
   "lr_decay_factor": 0.1,
-  "lr_decay_preserve_optimizer": true,
+  "lr_decay_preserve_optimizer": false,
   "test_eval_last": true,
   "test_eval_best": true,
   "shuffle_train": true,
