@@ -441,7 +441,16 @@ class TextKGEModel(KGEModel):
 
 		hr_vector = self.query_embedder.encode(hr_token_ids, hr_mask, hr_token_type_ids)
 		tail_vector = self.ent_embedder.encode(tail_token_ids, tail_mask, tail_token_type_ids)
-		head_vector = self.ent_embedder.encode(head_token_ids, head_mask, head_token_type_ids)
+		need_head = (
+			head_token_ids is not None
+			and self.training
+			and bool(getattr(self.args, 'use_self_negative', False))
+		)
+		head_vector = (
+			self.ent_embedder.encode(head_token_ids, head_mask, head_token_type_ids)
+			if need_head
+			else None
+		)
 		return {
 			'hr_vector': hr_vector,
 			'tail_vector': tail_vector,

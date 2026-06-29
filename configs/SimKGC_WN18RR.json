@@ -24,8 +24,8 @@
   "rerank_n_hop": 2,
 
   "batch_size": 512,
-  "encode_micro_batch_size": 0,
-  "encode_checkpoint": false,
+  "encode_micro_batch_size": 32,
+  "encode_checkpoint": true,
   "epochs": 50,
   "lr": 5e-05,
   "weight_decay": 0.0001,
