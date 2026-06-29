@@ -21,7 +21,7 @@
   "au_deduplicate": true,
   "tuni": 4,
   "learnable_uniformity_scale": true,
-  "log_uniformity_lr": 0.001,
+  "log_uniformity_lr": 0.0001,
 
   "dim": 100,
 
