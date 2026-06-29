@@ -480,6 +480,9 @@ def build_parser() -> argparse.ArgumentParser:
                         dest='init_xavier_gain', help='xavier init gain')
     parser.add_argument('--eval-batch-size', '--eval_batch_size', default=None, type=int,
                         dest='eval_batch_size', help='link-prediction evaluation batch size')
+    parser.add_argument('--chunk-size', '--chunk_size', default=None, type=int,
+                        dest='chunk_size',
+                        help='entity chunk size for SimKGC-style link-prediction scoring')
     parser.add_argument('--early-stopping-patience', '--early_stopping_patience',
                         default=None, type=int, dest='early_stopping_patience',
                         help='epochs without valid MRR improvement before early stop')

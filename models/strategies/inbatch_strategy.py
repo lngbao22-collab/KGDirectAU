@@ -217,7 +217,7 @@ class InBatchStrategy(Evaluator):
 			batch_size = len(batch_dict['batch_data'])
 
 			if self.args.use_amp:
-				with torch.cuda.amp.autocast():
+				with torch.amp.autocast(device_type='cuda'):
 					outputs = self.model(**batch_dict)
 			else:
 				outputs = self.model(**batch_dict)
@@ -310,22 +310,15 @@ class InBatchStrategy(Evaluator):
 				valid_eval_path = self.args.valid_path
 
 		if valid_eval_path and os.path.exists(valid_eval_path):
-			from base.evaluator import _supports_kge_1vsall_eval
-
 			valid_entity_dict = get_entity_dict()
 			valid_output_path = os.path.join(self.args.output_dir, 'valid_link_prediction.log')
-			model_obj = get_model_obj(self.model)
-			cached_entity_embs = None
-			if _supports_kge_1vsall_eval(model_obj):
-				logger.info('[EVAL] Encoding %d entities (shared for forward + backward)...', len(valid_entity_dict.entity_exs))
-				cached_entity_embs = model_obj.embed_all_entities()
 			forward_metrics = self.evaluate_link_prediction_inplace(
 				self.model, valid_eval_path, valid_entity_dict, valid_output_path,
-				eval_forward=True, all_entity_embs=cached_entity_embs,
+				eval_forward=True,
 			)
 			backward_metrics = self.evaluate_link_prediction_inplace(
 				self.model, valid_eval_path, valid_entity_dict, valid_output_path,
-				eval_forward=False, all_entity_embs=cached_entity_embs,
+				eval_forward=False,
 			)
 			metric_dict.update(
 				log_bidirectional_link_metrics(f'[EPOCH {epoch}] Valid', forward_metrics, backward_metrics)

@@ -125,7 +125,21 @@ def _model_uses_token_inputs(model) -> bool:
 def _supports_kge_1vsall_eval(model) -> bool:
 	"""Return True when the model exposes LibKGE-style 1-vs-all tail/head scoring."""
 
-	return hasattr(model, 'predict_tail_sp_') or isinstance(model, (KGEModel, TextKGEModel))
+	model_obj = get_model_obj(model)
+	if getattr(model_obj, 'training_input_mode', 'indices') == 'tokens':
+		return False
+	return hasattr(model_obj, 'predict_tail_sp_') or isinstance(model_obj, KGEModel)
+
+
+def _supports_simkgc_link_eval(model) -> bool:
+	"""Return True for token-input models that encode queries/entities like SimKGC."""
+
+	model_obj = get_model_obj(model)
+	return (
+		getattr(model_obj, 'training_input_mode', 'indices') == 'tokens'
+		and hasattr(model_obj, 'predict_by_examples')
+		and hasattr(model_obj, 'predict_by_entities')
+	)
 
 
 def _resolve_relation_index(relation: str, relation_to_idx: dict) -> int:
@@ -275,6 +289,70 @@ def _evaluate_kge_1vsall_batch(
 		raise ValueError(f'Unsupported head_eval_mode: {head_eval_mode}')
 
 	return _ranks_from_score_matrix(scores, target_indices)
+
+
+def _evaluate_simkgc_link_prediction(
+	model,
+	examples: Sequence[Example],
+	entity_dict,
+	batch_size: int,
+	*,
+	filter_known: bool = True,
+	args=None,
+) -> dict:
+	"""Chunked link prediction for token-input models (SimKGC ``compute_metrics`` path)."""
+
+	from metrics.ranking import rerank_by_graph
+
+	eval_args = args if args is not None else global_args
+	model = get_model_obj(model)
+	model.eval()
+
+	scoring_examples = list(examples)
+	hr_tensor, _ = model.predict_by_examples(scoring_examples, batch_size=batch_size)
+	entity_examples = [
+		Example(head_id='', relation='', tail_id=entity_ex.entity_id)
+		for entity_ex in entity_dict.entity_exs
+	]
+	entities_tensor = model.predict_by_entities(
+		entity_examples,
+		batch_size=max(batch_size, 512),
+	)
+
+	device = hr_tensor.device
+	entities_tensor = entities_tensor.to(device)
+	entity_cnt = entities_tensor.size(0)
+	chunk_size = getattr(eval_args, 'chunk_size', None) or 8192
+	chunk_size = max(int(chunk_size), 1)
+	all_triplet_dict = get_all_triplet_dict()
+	ranks: list[int] = []
+
+	for start in range(0, hr_tensor.size(0), batch_size):
+		end = min(start + batch_size, hr_tensor.size(0))
+		batch_hr = hr_tensor[start:end]
+		batch_examples = scoring_examples[start:end]
+		batch_score = torch.zeros(
+			batch_hr.size(0),
+			entity_cnt,
+			device=device,
+			dtype=batch_hr.dtype,
+		)
+		for entity_start in range(0, entity_cnt, chunk_size):
+			entity_end = min(entity_start + chunk_size, entity_cnt)
+			batch_score[:, entity_start:entity_end] = torch.mm(
+				batch_hr,
+				entities_tensor[entity_start:entity_end].t(),
+			)
+
+		rerank_by_graph(batch_score, batch_examples, entity_dict)
+
+		if filter_known:
+			_filter_known(batch_score, batch_examples, all_triplet_dict, entity_dict)
+
+		target_indices = _infer_target_indices(batch_examples, entity_dict, predict_head=False).to(device)
+		ranks.extend(_ranks_from_score_matrix(batch_score, target_indices))
+
+	return ranking_metrics_from_ranks(ranks)
 
 
 def _evaluate_kge_link_prediction(
@@ -644,6 +722,15 @@ def evaluate_model(
         raise ValueError(f'No examples found in {eval_path}')
 
     model = get_model_obj(model)
+    if _supports_simkgc_link_eval(model):
+        metrics = _evaluate_simkgc_link_prediction(
+            model,
+            examples,
+            entity_dict,
+            batch_size,
+            filter_known=filter_known,
+        )
+        return [], [], metrics
     if _supports_kge_1vsall_eval(model):
         ranks_all = _evaluate_kge_link_prediction(
             model,
@@ -872,6 +959,18 @@ class Evaluator:
             return {}
         if examples is None:
             examples = load_data(eval_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
+
+        if _supports_simkgc_link_eval(model):
+            direction = 'forward' if eval_forward else 'backward'
+            logger.info('[EVAL] Link prediction (%s) on %d queries (SimKGC path)...', direction, len(examples))
+            return _evaluate_simkgc_link_prediction(
+                model,
+                examples,
+                entity_dict,
+                batch_size,
+                filter_known=True,
+                args=self.args,
+            )
 
         if _supports_kge_1vsall_eval(model):
             direction = 'forward' if eval_forward else 'backward'

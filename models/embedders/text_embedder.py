@@ -181,7 +181,7 @@ class TextEntityEmbedder(_BertTextEncoder):
 		)
 		vectors = []
 		use_cuda = torch.cuda.is_available()
-		for _, batch_dict in data_loader:
+		for batch_dict in data_loader:
 			if use_cuda:
 				batch_dict = move_to_cuda(batch_dict)
 			vectors.append(
@@ -316,7 +316,7 @@ class TextQueryEmbedder(_BertTextEncoder):
 		)
 		vectors = []
 		use_cuda = torch.cuda.is_available()
-		for _, batch_dict in data_loader:
+		for batch_dict in data_loader:
 			if use_cuda:
 				batch_dict = move_to_cuda(batch_dict)
 			vectors.append(

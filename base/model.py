@@ -498,7 +498,9 @@ class TextKGEModel(KGEModel):
 		from utils.device import move_to_cuda
 
 		if batch_size is None:
-			batch_size = max(self.args.batch_size, 512)
+			batch_size = max(int(getattr(self.args, 'batch_size', 512)), 512)
+		else:
+			batch_size = max(int(batch_size), 512)
 
 		data_loader = torch.utils.data.DataLoader(
 			Dataset(path='', examples=examples, task=self.args.dataset),
@@ -510,7 +512,7 @@ class TextKGEModel(KGEModel):
 
 		hr_tensor_list, tail_tensor_list = [], []
 		use_cuda = torch.cuda.is_available()
-		for _, batch_dict in data_loader:
+		for batch_dict in data_loader:
 			if use_cuda:
 				batch_dict = move_to_cuda(batch_dict)
 			outputs = self(**batch_dict)
@@ -522,7 +524,9 @@ class TextKGEModel(KGEModel):
 		"""Deprecated: use ``embed_all_entities``."""
 
 		if batch_size is None:
-			batch_size = max(self.args.batch_size, 1024)
+			batch_size = max(int(getattr(self.args, 'batch_size', 512)), 1024)
+		else:
+			batch_size = max(int(batch_size), 512)
 		if show_progress is None:
 			show_progress = not self.training
 		loader_workers = self.ent_embedder._resolve_entity_loader_workers(num_workers, len(entity_exs))

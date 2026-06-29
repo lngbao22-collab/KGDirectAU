@@ -20,6 +20,8 @@
   "pooling": "mean",
   "additive_margin": 0.02,
   "finetune_t": true,
+  "use_self_negative": true,
+  "pre_batch": 0,
   "pre_batch_weight": 0.5,
   "grad_clip": 10.0,
   "max_num_tokens": 50,
@@ -41,6 +43,5 @@
   "max_to_keep": 0,
   "output_dir_prefix": "logs/SimKGC-AU_WN18RR",
 
-  "normalize_lp_scores": true,
-  "report_au": true
+  "normalize_lp_scores": true
 }
