@@ -21,10 +21,10 @@
   "gamma_cross": 0,
   "tuni": 4,
 
-  "dim": 500,
+  "dim": 128,
 
   "adversarial_training": true,
-  "margin": 6.0,
+  "margin": 1.72,
   "add_reciprocal_relations": false,
 
   "batch_size": 512,
