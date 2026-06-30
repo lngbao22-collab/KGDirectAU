@@ -141,6 +141,14 @@ class KGEModel(nn.Module):
 		**kwargs: Any,
 	) -> torch.Tensor:
 		if self.normalize_lp_scores:
+			if hasattr(self.scorer, 'normalized_score_spo'):
+				scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
+				return self.scorer.normalized_score_spo(
+					self.embed_s(s),
+					self.embed_p(p),
+					self.embed_o(o),
+					**scorer_kwargs,
+				)
 			query = self._tail_query_vectors(s, p)
 			tail = self.embed_o(o)
 			return self._cosine_similarity_scores(query, tail).diag()
@@ -162,6 +170,14 @@ class KGEModel(nn.Module):
 		if all_o_embs is None:
 			all_o_embs = self.embed_all_entities()
 		if self.normalize_lp_scores:
+			if hasattr(self.scorer, 'normalized_score_sp_'):
+				scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
+				return self.scorer.normalized_score_sp_(
+					self.embed_s(s),
+					self.embed_p(p),
+					all_o_embs,
+					**scorer_kwargs,
+				)
 			return self._cosine_similarity_scores(self._tail_query_vectors(s, p), all_o_embs)
 		scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
 		return self.scorer.score_sp_(
@@ -200,6 +216,14 @@ class KGEModel(nn.Module):
 		if all_s_embs is None:
 			all_s_embs = self.embed_all_entities()
 		if self.normalize_lp_scores:
+			if hasattr(self.scorer, 'normalized_score_po_'):
+				scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
+				return self.scorer.normalized_score_po_(
+					all_s_embs,
+					self.embed_p(p),
+					self.embed_o(o),
+					**scorer_kwargs,
+				)
 			return self._cosine_similarity_scores(self._head_query_vectors(p, o), all_s_embs)
 		scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
 		return self.scorer.score_po_(
@@ -218,6 +242,14 @@ class KGEModel(nn.Module):
 	) -> torch.Tensor:
 		if s is None:
 			return self.score_po_(p, o, **kwargs)
+		if self.normalize_lp_scores and hasattr(self.scorer, 'normalized_score_po'):
+			scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
+			return self.scorer.normalized_score_po(
+				self._embed(self.ent_embedder, s),
+				self.embed_p(p),
+				self.embed_o(o),
+				**scorer_kwargs,
+			)
 		if hasattr(self.scorer, 'score_po'):
 			scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
 			return self.scorer.score_po(

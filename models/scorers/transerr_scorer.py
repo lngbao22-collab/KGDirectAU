@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import torch
+import torch.nn.functional as F
 
 from base.kge_scorer import KGEScorer
 
@@ -65,6 +66,39 @@ class TransERRScorer(KGEScorer):
 	def _tail_space(self, t_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
 		_wh, _r_mid, wt = self._relation_parts(r_emb)
 		return self._calc(t_emb, self._q_norm(wt))
+
+	def _candidate_space(self, entity_embs: torch.Tensor, relation_part: torch.Tensor) -> torch.Tensor:
+		s_a, x_a, y_a, z_a = torch.chunk(entity_embs, 4, dim=-1)
+		s_b, x_b, y_b, z_b = torch.chunk(self._q_norm(relation_part), 4, dim=-1)
+
+		s_a = s_a.unsqueeze(0)
+		x_a = x_a.unsqueeze(0)
+		y_a = y_a.unsqueeze(0)
+		z_a = z_a.unsqueeze(0)
+		s_b = s_b.unsqueeze(1)
+		x_b = x_b.unsqueeze(1)
+		y_b = y_b.unsqueeze(1)
+		z_b = z_b.unsqueeze(1)
+
+		a = s_a * s_b - x_a * x_b - y_a * y_b - z_a * z_b
+		b = s_a * x_b + s_b * x_a + y_a * z_b - y_b * z_a
+		c = s_a * y_b + s_b * y_a + z_a * x_b - z_b * x_a
+		d = s_a * z_b + s_b * z_a + x_a * y_b - x_b * y_a
+		return torch.cat([a, b, c, d], dim=-1)
+
+	def _normalized_pair_score(self, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+		left = F.normalize(left, p=2, dim=-1)
+		right = F.normalize(right, p=2, dim=-1)
+		return torch.sum(left * right, dim=-1)
+
+	def _normalized_1vsall_score(
+		self,
+		query: torch.Tensor,
+		candidates: torch.Tensor,
+	) -> torch.Tensor:
+		query = F.normalize(query, p=2, dim=-1)
+		candidates = F.normalize(candidates, p=2, dim=-1)
+		return torch.sum(query.unsqueeze(1) * candidates, dim=-1)
 
 	def _align_for_candidates(
 		self,
@@ -212,3 +246,55 @@ class TransERRScorer(KGEScorer):
 		if predict_head:
 			return self.build_po_query(r_emb, t_emb), h_target, h_target
 		return self.build_query(h_emb, r_emb), t_target, h_target
+
+	def normalized_score_spo(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+	) -> torch.Tensor:
+		return self._normalized_pair_score(self.build_query(h_emb, r_emb), self._tail_space(t_emb, r_emb))
+
+	def normalized_score_po(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+	) -> torch.Tensor:
+		return self._normalized_pair_score(self._head_space(h_emb, r_emb), self.build_po_query(r_emb, t_emb))
+
+	def normalized_score_sp_(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		all_t_embs: torch.Tensor,
+	) -> torch.Tensor:
+		_wh, _r_mid, wt = self._relation_parts(r_emb)
+		num_candidates = all_t_embs.size(0)
+		batch_size = h_emb.size(0)
+		chunk_size = self._entity_chunk_size(batch_size)
+		query = self.build_query(h_emb, r_emb)
+		scores = h_emb.new_empty(batch_size, num_candidates)
+		for start in range(0, num_candidates, chunk_size):
+			end = min(start + chunk_size, num_candidates)
+			target = self._candidate_space(all_t_embs[start:end], wt)
+			scores[:, start:end] = self._normalized_1vsall_score(query, target)
+		return scores
+
+	def normalized_score_po_(
+		self,
+		all_h_embs: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+	) -> torch.Tensor:
+		wh, _r_mid, _wt = self._relation_parts(r_emb)
+		num_candidates = all_h_embs.size(0)
+		batch_size = t_emb.size(0)
+		chunk_size = self._entity_chunk_size(batch_size)
+		query = self.build_po_query(r_emb, t_emb)
+		scores = t_emb.new_empty(batch_size, num_candidates)
+		for start in range(0, num_candidates, chunk_size):
+			end = min(start + chunk_size, num_candidates)
+			target = self._candidate_space(all_h_embs[start:end], wh)
+			scores[:, start:end] = self._normalized_1vsall_score(query, target)
+		return scores

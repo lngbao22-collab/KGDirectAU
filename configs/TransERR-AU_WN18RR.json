@@ -1,0 +1,68 @@
+{
+  "model": "TransERR-AU",
+  "dataset": "WN18RR",
+
+  "model_loss_path": "models/losses/au_loss.py",
+  "model_strategy_path": "models/strategies/kgau_strategy.py",
+  "model_sampler_path": "",
+
+  "head_eval_mode": "po_forward",
+
+  "kgau_bidirectional": true,
+  "uniformity_full_pdist": false,
+  "max_uniformity_samples": 1024,
+  "normalize_au_vectors": true,
+  "gamma_q": 1.0,
+  "gamma_t": 1.0,
+  "gamma_h": 0.0,
+  "gamma_ent": 0.0,
+  "gamma_cross": 0.0,
+  "average_uniformity_terms": true,
+  "entity_uniformity_batch": true,
+  "au_deduplicate": false,
+  "tuni": 4,
+
+  "dim": 1000,
+  "triple_relation_embedding": true,
+
+  "adversarial_training": true,
+  "margin": 12.0,
+  "epsilon": 2.0,
+  "add_reciprocal_relations": false,
+
+  "batch_size": 2048,
+  "training_cadence": "epoch",
+  "epochs": 400,
+  "warm_up_steps": 50000,
+  "lr_decay_factor": 0.1,
+  "optim": "adam",
+  "lr": 0.001,
+  "weight_decay": 0.0,
+  "shuffle_train": true,
+  "use_amp": false,
+
+  "n_sample": 0,
+  "regularization": 5e-06,
+
+  "valid_steps": 2000,
+  "save_checkpoint_steps": 2000,
+  "test_batch_size": 8,
+  "score_query_chunk_size": 256,
+  "eval_candidate_chunk_size": 2048,
+  "eval_entity_chunk_size": 4096,
+
+  "max_to_keep": 0,
+  "output_dir_prefix": "logs/TransERR-AU_WN18RR",
+
+  "tie_handling": "rounded_mean_rank",
+  "tie_rtol": 0.0001,
+  "tie_atol": 1e-05,
+
+  "epoch_per_eval": 5,
+  "early_stopping_patience": 10,
+  "early_stopping_min_epochs": 50,
+  "early_stopping_min_metric": 0.05,
+
+  "normalize_lp_scores": true,
+  "report_au": true
+}
