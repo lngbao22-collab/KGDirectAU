@@ -456,6 +456,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--transe-norm', '--transe_norm', default=None, type=int,
                         dest='transe_norm',
                         help='TransE distance norm: 1 (classic L1) or 2 (L2, TransE-AU)')
+    triple_relation_group = parser.add_mutually_exclusive_group()
+    triple_relation_group.add_argument(
+        '--triple-relation-embedding', '--triple_relation_embedding',
+        dest='triple_relation_embedding',
+        action='store_true',
+        default=None,
+        help='Use 3x relation embedding width (TransERR)',
+    )
+    triple_relation_group.add_argument(
+        '--no-triple-relation-embedding', '--no_triple_relation_embedding',
+        dest='triple_relation_embedding',
+        action='store_false',
+        help='Disable 3x relation embedding width',
+    )
 
     # LibKGE-style index KGE training (DistMult, ComplEx, KvsAll, reciprocal relations).
     parser.add_argument('--add-reciprocal-relations', '--add_reciprocal_relations',
@@ -716,6 +730,7 @@ def _format_model_name(model: str) -> str:
         'simkgc': 'SimKGC',
         'transe': 'TransE',
         'transe-au': 'TransE-AU',
+        'transerr': 'TransERR',
         'transd': 'TransD',
         'rotate': 'RotatE',
     }
@@ -975,11 +990,14 @@ for _name, _default in (('gamma_h', 0.0), ('gamma_ent', 0.0), ('gamma_cross', 0.
         setattr(args, _name, _default)
 
 _model_name = str(getattr(args, 'model', '') or '').lower()
-if any(tag in _model_name for tag in ('rotate', 'protate', 'transe')):
+if any(tag in _model_name for tag in ('rotate', 'protate', 'transe', 'transerr')):
     if getattr(args, 'margin', None) is None:
         args.margin = 6.0
     if getattr(args, 'epsilon', None) is None:
         args.epsilon = 2.0
+
+if _model_name == 'transerr' and getattr(args, 'triple_relation_embedding', None) is None:
+    args.triple_relation_embedding = True
 
 if getattr(args, 'workers', None) is None:
     args.workers = 0
@@ -1024,7 +1042,7 @@ _model_name_for_scheduler = (args.model or '').lower()
 _is_index_kge_model = _model_name_for_scheduler in {
     'distmult', 'distmult-au', 'distmult-adversarial', 'distmult-adversarial-au',
     'complex', 'complex-au', 'dabr', 'dabr-au', 'rotate', 'rotate-au', 'protate', 'protate-au',
-    'transe', 'transe-au',
+    'transe', 'transe-au', 'transerr',
 }
 if args.lr_scheduler is not None:
     if _is_index_kge_model:
@@ -1040,7 +1058,7 @@ args.config_path = config_path
 _model_name = (args.model or '').lower()
 _is_text_model = _model_name not in {
     'distmult', 'distmult-au', 'complex', 'complex-au', 'dabr', 'dabr-au',
-    'transe', 'transe-au',
+    'transe', 'transe-au', 'transerr',
 }
 
 if getattr(args, 'normalize_phases', None) is None and _model_name in {'protate', 'protate-au', 'rotate-au'}:
@@ -1081,6 +1099,8 @@ if not args.model_encoder_path:
         args.model_encoder_path = 'models/scorers/protate_scorer.py'
     elif _model_name in {'transe', 'transe-au'}:
         args.model_encoder_path = 'models/scorers/transe_scorer.py'
+    elif _model_name == 'transerr':
+        args.model_encoder_path = 'models/scorers/transerr_scorer.py'
     else:
         args.model_encoder_path = 'models/scorers/simkgc_scorer.py'
 

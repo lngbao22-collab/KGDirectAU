@@ -525,6 +525,10 @@ class NegSampStrategy:
 		if reg_coef <= 0.0:
 			return None
 		model_obj = get_model_obj(self.model)
+		scorer = getattr(model_obj, 'scorer', None)
+		reg_fn = getattr(scorer, 'embedding_regularization', None)
+		if reg_fn is not None:
+			return reg_coef * reg_fn(model_obj)
 		l3_term = rotate_style_embedding_l3_penalty(model_obj)
 		if l3_term is not None:
 			return reg_coef * l3_term

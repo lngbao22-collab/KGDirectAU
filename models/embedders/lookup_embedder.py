@@ -46,10 +46,13 @@ class LookupEmbedder(nn.Module):
 		if getattr(self.args, 'init_method', None):
 			init_lookup_embedding(self, self.args, self.dim, role=self.role)
 			return
-		if any(name in model_name for name in ('rotate', 'protate', 'transe')):
+		if any(name in model_name for name in ('rotate', 'protate', 'transe', 'transerr')):
 			margin = _float_arg(self.args, 'margin', 6.0)
 			epsilon = _float_arg(self.args, 'epsilon', 2.0)
-			bound = (margin + epsilon) / max(1, self.dim)
+			init_dim = self.dim
+			if 'transerr' in model_name and self.role == 'relation':
+				init_dim = int(getattr(self.args, 'dim', self.dim) or self.dim)
+			bound = (margin + epsilon) / max(1, init_dim)
 			nn.init.uniform_(self.embedding.weight, a=-bound, b=bound)
 		else:
 			nn.init.xavier_uniform_(self.embedding.weight)
@@ -139,6 +142,10 @@ def _is_protate(args) -> bool:
 
 def _is_dabr(args) -> bool:
 	return 'dabr' in _model_name(args)
+
+
+def _is_transerr(args) -> bool:
+	return 'transerr' in _model_name(args)
 
 
 def _embedding_range(args, dim: int) -> float:
@@ -246,6 +253,11 @@ def build_entity_embedder(args) -> nn.Module:
 		nn.init.xavier_uniform_(embedder.embedding.weight)
 		return embedder
 
+	if _is_transerr(args):
+		embedder = LookupEmbedder(n_ent, dim, args, role='entity')
+		_init_lookup_table(embedder, args, dim, role='entity')
+		return embedder
+
 	embedder = LookupEmbedder(n_ent, dim, args, role='entity')
 	_init_lookup_table(embedder, args, dim, role='entity')
 	return embedder
@@ -278,6 +290,13 @@ def build_relation_embedder(args) -> nn.Module:
 		emb_dim = 4 * int(getattr(args, 'dim', getattr(args, 'hidden_size', 100)))
 		embedder = LookupEmbedder(n_rel, emb_dim, args, role='relation')
 		nn.init.xavier_uniform_(embedder.embedding.weight)
+		return embedder
+
+	if _is_transerr(args):
+		if not bool(getattr(args, 'triple_relation_embedding', True)):
+			raise ValueError('TransERR requires triple_relation_embedding')
+		embedder = LookupEmbedder(n_rel, dim * 3, args, role='relation')
+		_init_lookup_table(embedder, args, dim, role='relation')
 		return embedder
 
 	embedder = LookupEmbedder(n_rel, dim, args, role='relation')
