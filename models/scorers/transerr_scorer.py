@@ -51,6 +51,21 @@ class TransERRScorer(KGEScorer):
 		d = s_a * z_b + s_b * z_a + x_a * y_b - x_b * y_a
 		return torch.cat([a, b, c, d], dim=-1)
 
+	def _relation_parts(self, r_emb: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+		if r_emb.size(-1) != self.dim * 3:
+			raise ValueError(
+				f'TransERR relation embeddings must have width {self.dim * 3}, got {r_emb.size(-1)}'
+			)
+		return torch.chunk(r_emb, 3, dim=-1)
+
+	def _head_space(self, h_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
+		wh, _r_mid, _wt = self._relation_parts(r_emb)
+		return self._calc(h_emb, self._q_norm(wh))
+
+	def _tail_space(self, t_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
+		_wh, _r_mid, wt = self._relation_parts(r_emb)
+		return self._calc(t_emb, self._q_norm(wt))
+
 	def _align_for_candidates(
 		self,
 		h_emb: torch.Tensor,
@@ -96,7 +111,7 @@ class TransERRScorer(KGEScorer):
 		else:
 			h_aligned, r_aligned, t_aligned = self._align_for_candidates(h_emb, r_emb, t_emb)
 
-		wh, r_mid, wt = torch.chunk(r_aligned, 3, dim=-1)
+		wh, r_mid, wt = self._relation_parts(r_aligned)
 		wh = self._q_norm(wh)
 		wt = self._q_norm(wt)
 		diff = self._calc(h_aligned, wh) + r_mid - self._calc(t_aligned, wt)
@@ -170,3 +185,30 @@ class TransERRScorer(KGEScorer):
 			end = min(start + chunk_size, num_candidates)
 			scores[:, start:end] = self._score_tensor(all_h_embs[start:end], r_emb, t_emb)
 		return scores
+
+	def build_query(self, h_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
+		"""Tail-prediction query in TransERR's transformed entity space."""
+
+		_wh, r_mid, _wt = self._relation_parts(r_emb)
+		return self._head_space(h_emb, r_emb) + r_mid
+
+	def build_po_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+		"""Head-prediction query in TransERR's transformed entity space."""
+
+		_wh, r_mid, _wt = self._relation_parts(r_emb)
+		return self._tail_space(t_emb, r_emb) - r_mid
+
+	def au_representations(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+		*,
+		predict_head: bool = False,
+		**kwargs,
+	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+		h_target = self._head_space(h_emb, r_emb)
+		t_target = self._tail_space(t_emb, r_emb)
+		if predict_head:
+			return self.build_po_query(r_emb, t_emb), h_target, h_target
+		return self.build_query(h_emb, r_emb), t_target, h_target
