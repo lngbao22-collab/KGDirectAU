@@ -48,7 +48,7 @@
 
   "epoch_per_eval": 5,
   "early_stopping_patience": 10,
-  "early_stopping_min_epochs": 50,
+  "early_stopping_min_epochs": 100,
   "early_stopping_min_metric": 0.05,
 
   "normalize_lp_scores": false,

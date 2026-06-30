@@ -73,7 +73,7 @@ def _config_path(args, name: str, legacy_name: str = '') -> str:
 _INDEX_KGE_MODELS = frozenset({
 	'distmult', 'distmult-au', 'distmult-adversarial', 'distmult-adversarial-au',
 	'complex', 'complex-au', 'dabr', 'dabr-au', 'rotate', 'rotate-au', 'protate', 'protate-au',
-	'transe', 'transe-au', 'transerr',
+	'transe', 'transe-au', 'transerr', 'transerr-au',
 })
 
 
