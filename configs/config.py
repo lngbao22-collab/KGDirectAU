@@ -731,6 +731,7 @@ def _format_model_name(model: str) -> str:
         'transe': 'TransE',
         'transe-au': 'TransE-AU',
         'transerr': 'TransERR',
+        'transerr-au': 'TransERR-AU',
         'transd': 'TransD',
         'rotate': 'RotatE',
     }
@@ -996,7 +997,7 @@ if any(tag in _model_name for tag in ('rotate', 'protate', 'transe', 'transerr')
     if getattr(args, 'epsilon', None) is None:
         args.epsilon = 2.0
 
-if _model_name == 'transerr' and getattr(args, 'triple_relation_embedding', None) is None:
+if _model_name in {'transerr', 'transerr-au'} and getattr(args, 'triple_relation_embedding', None) is None:
     args.triple_relation_embedding = True
 
 if getattr(args, 'workers', None) is None:
@@ -1042,7 +1043,7 @@ _model_name_for_scheduler = (args.model or '').lower()
 _is_index_kge_model = _model_name_for_scheduler in {
     'distmult', 'distmult-au', 'distmult-adversarial', 'distmult-adversarial-au',
     'complex', 'complex-au', 'dabr', 'dabr-au', 'rotate', 'rotate-au', 'protate', 'protate-au',
-    'transe', 'transe-au', 'transerr',
+    'transe', 'transe-au', 'transerr', 'transerr-au',
 }
 if args.lr_scheduler is not None:
     if _is_index_kge_model:
@@ -1058,7 +1059,7 @@ args.config_path = config_path
 _model_name = (args.model or '').lower()
 _is_text_model = _model_name not in {
     'distmult', 'distmult-au', 'complex', 'complex-au', 'dabr', 'dabr-au',
-    'transe', 'transe-au', 'transerr',
+    'transe', 'transe-au', 'transerr', 'transerr-au',
 }
 
 if getattr(args, 'normalize_phases', None) is None and _model_name in {'protate', 'protate-au', 'rotate-au'}:
@@ -1099,7 +1100,7 @@ if not args.model_encoder_path:
         args.model_encoder_path = 'models/scorers/protate_scorer.py'
     elif _model_name in {'transe', 'transe-au'}:
         args.model_encoder_path = 'models/scorers/transe_scorer.py'
-    elif _model_name == 'transerr':
+    elif _model_name in {'transerr', 'transerr-au'}:
         args.model_encoder_path = 'models/scorers/transerr_scorer.py'
     else:
         args.model_encoder_path = 'models/scorers/simkgc_scorer.py'

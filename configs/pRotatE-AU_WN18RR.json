@@ -46,8 +46,8 @@
   "eval_entity_chunk_size": 4096,
   "normalize_phases": true,
 
-  "early_stopping_patience": 10,
-  "early_stopping_min_epochs": 50,
+  "early_stopping_patience": 5,
+  "early_stopping_min_epochs": 100,
   "early_stopping_min_metric": 0.05,
 
   "max_to_keep": 0,

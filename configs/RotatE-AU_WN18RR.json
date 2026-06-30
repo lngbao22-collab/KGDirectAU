@@ -30,7 +30,7 @@
   "batch_size": 512,
   "epochs": 400,
   "optim": "adam",
-  "lr": 5e-05,
+  "lr": 1e-04,
   "weight_decay": 0.0,
   "test_eval_last": true,
   "test_eval_best": true,
