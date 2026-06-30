@@ -24,7 +24,7 @@
   "dim": 256,
 
   "adversarial_training": true,
-  "margin": 3.54,
+  "margin": 0.86,
   "add_reciprocal_relations": false,
 
   "batch_size": 512,
