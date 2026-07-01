@@ -47,6 +47,68 @@ def normalize_lp_scores_context(model, normalize: bool):
 		model_obj.normalize_lp_scores = previous
 
 
+@contextmanager
+def lp_score_mode_context(model, mode: str, distance_degree: float | None = None):
+	"""Temporarily set link-prediction scoring mode for evaluation."""
+
+	model_obj = get_model_obj(model)
+	if not hasattr(model_obj, 'lp_score_mode'):
+		yield
+		return
+	previous_mode = getattr(model_obj, 'lp_score_mode', 'original')
+	previous_normalize = bool(getattr(model_obj, 'normalize_lp_scores', False))
+	previous_degree = getattr(model_obj, 'lp_distance_degree', None)
+	normalized_mode = str(mode).lower().replace('-', '_')
+	if normalized_mode in {'distance', 'l_distance', 'lp'}:
+		normalized_mode = 'lp_distance'
+	model_obj.lp_score_mode = normalized_mode
+	model_obj.normalize_lp_scores = normalized_mode == 'cosine'
+	if distance_degree is not None and hasattr(model_obj, 'lp_distance_degree'):
+		model_obj.lp_distance_degree = float(distance_degree)
+	try:
+		yield
+	finally:
+		model_obj.lp_score_mode = previous_mode
+		model_obj.normalize_lp_scores = previous_normalize
+		if previous_degree is not None and hasattr(model_obj, 'lp_distance_degree'):
+			model_obj.lp_distance_degree = previous_degree
+
+
+def _lp_distance_degree(args=None) -> float:
+	eval_args = args if args is not None else global_args
+	value = getattr(eval_args, 'lp_distance_degree', None)
+	if value is None:
+		value = getattr(eval_args, 'distance_degree_l', None)
+	degree = float(value if value is not None else 2.0)
+	if degree <= 0:
+		raise ValueError('lp_distance_degree must be > 0')
+	return degree
+
+
+def _lp_distance_label(args=None) -> str:
+	degree = _lp_distance_degree(args)
+	if float(degree).is_integer():
+		return f'lp_distance_l{int(degree)}'
+	return f'lp_distance_l{degree:g}'
+
+
+def _score_query_entity_matrix(
+	query_vectors: torch.Tensor,
+	entity_vectors: torch.Tensor,
+	*,
+	mode: str,
+	distance_degree: float,
+) -> torch.Tensor:
+	mode = str(mode).lower().replace('-', '_')
+	if mode == 'cosine':
+		query_vectors = torch.nn.functional.normalize(query_vectors, p=2, dim=-1)
+		entity_vectors = torch.nn.functional.normalize(entity_vectors, p=2, dim=-1)
+		return torch.mm(query_vectors, entity_vectors.t())
+	if mode in {'lp_distance', 'distance'}:
+		return -torch.cdist(query_vectors, entity_vectors, p=float(distance_degree))
+	return torch.mm(query_vectors, entity_vectors.t())
+
+
 def average_link_metrics(forward_metrics: dict, backward_metrics: dict) -> dict:
 	"""Average numeric link-prediction metrics from forward and backward passes."""
 
@@ -337,6 +399,7 @@ def _evaluate_simkgc_link_prediction(
 	filter_known: bool = True,
 	args=None,
 	all_entity_embs: torch.Tensor | None = None,
+	score_mode: str = 'cosine',
 ) -> dict:
 	"""Chunked link prediction for token-input models (reference SimKGC ``compute_metrics`` path)."""
 
@@ -350,7 +413,11 @@ def _evaluate_simkgc_link_prediction(
 	use_cuda = torch.cuda.is_available()
 
 	scoring_examples = list(examples)
-	logger.info('[EVAL] Encoding %d query vectors for link prediction...', len(scoring_examples))
+	logger.info(
+		'[EVAL] Encoding %d query vectors for link prediction (%s scorer)...',
+		len(scoring_examples),
+		score_mode,
+	)
 	hr_vectors = []
 	data_loader = torch.utils.data.DataLoader(
 		Dataset(path='', examples=scoring_examples, task=eval_args.dataset),
@@ -395,9 +462,11 @@ def _evaluate_simkgc_link_prediction(
 		)
 		for entity_start in range(0, entity_cnt, chunk_size):
 			entity_end = min(entity_start + chunk_size, entity_cnt)
-			batch_score[:, entity_start:entity_end] = torch.mm(
+			batch_score[:, entity_start:entity_end] = _score_query_entity_matrix(
 				batch_hr,
-				entities_tensor[entity_start:entity_end].t(),
+				entities_tensor[entity_start:entity_end],
+				mode=score_mode,
+				distance_degree=_lp_distance_degree(eval_args),
 			)
 
 		rerank_by_graph(batch_score, batch_examples, entity_dict)
@@ -785,6 +854,7 @@ def evaluate_model(
             entity_dict,
             batch_size,
             filter_known=filter_known,
+            score_mode='cosine',
         )
         return [], [], metrics
     if _supports_kge_1vsall_eval(model):
@@ -1028,6 +1098,7 @@ class Evaluator:
                 filter_known=True,
                 args=self.args,
                 all_entity_embs=all_entity_embs,
+                score_mode=getattr(inner_model, 'lp_score_mode', 'cosine'),
             )
 
         if _supports_kge_1vsall_eval(inner_model):
@@ -1157,7 +1228,12 @@ class Evaluator:
             if torch.cuda.is_available():
                 hr_tensor = hr_tensor.cuda()
                 entities_tensor = entities_tensor.cuda()
-            score = torch.mm(hr_tensor, entities_tensor.t())
+            score = _score_query_entity_matrix(
+                hr_tensor,
+                entities_tensor,
+                mode=getattr(model, 'lp_score_mode', 'original'),
+                distance_degree=_lp_distance_degree(self.args),
+            )
         all_triplet_dict = get_all_triplet_dict()
         if predict_head:
             _filter_known_heads(score, scoring_examples, all_triplet_dict, entity_dict)
@@ -1174,49 +1250,59 @@ class Evaluator:
         entity_dict,
         output_dir: str,
     ) -> dict:
-        """Run test link prediction with cosine and native KGE scorers."""
+        """Run test link prediction with cosine, native, and Lp-distance scorers."""
 
         inner_model = get_model_obj(self.model)
         batch_size = self._eval_batch_size()
+        distance_degree = _lp_distance_degree(self.args)
+        scorer_modes = [
+            ('cosine', 'cosine'),
+            ('original', 'original'),
+            (_lp_distance_label(self.args), 'lp_distance'),
+        ]
 
         if _supports_simkgc_link_eval(inner_model):
-            logger.info('[TEST] Link prediction (SimKGC cosine scorer)...')
-            log_path = os.path.join(output_dir, 'test_link_prediction.log')
             entity_embs = _encode_simkgc_entity_embeddings(
                 self.model, entity_dict, batch_size, args=self.args,
             )
-            forward_metrics = self.evaluate_link_prediction_inplace(
-                self.model,
-                eval_path,
-                entity_dict,
-                log_path,
-                eval_forward=True,
-                all_entity_embs=entity_embs,
-            )
-            backward_metrics = self.evaluate_link_prediction_inplace(
-                self.model,
-                eval_path,
-                entity_dict,
-                log_path,
-                eval_forward=False,
-                all_entity_embs=entity_embs,
-            )
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            return log_bidirectional_link_metrics(
-                '[TEST] Link prediction',
-                forward_metrics,
-                backward_metrics,
-            )
+            metrics_by_mode: dict[str, dict] = {}
+            for label, mode in scorer_modes:
+                logger.info('[TEST] Link prediction (SimKGC %s scorer)...', label)
+                log_path = os.path.join(output_dir, f'test_link_prediction_{label}.log')
+                with lp_score_mode_context(self.model, mode, distance_degree):
+                    forward_metrics = self.evaluate_link_prediction_inplace(
+                        self.model,
+                        eval_path,
+                        entity_dict,
+                        log_path,
+                        eval_forward=True,
+                        all_entity_embs=entity_embs,
+                    )
+                    backward_metrics = self.evaluate_link_prediction_inplace(
+                        self.model,
+                        eval_path,
+                        entity_dict,
+                        log_path,
+                        eval_forward=False,
+                        all_entity_embs=entity_embs,
+                    )
+                metrics_by_mode[label] = log_bidirectional_link_metrics(
+                    f'[TEST] Link prediction ({label} scorer)',
+                    forward_metrics,
+                    backward_metrics,
+                )
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            return metrics_by_mode
 
         cached_entity_embs = None
         if _supports_kge_1vsall_eval(inner_model):
             cached_entity_embs = inner_model.embed_all_entities()
 
         dual_metrics: dict[str, dict] = {}
-        for label, normalize in (('cosine', True), ('original', False)):
+        for label, mode in scorer_modes:
             log_path = os.path.join(output_dir, f'test_link_prediction_{label}.log')
-            with normalize_lp_scores_context(self.model, normalize):
+            with lp_score_mode_context(self.model, mode, distance_degree):
                 forward_metrics = self.evaluate_link_prediction_inplace(
                     self.model,
                     eval_path,

@@ -187,15 +187,20 @@ def write_results_report(path: Union[str, Path], *, link_metrics: Optional[dict]
     lines = []
 
     if link_metrics:
-        dual_scorers = (
+        multi_scorers = (
             'cosine' in link_metrics
             and 'original' in link_metrics
             and isinstance(link_metrics.get('cosine'), dict)
             and isinstance(link_metrics.get('original'), dict)
         )
-        if dual_scorers:
-            _append_link_metrics_lines(lines, link_metrics['cosine'], 'Link Prediction (cosine scorer)')
-            _append_link_metrics_lines(lines, link_metrics['original'], 'Link Prediction (original scorer)')
+        if multi_scorers:
+            for scorer_label, scorer_metrics in link_metrics.items():
+                if isinstance(scorer_metrics, dict):
+                    _append_link_metrics_lines(
+                        lines,
+                        scorer_metrics,
+                        f'Link Prediction ({scorer_label} scorer)',
+                    )
         else:
             _append_link_metrics_lines(lines, link_metrics)
 

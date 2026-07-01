@@ -21,7 +21,7 @@
   "gamma_cross": 0,
   "tuni": 4,
 
-  "dim": 500,
+  "dim": 64,
 
   "adversarial_training": true,
   "margin": 6,
@@ -57,5 +57,6 @@
   "tie_rtol": 0.0001,
   "tie_atol": 1e-05,
 
-  "normalize_lp_scores": true
+  "normalize_lp_scores": true,
+  "lp_distance_degree": 2
 }

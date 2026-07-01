@@ -416,6 +416,12 @@ def build_parser() -> argparse.ArgumentParser:
         action='store_false',
         help='disable normalized link-prediction scoring',
     )
+    parser.add_argument('--lp-score-mode', '--lp_score_mode', default=None, type=str,
+                        dest='lp_score_mode',
+                        help='link-prediction scoring mode: original, cosine, or lp_distance')
+    parser.add_argument('--lp-distance-degree', '--lp_distance_degree', '--distance-degree-l', '--distance_degree_l',
+                        default=2.0, type=float, dest='lp_distance_degree',
+                        help='Lp distance degree for lp_distance evaluation (2=L2, 3=L3)')
     au_normalize_group = parser.add_mutually_exclusive_group()
     au_normalize_group.add_argument(
         '--normalize-au-vectors', '--normalize_au_vectors',

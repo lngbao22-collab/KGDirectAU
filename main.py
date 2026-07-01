@@ -47,7 +47,7 @@ def _release_gpu_memory() -> None:
 
 
 def _is_dual_link_metrics(link_metrics: dict | None) -> bool:
-    """Return True when link metrics contain separate cosine and original scorer results."""
+    """Return True when link metrics contain per-scorer results (cosine, original, lp_distance, ...)."""
 
     if not link_metrics:
         return False
@@ -115,7 +115,7 @@ def _resolve_test_checkpoint_evals(current_args, train_summary: dict | None = No
 
 
 def _run_test_link_prediction(evaluator, test_lp_path: str, entity_dict, output_dir: str) -> dict:
-    """Evaluate test link prediction with cosine and native KGE scorers."""
+    """Evaluate test link prediction with cosine, native, and Lp-distance scorers."""
 
     return evaluator.evaluate_dual_test_link_prediction(test_lp_path, entity_dict, output_dir)
 

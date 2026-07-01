@@ -131,6 +131,16 @@ class pRotatEScorer(KGEScorer):
 		)
 		return self._score_phase(phase)
 
+	def build_query(self, h_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
+		"""Tail-prediction query vectors for cosine / Lp-distance link prediction."""
+
+		return self._phase(h_emb) + self._phase(r_emb)
+
+	def build_po_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+		"""Head-prediction query vectors for cosine / Lp-distance link prediction."""
+
+		return self._phase(r_emb) - self._phase(t_emb)
+
 	def au_representations(
 		self,
 		h_emb: torch.Tensor,

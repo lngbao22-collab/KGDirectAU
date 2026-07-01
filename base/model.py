@@ -49,6 +49,8 @@ class KGEModel(nn.Module):
 		self.aux_embedders = nn.ModuleDict(dict(aux_embedders or {}))
 		self.rel_to_idx = load_relation_to_idx(args) if args is not None else {}
 		self.normalize_lp_scores = _normalize_lp_flag(args) if args is not None else False
+		self.lp_score_mode = _lp_score_mode(args) if args is not None else 'original'
+		self.lp_distance_degree = _lp_distance_degree(args) if args is not None else 2.0
 		self.normalize_au_vectors = _normalize_au_flag(args) if args is not None else False
 
 	@property
@@ -111,6 +113,25 @@ class KGEModel(nn.Module):
 			return vectors
 		return F.normalize(vectors, p=2, dim=-1)
 
+	def _uses_cosine_lp_scores(self) -> bool:
+		mode = getattr(self, 'lp_score_mode', None)
+		if mode is None:
+			return bool(self.normalize_lp_scores)
+		return mode == 'cosine'
+
+	def _uses_distance_lp_scores(self) -> bool:
+		return getattr(self, 'lp_score_mode', None) in {'distance', 'lp_distance'}
+
+	def _uses_alternate_lp_entity_space(self) -> bool:
+		return self._uses_cosine_lp_scores() or self._uses_distance_lp_scores()
+
+	def _lp_entity_vectors(self, entity_emb: torch.Tensor) -> torch.Tensor:
+		"""Map entity embeddings into the LP vector space used by cosine / Lp-distance scoring."""
+
+		if self._uses_alternate_lp_entity_space() and hasattr(self.scorer, 'au_entity_embeddings'):
+			return self.scorer.au_entity_embeddings(entity_emb)
+		return entity_emb
+
 	def _normalize_au_vector(self, vectors: torch.Tensor) -> torch.Tensor:
 		if not self.normalize_au_vectors:
 			return vectors
@@ -127,6 +148,16 @@ class KGEModel(nn.Module):
 		candidate_vectors = self._normalize_lp_vector(candidate_vectors)
 		return torch.mm(query_vectors, candidate_vectors.t())
 
+	def _distance_scores(
+		self,
+		query_vectors: torch.Tensor,
+		candidate_vectors: torch.Tensor,
+	) -> torch.Tensor:
+		"""Negative Lp distance scores; larger scores mean closer candidates."""
+
+		p = float(getattr(self, 'lp_distance_degree', 2.0) or 2.0)
+		return -torch.cdist(query_vectors, candidate_vectors, p=p)
+
 	def _tail_query_vectors(self, s: torch.Tensor, p: torch.Tensor) -> torch.Tensor:
 		return self.scorer.build_query(self.embed_s(s), self.embed_p(p))
 
@@ -140,7 +171,12 @@ class KGEModel(nn.Module):
 		o: torch.Tensor,
 		**kwargs: Any,
 	) -> torch.Tensor:
-		if self.normalize_lp_scores:
+		if self._uses_distance_lp_scores():
+			query = self._tail_query_vectors(s, p)
+			tail = self._lp_entity_vectors(self.embed_o(o))
+			distance_degree = float(getattr(self, 'lp_distance_degree', 2.0) or 2.0)
+			return -torch.linalg.vector_norm(query - tail, ord=distance_degree, dim=-1)
+		if self._uses_cosine_lp_scores():
 			if hasattr(self.scorer, 'normalized_score_spo'):
 				scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
 				return self.scorer.normalized_score_spo(
@@ -169,16 +205,19 @@ class KGEModel(nn.Module):
 	) -> torch.Tensor:
 		if all_o_embs is None:
 			all_o_embs = self.embed_all_entities()
-		if self.normalize_lp_scores:
+		lp_entity_embs = self._lp_entity_vectors(all_o_embs)
+		if self._uses_distance_lp_scores():
+			return self._distance_scores(self._tail_query_vectors(s, p), lp_entity_embs)
+		if self._uses_cosine_lp_scores():
 			if hasattr(self.scorer, 'normalized_score_sp_'):
 				scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
 				return self.scorer.normalized_score_sp_(
 					self.embed_s(s),
 					self.embed_p(p),
-					all_o_embs,
+					lp_entity_embs,
 					**scorer_kwargs,
 				)
-			return self._cosine_similarity_scores(self._tail_query_vectors(s, p), all_o_embs)
+			return self._cosine_similarity_scores(self._tail_query_vectors(s, p), lp_entity_embs)
 		scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
 		return self.scorer.score_sp_(
 			self.embed_s(s),
@@ -215,16 +254,19 @@ class KGEModel(nn.Module):
 			raise NotImplementedError(f'{type(self.scorer).__name__} does not implement score_po_')
 		if all_s_embs is None:
 			all_s_embs = self.embed_all_entities()
-		if self.normalize_lp_scores:
+		lp_entity_embs = self._lp_entity_vectors(all_s_embs)
+		if self._uses_distance_lp_scores():
+			return self._distance_scores(self._head_query_vectors(p, o), lp_entity_embs)
+		if self._uses_cosine_lp_scores():
 			if hasattr(self.scorer, 'normalized_score_po_'):
 				scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
 				return self.scorer.normalized_score_po_(
-					all_s_embs,
+					lp_entity_embs,
 					self.embed_p(p),
 					self.embed_o(o),
 					**scorer_kwargs,
 				)
-			return self._cosine_similarity_scores(self._head_query_vectors(p, o), all_s_embs)
+			return self._cosine_similarity_scores(self._head_query_vectors(p, o), lp_entity_embs)
 		scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
 		return self.scorer.score_po_(
 			all_s_embs,
@@ -395,8 +437,11 @@ class TextKGEModel(KGEModel):
 		**kwargs: Any,
 	) -> torch.Tensor:
 		query = self._tail_query_vectors(s, p)
-		tail = self.embed_o(o)
-		if self.normalize_lp_scores:
+		tail = self._lp_entity_vectors(self.embed_o(o))
+		if self._uses_distance_lp_scores():
+			distance_degree = float(getattr(self, 'lp_distance_degree', 2.0) or 2.0)
+			return -torch.linalg.vector_norm(query - tail, ord=distance_degree, dim=-1)
+		if self._uses_cosine_lp_scores():
 			return self._cosine_similarity_scores(query, tail).diag()
 		return self.scorer.score_spo(query, p, tail, **{**self._scorer_kwargs(p), **kwargs})
 
@@ -410,8 +455,11 @@ class TextKGEModel(KGEModel):
 		if all_o_embs is None:
 			all_o_embs = self.embed_all_entities()
 		query = self._tail_query_vectors(s, p)
-		if self.normalize_lp_scores:
-			return self._cosine_similarity_scores(query, all_o_embs)
+		lp_entity_embs = self._lp_entity_vectors(all_o_embs)
+		if self._uses_distance_lp_scores():
+			return self._distance_scores(query, lp_entity_embs)
+		if self._uses_cosine_lp_scores():
+			return self._cosine_similarity_scores(query, lp_entity_embs)
 		scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
 		return self.scorer.score_sp_(query, p, all_o_embs, **scorer_kwargs)
 
@@ -666,6 +714,36 @@ def _normalize_lp_flag(args) -> bool:
 	if value is not None:
 		return bool(value)
 	return False
+
+
+def _lp_score_mode(args) -> str:
+	value = getattr(args, 'lp_score_mode', None)
+	if value is None:
+		return 'cosine' if _normalize_lp_flag(args) else 'original'
+	mode = str(value).lower().replace('-', '_')
+	aliases = {
+		'native': 'original',
+		'raw': 'original',
+		'lp': 'lp_distance',
+		'l_distance': 'lp_distance',
+		'distance': 'lp_distance',
+	}
+	mode = aliases.get(mode, mode)
+	if mode not in {'original', 'cosine', 'lp_distance'}:
+		raise ValueError(f'Unsupported lp_score_mode: {value}')
+	return mode
+
+
+def _lp_distance_degree(args) -> float:
+	value = getattr(args, 'lp_distance_degree', None)
+	if value is None:
+		value = getattr(args, 'distance_degree_l', None)
+	if value is None:
+		return 2.0
+	degree = float(value)
+	if degree <= 0:
+		raise ValueError('lp_distance_degree must be > 0')
+	return degree
 
 
 def _normalize_au_flag(args) -> bool:
