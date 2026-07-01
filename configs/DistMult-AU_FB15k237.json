@@ -6,7 +6,7 @@
   "model_strategy_path": "models/strategies/kgau_strategy.py",
   "model_sampler_path": "",
 
-  "head_eval_mode": "sp_inverse",
+  "head_eval_mode": "po_forward",
 
   "kgau_bidirectional": true,
   "uniformity_full_pdist": true,
@@ -14,7 +14,7 @@
   "normalize_au_vectors": true,
   "gamma_q": 1.0,
   "gamma_t": 1.0,
-  "gamma_entity": 1.0,
+  "gamma_ent": 1.0,
   "gamma_cross": 0,
   "average_uniformity_terms": true,
   "entity_uniformity_batch": true,
