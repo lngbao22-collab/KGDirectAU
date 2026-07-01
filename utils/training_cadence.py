@@ -55,6 +55,57 @@ def resolve_warm_up_steps(args: Any) -> int | None:
 	return None
 
 
+def _resolve_warm_up_ratio_values(args: Any) -> list[float]:
+	"""Return sorted warm-up ratios in (0, 1), or an empty list when unset/invalid."""
+
+	raw = getattr(args, 'warm_up_ratio', None)
+	if raw is None:
+		return []
+	if isinstance(raw, (float, int, str)):
+		raw = [raw]
+
+	ratios: list[float] = []
+	for value in raw:
+		try:
+			ratio = float(value)
+		except (TypeError, ValueError):
+			continue
+		if 0.0 < ratio < 1.0:
+			ratios.append(ratio)
+
+	if not ratios:
+		return []
+
+	# Keep deterministic order and remove duplicates after float parsing.
+	return sorted(set(ratios))
+
+
+def resolve_warm_up_ratio_steps(args: Any) -> list[int]:
+	"""Resolve ratio-based LR decay steps from ``warm_up_ratio`` and ``max_steps``.
+
+	Example: ``warm_up_ratio=[0.2, 0.5, 0.8]`` with ``max_steps=100000``
+	produces ``[20000, 50000, 80000]``.
+	"""
+
+	max_steps = resolve_max_steps(args)
+	if max_steps is None or max_steps <= 0:
+		return []
+
+	ratios = _resolve_warm_up_ratio_values(args)
+	if not ratios:
+		return []
+
+	steps: list[int] = []
+	for ratio in ratios:
+		step = max(1, int(max_steps * ratio))
+		if step >= max_steps:
+			continue
+		if not steps or step > steps[-1]:
+			steps.append(step)
+
+	return steps
+
+
 def resolve_lr_decay_factor(args: Any) -> float:
 	return config_float(args, 'lr_decay_factor', 0.1)
 
@@ -85,7 +136,12 @@ def init_step_cadence_state(trainer: Any) -> None:
 
 	if not hasattr(trainer, 'global_step'):
 		trainer.global_step = 0
-	trainer.next_lr_decay_step = resolve_warm_up_steps(trainer.args)
+	trainer.lr_decay_steps = resolve_warm_up_ratio_steps(trainer.args)
+	trainer.lr_decay_step_index = 0
+	if trainer.lr_decay_steps:
+		trainer.next_lr_decay_step = trainer.lr_decay_steps[0]
+	else:
+		trainer.next_lr_decay_step = resolve_warm_up_steps(trainer.args)
 	trainer.lr_decay_factor = resolve_lr_decay_factor(trainer.args)
 	trainer._stop_training = False
 
@@ -120,7 +176,12 @@ def _scale_optimizer_lrs(optimizer, scale: float) -> None:
 
 
 def maybe_decay_lr_at_step(trainer: Any, step: int) -> None:
-	"""KnowledgeGraphEmbedding-style LR decay: multiply LR by ``lr_decay_factor`` once ``step >= warm_up_steps``."""
+	"""Apply LR decays at configured milestone steps.
+
+	Priority:
+	1) ratio milestones from ``warm_up_ratio`` + ``max_steps``
+	2) legacy single ``warm_up_steps`` then geometric ``*3`` schedule
+	"""
 
 	next_step = getattr(trainer, 'next_lr_decay_step', None)
 	optimizer = getattr(trainer, 'optimizer', None)
@@ -140,6 +201,14 @@ def maybe_decay_lr_at_step(trainer: Any, step: int) -> None:
 	from utils.logger import logger
 
 	logger.info('Change learning rate to %.8f at step %d', new_lr, step)
+
+	decay_steps = getattr(trainer, 'lr_decay_steps', None) or []
+	if decay_steps:
+		decay_idx = int(getattr(trainer, 'lr_decay_step_index', 0) or 0) + 1
+		trainer.lr_decay_step_index = decay_idx
+		trainer.next_lr_decay_step = decay_steps[decay_idx] if decay_idx < len(decay_steps) else None
+		return
+
 	trainer.next_lr_decay_step = int(next_step * 3)
 
 

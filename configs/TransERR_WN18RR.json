@@ -18,8 +18,9 @@
 
   "batch_size": 2048,
   "training_cadence": "epoch",
-  "epochs": 400,
+  "epochs": 1000,
   "warm_up_steps": 50000,
+  "warm_up_ratio": [0.2, 0.5, 0.8],
   "lr_decay_factor": 0.1,
   "optim": "adam",
   "lr": 0.001,
@@ -48,7 +49,7 @@
 
   "epoch_per_eval": 5,
   "early_stopping_patience": 10,
-  "early_stopping_min_epochs": 100,
+  "early_stopping_min_epochs": 1000,
   "early_stopping_min_metric": 0.05,
 
   "normalize_lp_scores": false,
