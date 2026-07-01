@@ -146,12 +146,15 @@ class pRotatEScorer(KGEScorer):
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
 		t_emb: torch.Tensor,
+		*,
+		predict_head: bool = False,
 		**kwargs,
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 		phase_head = self._phase(h_emb)
-		phase_relation = self._phase(r_emb)
 		phase_tail = self._phase(t_emb)
-		return phase_head + phase_relation, phase_tail, phase_head
+		if predict_head:
+			return self.build_po_query(r_emb, t_emb), phase_head, phase_head
+		return self.build_query(h_emb, r_emb), phase_tail, phase_head
 
 	def au_entity_embeddings(self, entity_emb: torch.Tensor) -> torch.Tensor:
 		return self._phase(entity_emb)

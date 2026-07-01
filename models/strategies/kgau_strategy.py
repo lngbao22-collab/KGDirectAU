@@ -433,12 +433,15 @@ class KGAUStrategy(Evaluator):
 			logger.info('KGAU alignment mode: %s (normalize_uniformity=%s)', alignment_mode, normalize_uniformity)
 		normalize_au = getattr(model_obj, 'normalize_au_vectors', None)
 		normalize_lp = getattr(model_obj, 'normalize_lp_scores', None)
+		assume_unit_norm = bool(getattr(model_obj, 'normalize_au_vectors', False))
 		if normalize_au is not None or normalize_lp is not None:
 			logger.info(
 				'KGAU scoring modes: normalize_au_vectors=%s (training), normalize_lp_scores=%s (link prediction)',
 				normalize_au,
 				normalize_lp,
 			)
+		if assume_unit_norm:
+			logger.info('KGAU assume_unit_norm: loss skips redundant L2 normalize (vectors normalized in model)')
 		self.criterion = KGAULoss(
 			gamma_q=_config_float(args, 'gamma_q', 1.0),
 			gamma_t=_config_float(args, 'gamma_t', 1.0),
@@ -455,6 +458,7 @@ class KGAUStrategy(Evaluator):
 			additive_margin=_config_float(args, 'additive_margin', 0.0),
 			alignment_mode=alignment_mode,
 			normalize_uniformity=bool(normalize_uniformity),
+			assume_unit_norm=assume_unit_norm,
 			average_uniformity_terms=config_bool(args, 'average_uniformity_terms', False),
 			uniformity_full_pdist=config_bool(args, 'uniformity_full_pdist', False),
 		).to(self.device)
@@ -890,6 +894,10 @@ class KGAUStrategy(Evaluator):
 				model_obj = get_model_obj(model)
 				h_ent = model_obj.embed_s(head_indices)
 				t_ent = model_obj.embed_o(tail_indices)
+				scorer = getattr(model_obj, 'scorer', None)
+				if scorer is not None and hasattr(scorer, 'au_entity_embeddings'):
+					h_ent = scorer.au_entity_embeddings(h_ent)
+					t_ent = scorer.au_entity_embeddings(t_ent)
 				if hasattr(model_obj, '_normalize_au_vector'):
 					h_ent = model_obj._normalize_au_vector(h_ent)
 					t_ent = model_obj._normalize_au_vector(t_ent)

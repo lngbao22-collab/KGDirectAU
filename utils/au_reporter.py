@@ -28,7 +28,13 @@ def report_au_enabled(args) -> bool:
 	return config_bool(args, 'report_au', False)
 
 
-def _build_au_criterion(args, device: torch.device, *, alignment_mode: str | None = None) -> KGAULoss:
+def _build_au_criterion(
+	args,
+	device: torch.device,
+	*,
+	alignment_mode: str | None = None,
+	assume_unit_norm: bool = False,
+) -> KGAULoss:
 	tuni_val = _config_float(args, 'tuni', _config_float(args, 'temperature', _config_float(args, 't', 2.0)))
 	alignment_mode = alignment_mode or getattr(args, 'alignment_mode', None) or 'cosine'
 	normalize_uniformity = getattr(args, 'normalize_uniformity', None)
@@ -50,6 +56,7 @@ def _build_au_criterion(args, device: torch.device, *, alignment_mode: str | Non
 		additive_margin=_config_float(args, 'additive_margin', 0.0),
 		alignment_mode=alignment_mode,
 		normalize_uniformity=bool(normalize_uniformity),
+		assume_unit_norm=assume_unit_norm,
 		average_uniformity_terms=config_bool(args, 'average_uniformity_terms', False),
 		uniformity_full_pdist=config_bool(args, 'uniformity_full_pdist', False),
 	).to(device)
@@ -95,7 +102,13 @@ class AUReporter:
 		model_obj = get_model_obj(self.model)
 		encoder_align = getattr(model_obj, 'kgau_alignment_mode', None)
 		alignment_mode = getattr(args, 'alignment_mode', None) or encoder_align or 'cosine'
-		self.criterion = _build_au_criterion(args, self.device, alignment_mode=alignment_mode)
+		assume_unit_norm = bool(getattr(model_obj, 'normalize_au_vectors', False))
+		self.criterion = _build_au_criterion(
+			args,
+			self.device,
+			alignment_mode=alignment_mode,
+			assume_unit_norm=assume_unit_norm,
+		)
 		self.au_deduplicate = config_bool(args, 'au_deduplicate', True)
 		self.uses_text_inputs = self._resolve_uses_text_inputs()
 		self.max_batches = getattr(args, 'report_au_max_batches', None)

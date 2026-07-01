@@ -64,6 +64,7 @@ class KGAULoss(nn.Module):
 		additive_margin: float = 0.0,
 		alignment_mode: str = 'cosine',
 		normalize_uniformity: bool = True,
+		assume_unit_norm: bool = False,
 		average_uniformity_terms: bool = False,
 		uniformity_full_pdist: bool = False,
 	):
@@ -115,6 +116,13 @@ class KGAULoss(nn.Module):
 		# `sin_phase`: pRotatE link-pred term sum_i |sin(theta_q,i - theta_t,i)| (no global normalize).
 		self.alignment_mode = alignment_mode or 'cosine'
 		self.normalize_uniformity = normalize_uniformity
+		# When True, q/t/h/ent inputs are already L2-normalized (``normalize_au_vectors`` in the model).
+		self.assume_unit_norm = bool(assume_unit_norm)
+
+	def _l2_normalize_if_needed(self, x: torch.Tensor) -> torch.Tensor:
+		if self.assume_unit_norm:
+			return x
+		return F.normalize(x, p=2, dim=-1)
 
 	def _gamma_init_value(self, name: str) -> float:
 		if self.learnable_au_gammas:
@@ -243,8 +251,8 @@ class KGAULoss(nn.Module):
 	def alignment_loss(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
 		"""Expected squared L2 distance between paired positive query and target embeddings."""
 
-		q = F.normalize(q, p=2, dim=-1)
-		t = F.normalize(t, p=2, dim=-1)
+		q = self._l2_normalize_if_needed(q)
+		t = self._l2_normalize_if_needed(t)
 		return (q - t).pow(2).sum(dim=-1).mean()
 
 	def sin_phase_alignment_loss(self, phase_query: torch.Tensor, phase_target: torch.Tensor) -> torch.Tensor:
@@ -308,7 +316,7 @@ class KGAULoss(nn.Module):
 		if x is None:
 			return None
 		if self.normalize_uniformity:
-			x = F.normalize(x, p=2, dim=-1)
+			x = self._l2_normalize_if_needed(x)
 		num_pairs = self._max_uniformity_pair_count(x.size(0), x.size(-1))
 		if num_pairs <= 0:
 			return None
