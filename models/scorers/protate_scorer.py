@@ -69,6 +69,18 @@ class pRotatEScorer(KGEScorer):
 
 		return embeddings / (self.embedding_range / math.pi)
 
+	@staticmethod
+	def _wrap_phase(phase: torch.Tensor) -> torch.Tensor:
+		"""Map radians to [-pi, pi] (matches ``normalize_protate_phases``)."""
+
+		return torch.remainder(phase + math.pi, 2.0 * math.pi) - math.pi
+
+	def _cosine_phase_vector(self, phase: torch.Tensor) -> torch.Tensor:
+		"""RotatE-style AU/LP coords: per-dim unit circle ``[cos, sin]`` (length ``2 * dim``)."""
+
+		phase = self._wrap_phase(phase)
+		return torch.cat([torch.cos(phase), torch.sin(phase)], dim=-1)
+
 	def _score_phase(self, phase: torch.Tensor) -> torch.Tensor:
 		return self.margin - torch.abs(torch.sin(phase)).sum(dim=-1) * self.modulus
 
@@ -134,12 +146,14 @@ class pRotatEScorer(KGEScorer):
 	def build_query(self, h_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
 		"""Tail-prediction query vectors for cosine / Lp-distance link prediction."""
 
-		return self._phase(h_emb) + self._phase(r_emb)
+		composed = self._wrap_phase(self._phase(h_emb) + self._phase(r_emb))
+		return self._cosine_phase_vector(composed)
 
 	def build_po_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Head-prediction query vectors for cosine / Lp-distance link prediction."""
 
-		return self._phase(r_emb) - self._phase(t_emb)
+		composed = self._wrap_phase(self._phase(r_emb) - self._phase(t_emb))
+		return self._cosine_phase_vector(composed)
 
 	def au_representations(
 		self,
@@ -150,11 +164,10 @@ class pRotatEScorer(KGEScorer):
 		predict_head: bool = False,
 		**kwargs,
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-		phase_head = self._phase(h_emb)
-		phase_tail = self._phase(t_emb)
+		head_vec = self.au_entity_embeddings(h_emb)
 		if predict_head:
-			return self.build_po_query(r_emb, t_emb), phase_head, phase_head
-		return self.build_query(h_emb, r_emb), phase_tail, phase_head
+			return self.build_po_query(r_emb, t_emb), head_vec, head_vec
+		return self.build_query(h_emb, r_emb), self.au_entity_embeddings(t_emb), head_vec
 
 	def au_entity_embeddings(self, entity_emb: torch.Tensor) -> torch.Tensor:
-		return self._phase(entity_emb)
+		return self._cosine_phase_vector(self._phase(entity_emb))
