@@ -186,7 +186,7 @@ class KGEModel(nn.Module):
 					**scorer_kwargs,
 				)
 			query = self._tail_query_vectors(s, p)
-			tail = self.embed_o(o)
+			tail = self._lp_entity_vectors(self.embed_o(o))
 			return self._cosine_similarity_scores(query, tail).diag()
 		scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
 		return self.scorer.score_spo(
