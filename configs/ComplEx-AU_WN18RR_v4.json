@@ -26,7 +26,7 @@
   "gamma_linear_schedule": true,
   "gamma_schedule_end": 0.1,
   "gamma_schedule_start_epoch": 0,
-  "gamma_schedule_epochs": 100,
+  "gamma_schedule_epochs": 50,
 
   "dim": 128,
 
