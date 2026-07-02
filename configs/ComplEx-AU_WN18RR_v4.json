@@ -23,13 +23,12 @@
 
   "learnable_au_gammas": true,
   "log_au_gamma_lr": 0.5,
-  "log_uniformity_lr": 0.001,
   "gamma_linear_schedule": true,
   "gamma_schedule_end": 0.1,
   "gamma_schedule_start_epoch": 0,
   "gamma_schedule_epochs": 0,
 
-  "dim": 128,
+  "dim": 64,
 
   "adversarial_training": true,
   "margin": 200,
