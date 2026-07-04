@@ -265,17 +265,31 @@ class KGAULoss(nn.Module):
 		residual = phase_query - phase_target
 		return torch.abs(torch.sin(residual)).sum(dim=-1).mean()
 
+	def _uniformity_pdist_row_cap(self, dim: int) -> int | None:
+		"""Max rows safe for ``torch.pdist`` backward (O(n^2 * dim) autograd storage)."""
+
+		if not self.uniformity_full_pdist:
+			return None
+		max_samples = int(getattr(self, 'max_uniformity_samples', 0) or 0)
+		if max_samples > 0:
+			return max_samples
+		pdist_budget = int(getattr(self, 'uniformity_pdist_bytes', 0) or 0) or (3 * 1024 * 1024 * 1024)
+		return max(2, int((pdist_budget / (max(dim, 1) * 4)) ** 0.5))
+
 	def _subsample_uniformity_rows(self, x: torch.Tensor) -> torch.Tensor | None:
 		"""Cap row count before uniformity (entity table or large batches)."""
 
 		if x is None or x.size(0) < 2:
 			return None
-		if self.uniformity_full_pdist:
-			return x
-		max_samples = int(getattr(self, 'max_uniformity_samples', 0) or 0)
-		if max_samples > 0 and x.size(0) > max_samples:
-			indices = torch.randperm(x.size(0), device=x.device)[:max_samples]
+		row_cap = self._uniformity_pdist_row_cap(x.size(-1))
+		if row_cap is not None and x.size(0) > row_cap:
+			indices = torch.randperm(x.size(0), device=x.device)[:row_cap]
 			x = x.index_select(0, indices)
+		elif not self.uniformity_full_pdist:
+			max_samples = int(getattr(self, 'max_uniformity_samples', 0) or 0)
+			if max_samples > 0 and x.size(0) > max_samples:
+				indices = torch.randperm(x.size(0), device=x.device)[:max_samples]
+				x = x.index_select(0, indices)
 		return x if x.size(0) >= 2 else None
 
 	def _max_uniformity_pair_count(self, num_rows: int, dim: int) -> int:

@@ -905,17 +905,58 @@ class KGAUStrategy(Evaluator):
 			return self._batch_entity_uniformity_vectors(h_raw, t_raw, h_keys, t_keys)
 		return self._catalog_entity_uniformity_vectors(model)
 
-	def _train_micro_batch_size(self, batch_size: int) -> int:
-		"""Split training batches only for DaBR (high memory AU vectors). Other encoders use full ``batch_size``."""
+	def _au_vector_dim(self) -> int:
+		"""Effective AU vector width (ComplEx/RotatE concat real+imag → ``2 * dim``)."""
 
-		if not _is_dabr_encoder(self.args):
-			return batch_size
+		dim = int(getattr(self.args, 'dim', 0) or 0)
+		model_name = str(getattr(self.args, 'model', '') or '').lower()
+		if model_name.endswith('-au'):
+			model_name = model_name[:-3]
+		if model_name in {'rotate', 'complex', 'protate'}:
+			return max(dim * 2, 1)
+		return max(dim, 1)
+
+	def _uniformity_pdist_byte_budget(self) -> int:
+		raw = getattr(self.args, 'uniformity_pdist_bytes', None)
+		if raw is not None:
+			return max(int(raw), 1)
+		return 3 * 1024 * 1024 * 1024
+
+	def _max_batch_for_uniformity_pdist(self) -> int | None:
+		"""Cap train batch when batch entity uniformity uses full ``torch.pdist``."""
+
+		if not config_bool(self.args, 'uniformity_full_pdist', False):
+			return None
+		if not config_bool(self.args, 'entity_uniformity_batch', False):
+			return None
+		au_dim = self._au_vector_dim()
+		budget = self._uniformity_pdist_byte_budget()
+		# q/t/h ~ N rows each, entity batch ~ 2N rows → ~7N^2 pdist backward storage.
+		max_batch = int((budget / (28 * max(au_dim, 1))) ** 0.5)
+		return max(1, max_batch)
+
+	def _train_micro_batch_size(self, batch_size: int) -> int:
+		"""Split large AU batches when forward/backward would exceed GPU memory."""
+
 		explicit = getattr(self.args, 'train_micro_batch_size', None)
 		if explicit is not None:
-			return max(int(explicit), 1)
-		# Default DaBR cap: 64 rows per forward/backward chunk on ~15 GiB GPUs.
-		if batch_size > 64:
-			return 64
+			return max(min(int(explicit), batch_size), 1)
+
+		if _is_dabr_encoder(self.args):
+			# Default DaBR cap: 64 rows per forward/backward chunk on ~15 GiB GPUs.
+			if batch_size > 64:
+				return 64
+			return batch_size
+
+		pdist_cap = self._max_batch_for_uniformity_pdist()
+		if pdist_cap is not None and batch_size > pdist_cap:
+			logger.info(
+				'KGAU train micro-batch: %d -> %d (uniformity_full_pdist memory cap, au_dim=%d)',
+				batch_size,
+				pdist_cap,
+				self._au_vector_dim(),
+			)
+			return pdist_cap
 		return batch_size
 
 	def _backward_au_loss(
@@ -1223,7 +1264,7 @@ class KGAUStrategy(Evaluator):
 		*,
 		predict_head: bool = False,
 	) -> tuple[float, float, float, float, float, int, int, float, int]:
-		"""DaBR-only: gradient accumulation over micro-batches to avoid OOM."""
+		"""Gradient accumulation over micro-batches to avoid OOM on high-dim AU runs."""
 
 		loss_sum = 0.0
 		align_sum = 0.0
