@@ -22,7 +22,7 @@
   "au_deduplicate": false,
   "tuni": 4,
 
-  "dim": 512,
+  "dim": 64,
 
   "margin": 6.0,
   "epsilon": 2.0,
