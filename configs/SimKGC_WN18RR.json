@@ -4,7 +4,7 @@
   "dataset": "WN18RR",
 
   "model_loss_path": "models/losses/infonce_loss.py",
-  "model_strategy_path": "models/strategies/uniform_strategy.py",
+  "model_strategy_path": "models/strategies/inbatch_strategy.py",
   "model_sampler_path": "models/samplers/masking_sampler.py",
 
   "dim": 768,
