@@ -1,6 +1,6 @@
 {
   "model": "SimKGC-AU",
-  "dataset": "WN18RR",
+  "dataset": "FB15k237",
 
   "model_loss_path": "models/losses/au_loss.py",
   "model_strategy_path": "models/strategies/kgau_strategy.py",
@@ -30,23 +30,28 @@
   "grad_clip": 10.0,
   "max_num_tokens": 50,
   "use_link_graph": true,
+  "neighbor_weight": 0.05,
   "rerank_n_hop": 0,
 
   "batch_size": 512,
-  "epochs": 50,
-  "lr": 5e-05,
+  "epochs": 10,
+  "lr": 1e-05,
   "weight_decay": 0.0001,
   "optim": "adamw",
   "lr_scheduler": "linear",
   "use_amp": true,
 
+  "eval_batch_size": 128,
   "eval_every_n_step": 10000,
+  "eval_interval_epochs": 5,
+  "valid_link_prediction_epochs": 5,
+  "chunk_size": 8192,
   "warmup": 400,
   "workers": 2,
   "print_freq": 20,
 
   "max_to_keep": 0,
-  "output_dir_prefix": "logs/SimKGC-AU_WN18RR",
+  "output_dir_prefix": "logs/SimKGC-AU_FB15k237",
 
   "normalize_lp_scores": true
 }

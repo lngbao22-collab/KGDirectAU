@@ -37,7 +37,7 @@
   "valid_link_prediction_epochs": 5,
   "chunk_size": 8192,
   "warmup": 400,
-  "workers": 4,
+  "workers": 2,
   "print_freq": 20,
 
   "max_to_keep": 5,

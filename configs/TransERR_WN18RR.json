@@ -55,5 +55,5 @@
   "early_stopping_min_metric": 0.05,
 
   "normalize_lp_scores": false,
-  "report_au": true
+  "report_au": false
 }
