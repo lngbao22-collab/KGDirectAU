@@ -32,9 +32,6 @@
   "use_amp": true,
 
   "eval_batch_size": 128,
-  "eval_every_n_step": 10000,
-  "eval_interval_epochs": 5,
-  "valid_link_prediction_epochs": 5,
   "chunk_size": 8192,
   "warmup": 400,
   "workers": 2,

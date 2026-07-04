@@ -13,7 +13,14 @@ from data.dataset import Dataset, load_data
 from data.dataloader import collate
 from data.dict_hub import build_tokenizer, get_entity_dict
 from metrics.ranking import topk_accuracy as accuracy
-from models.builder import import_module_from_path, init_index_kge_trainer, load_attr_from_path, load_loss_fn
+from models.builder import (
+	_kge_resolve_early_stopping,
+	_kge_update_early_stopping_bad_count,
+	import_module_from_path,
+	init_index_kge_trainer,
+	load_attr_from_path,
+	load_loss_fn,
+)
 from utils.checkpoint import best_model_path, last_model_path, save_checkpoint
 from utils.device import call_model_forward, get_model_obj, move_to_cuda, report_num_trainable_parameters, setup_data_parallel
 from utils.logger import AverageMeter, ProgressMeter, logger, log_run_timing
@@ -89,7 +96,6 @@ class InBatchStrategy(Evaluator):
 
 		self.memory_tracker = PhaseMemoryTracker()
 		self.best_epoch = None
-		self.early_stop_wait = 0
 
 	def _setup_training(self) -> None:
 		"""Match reference SimKGC: DataParallel on multi-GPU, else single CUDA device."""
@@ -120,17 +126,32 @@ class InBatchStrategy(Evaluator):
 			)
 		raise ValueError(f'Unknown lr scheduler: {self.args.lr_scheduler}')
 
-	def _eval_interval_epochs(self) -> int:
+	def _validation_interval(self) -> int:
+		raw = getattr(self.args, 'epoch_per_eval', None)
+		if raw is not None:
+			interval = int(raw)
+			max_epochs = max(int(self.args.epochs), 1)
+			if interval <= 0 or interval > max_epochs:
+				return max_epochs
+			return interval
 		raw = getattr(self.args, 'eval_interval_epochs', None)
-		if raw is None:
-			raw = getattr(self.args, 'epoch_per_eval', 1)
-		return max(int(raw or 1), 1)
+		if raw is not None:
+			return max(int(raw), 1)
+		return 1
 
-	def _eval_every_n_step(self) -> int:
+	def _should_validate(self, epoch: int) -> bool:
+		interval = self._validation_interval()
+		epoch_number = epoch + 1
+		max_epochs = max(int(self.args.epochs), 1)
+		return epoch_number % interval == 0 or epoch_number >= max_epochs
+
+	def _eval_every_n_step(self) -> int | None:
 		raw = getattr(self.args, 'eval_every_n_step', None)
 		if raw is None:
-			raw = getattr(self.args, 'valid_steps', 10000)
-		return max(int(raw or 10000), 1)
+			raw = getattr(self.args, 'valid_steps', None)
+		if raw is None:
+			return None
+		return max(int(raw), 1)
 
 	def _should_run_link_prediction(self, epoch: int) -> bool:
 		raw = getattr(self.args, 'valid_link_prediction_epochs', None)
@@ -176,9 +197,22 @@ class InBatchStrategy(Evaluator):
 		if self.args.use_amp and not hasattr(self, 'scaler'):
 			self.scaler = torch.cuda.amp.GradScaler()
 
+		validation_interval = self._validation_interval()
+		logger.info('Validation interval: every %d epoch(s)', validation_interval)
+
+		patience, min_epochs, min_metric = _kge_resolve_early_stopping(self.args)
+		bad_counts = 0
+		if patience is not None:
+			logger.info(
+				'Early stopping: stop after %d validation(s) without MRR improvement (min_epochs=%d).',
+				patience,
+				min_epochs,
+			)
+
 		total_start = time.time()
 		train_time = 0.0
 		valid_time = 0.0
+		num_train_epochs = 0
 
 		for epoch in range(self.args.epochs):
 			epoch_train_start = time.time()
@@ -186,31 +220,52 @@ class InBatchStrategy(Evaluator):
 			self.train_epoch(epoch)
 			self.memory_tracker.end_phase('train')
 			train_time += time.time() - epoch_train_start
+			num_train_epochs = epoch + 1
 
-			should_run_eval = (
-				(epoch + 1) % self._eval_interval_epochs() == 0
-				or epoch == self.args.epochs - 1
-			)
-			if should_run_eval:
+			from utils.au_reporter import report_au_after_epoch
+			report_au_after_epoch(self, epoch)
+
+			if self._should_validate(epoch):
 				val_start = time.time()
-				self._run_eval(epoch=epoch)
+				metric_dict, is_best = self._run_eval(epoch=epoch)
 				valid_time += time.time() - val_start
+
+				from utils.au_reporter import report_au_validation
+				report_au_validation(self, epoch, metric_dict)
+
+				bad_counts = _kge_update_early_stopping_bad_count(
+					self,
+					metric_dict=metric_dict,
+					is_best=is_best,
+					bad_counts=bad_counts,
+					min_metric=min_metric,
+				)
+				if patience is not None and bad_counts >= patience and (epoch + 1) >= min_epochs:
+					logger.info(
+						'[EARLY STOP] No validation MRR improvement for %d evaluations (epoch %d).',
+						patience,
+						epoch + 1,
+					)
+					break
 			else:
 				logger.info(
 					'Skip validation at epoch %d (eval every %d epochs)',
 					epoch,
-					self._eval_interval_epochs(),
+					validation_interval,
 				)
 
 		self.train_time = train_time
 		self.valid_time = valid_time
 		self.total_time = time.time() - total_start
-		self.num_train_epochs = self.args.epochs
+		self.num_train_epochs = num_train_epochs
+		from utils.au_reporter import finalize_au_report
+		finalize_au_report(self)
 		log_run_timing(
 			train_time=train_time,
 			valid_time=valid_time,
 			total_time=self.total_time,
 			num_train_epochs=self.num_train_epochs,
+			au_report_time=getattr(self, 'au_report_time', 0.0),
 		)
 		logger.info('[Timing] Training time (s): %s', round(train_time, 2))
 		logger.info('[Timing] Total run time (s): %s', round(self.total_time, 2))
@@ -219,6 +274,8 @@ class InBatchStrategy(Evaluator):
 			'valid_time': valid_time,
 			'total_time': self.total_time,
 			'num_train_epochs': self.num_train_epochs,
+			'best_epoch': None if self.best_metric is None else self.best_metric.get('epoch'),
+			'best_mrr': None if self.best_metric is None else self.best_metric.get('score'),
 			'best_metric': self.best_metric,
 			'best_checkpoint_path': self.best_checkpoint_path,
 		}
@@ -296,7 +353,7 @@ class InBatchStrategy(Evaluator):
 
 			if i % self.args.print_freq == 0:
 				progress.display(i)
-			if (i + 1) % eval_every_n_step == 0:
+			if eval_every_n_step is not None and (i + 1) % eval_every_n_step == 0:
 				self._run_eval(epoch=epoch, step=i + 1)
 
 		logger.info('Learning rate: {}'.format(self.scheduler.get_last_lr()[0]))
@@ -342,7 +399,7 @@ class InBatchStrategy(Evaluator):
 		return metric_dict
 
 	@torch.no_grad()
-	def _run_eval(self, epoch, step=0) -> dict:
+	def _run_eval(self, epoch, step=0) -> tuple[dict, bool]:
 		logger.info('[EVAL] Starting validation for epoch %d...', epoch)
 		eval_start = time.time()
 		self.memory_tracker.begin_phase()
@@ -397,7 +454,7 @@ class InBatchStrategy(Evaluator):
 			self.best_checkpoint_path = best_model_path(self.args.output_dir)
 		elif self.best_checkpoint_path is None:
 			self.best_checkpoint_path = saved_checkpoint_path
-		return metric_dict
+		return metric_dict, is_best
 
 	def _resolve_valid_eval_path(self) -> str | None:
 		if not self.args.valid_path:
