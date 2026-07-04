@@ -28,7 +28,7 @@
 
   "add_reciprocal_relations": false,
 
-  "batch_size": 1024,
+  "batch_size": 512,
   "epochs": 400,
   "optim": "adam",
   "lr": 1e-04,

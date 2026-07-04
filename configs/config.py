@@ -605,7 +605,8 @@ def build_parser() -> argparse.ArgumentParser:
                         dest='warm_up_steps', help='Decay LR by lr_decay_factor at this step (default: max_steps // 2)')
     parser.add_argument('--warm-up-ratio', '--warm_up_ratio', default=None,
                         nargs='+', type=float, dest='warm_up_ratio',
-                        help='Step-based LR decay ratios over max_steps (e.g. 0.2 0.5 0.8)')
+                        help='LR decay ratios over training budget: max_steps (step cadence) '
+                             'or epochs*steps_per_epoch (epoch cadence), e.g. 0.2 0.5 0.8')
     parser.add_argument('--warm-up-epochs', '--warm_up_epochs', default=None, type=int,
                         dest='warm_up_epochs',
                         help='Decay LR after this many epochs (overrides warm_up_steps when warm_up_steps unset)')

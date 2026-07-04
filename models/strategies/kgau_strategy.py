@@ -544,7 +544,11 @@ class KGAUStrategy(Evaluator):
 			self._normalize_phases_fn(self.model)
 		init_step_cadence_state(self)
 		warm_up_epochs = getattr(args, 'warm_up_epochs', None)
-		if warm_up_epochs is not None and getattr(args, 'warm_up_steps', None) is None:
+		if (
+			warm_up_epochs is not None
+			and getattr(args, 'warm_up_steps', None) is None
+			and not getattr(self, 'lr_decay_steps', None)
+		):
 			num_batches = max(math.ceil(len(self.train_examples) / batch_size), 1)
 			if self.kgau_bidirectional:
 				num_batches *= 2
