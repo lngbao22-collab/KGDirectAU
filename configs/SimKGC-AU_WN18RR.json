@@ -20,7 +20,6 @@
   "pooling": "mean",
   "additive_margin": 0.02,
   "finetune_t": true,
-  "use_self_negative": true,
   "pre_batch": 0,
   "pre_batch_weight": 0.5,
   "grad_clip": 10.0,
