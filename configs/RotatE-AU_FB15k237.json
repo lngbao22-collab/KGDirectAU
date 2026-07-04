@@ -22,13 +22,13 @@
   "au_deduplicate": false,
   "tuni": 4,
 
-  "dim": 512,
+  "dim": 237,
   "adversarial_training": true,
   "margin": 9.0,
 
   "add_reciprocal_relations": false,
 
-  "batch_size": 512,
+  "batch_size": 1024,
   "epochs": 400,
   "optim": "adam",
   "lr": 1e-04,
