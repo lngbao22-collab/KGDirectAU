@@ -22,7 +22,7 @@
   "au_deduplicate": false,
   "tuni": 4,
 
-  "dim": 237,
+  "dim": 1000,
   "adversarial_training": true,
   "margin": 9.0,
 
@@ -31,12 +31,12 @@
   "batch_size": 1024,
   "epochs": 400,
   "optim": "adam",
-  "lr": 1e-04,
+  "lr": 1e-03,
   "weight_decay": 0.0,
   "test_eval_last": true,
   "test_eval_best": true,
   "shuffle_train": true,
-  "use_amp": false,
+  "use_amp": true,
 
   "n_sample": 0,
 
