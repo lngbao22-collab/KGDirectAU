@@ -26,11 +26,13 @@
 
   "lmbda_two": 0.01,
 
+  "dabr_reg_include_negatives": true,
+
 
 
   "n_batches": 100,
 
-  "epochs": 1000,
+  "epochs": 6000,
 
   "optim": "adagrad",
 
@@ -46,7 +48,7 @@
 
 
 
-  "epoch_per_eval": 100,
+  "epoch_per_eval": 200,
 
   "eval_batch_size": 64,
 
@@ -56,7 +58,7 @@
 
   "early_stopping_patience": 10,
 
-  "early_stopping_min_epochs": 400,
+  "early_stopping_min_epochs": 800,
 
 
 

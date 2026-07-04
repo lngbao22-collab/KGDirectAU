@@ -629,6 +629,15 @@ def build_parser() -> argparse.ArgumentParser:
                         dest='entity_reg_weight', help='DaBR entity quaternion regularization weight')
     parser.add_argument('--relation-reg-weight', '--relation_reg_weight', default=None, type=float,
                         dest='relation_reg_weight', help='DaBR relation/drift quaternion regularization weight')
+    dabr_reg_neg_group = parser.add_mutually_exclusive_group()
+    dabr_reg_neg_group.add_argument(
+        '--dabr-reg-include-negatives', '--dabr_reg_include_negatives',
+        dest='dabr_reg_include_negatives', action='store_true', default=None,
+        help='DaBR: regularize over the full positive+negative batch (matches the reference implementation)')
+    dabr_reg_neg_group.add_argument(
+        '--no-dabr-reg-include-negatives', '--no_dabr_reg_include_negatives',
+        dest='dabr_reg_include_negatives', action='store_false',
+        help='DaBR: regularize over positive triples only (default)')
     parser.add_argument('--n-batches', '--n_batches', default=None, type=int,
                         dest='n_batches', help='Training batches per epoch (OpenKE nbatches; sets batch_size)')
     parser.add_argument('--valid-metric', '--valid_metric', default=None, type=str,

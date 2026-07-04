@@ -223,7 +223,7 @@ class NegSampStrategy:
 			if self._pointwise_mode:
 				pos_scores, neg_scores = self._score_pointwise_batch(pos_batch, neg_batch)
 				loss = self._compute_loss(pos_scores, neg_scores, weights)
-				dabr_reg = self._dabr_regularization(pos_batch)
+				dabr_reg = self._dabr_regularization(pos_batch, neg_batch)
 				if dabr_reg is not None:
 					loss = loss + dabr_reg
 				self._backward_loss(loss)
@@ -543,7 +543,11 @@ class NegSampStrategy:
 			return dr(relation_indices)
 		return None
 
-	def _dabr_regularization(self, pos_triples: torch.Tensor) -> torch.Tensor | None:
+	def _dabr_regularization(
+		self,
+		pos_triples: torch.Tensor,
+		neg_triples: torch.Tensor | None = None,
+	) -> torch.Tensor | None:
 		model_obj = get_model_obj(self.model)
 		scorer = getattr(model_obj, 'scorer', None)
 		reg_fn = getattr(model_obj, 'regularization', None) or getattr(scorer, 'regularization', None)
@@ -561,10 +565,16 @@ class NegSampStrategy:
 		if entity_reg_weight <= 0.0 and relation_reg_weight <= 0.0:
 			return None
 
-		h = model_obj.embed_s(pos_triples[:, 0])
-		r = model_obj.embed_p(pos_triples[:, 1])
-		t = model_obj.embed_o(pos_triples[:, 2])
-		dr_embedder = self._aux_relation_embedding(model_obj, pos_triples[:, 1])
+		# Match the reference DaBR, which regularizes over the full positive+negative
+		# batch when opted in; otherwise fall back to positive triples only.
+		reg_triples = pos_triples
+		if config_bool(self.args, 'dabr_reg_include_negatives', False) and neg_triples is not None:
+			reg_triples = torch.cat([pos_triples, neg_triples], dim=0)
+
+		h = model_obj.embed_s(reg_triples[:, 0])
+		r = model_obj.embed_p(reg_triples[:, 1])
+		t = model_obj.embed_o(reg_triples[:, 2])
+		dr_embedder = self._aux_relation_embedding(model_obj, reg_triples[:, 1])
 		if dr_embedder is None:
 			return None
 		dr = dr_embedder
