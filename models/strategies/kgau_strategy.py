@@ -461,6 +461,7 @@ class KGAUStrategy(Evaluator):
 			assume_unit_norm=assume_unit_norm,
 			average_uniformity_terms=config_bool(args, 'average_uniformity_terms', False),
 			uniformity_full_pdist=config_bool(args, 'uniformity_full_pdist', False),
+			uniformity_pdist_gb=getattr(args, 'uniformity_pdist_gb', None),
 		).to(self.device)
 		if config_bool(args, 'average_uniformity_terms', False):
 			logger.info('KGAU average_uniformity_terms: enabled (sum active terms / count)')
@@ -917,10 +918,9 @@ class KGAUStrategy(Evaluator):
 		return max(dim, 1)
 
 	def _uniformity_pdist_byte_budget(self) -> int:
-		raw = getattr(self.args, 'uniformity_pdist_bytes', None)
-		if raw is not None:
-			return max(int(raw), 1)
-		return 3 * 1024 * 1024 * 1024
+		raw = getattr(self.args, 'uniformity_pdist_gb', None)
+		gb = 3.0 if raw is None else float(raw)
+		return max(int(gb * 1024 ** 3), 1)
 
 	def _max_batch_for_uniformity_pdist(self) -> int | None:
 		"""Cap train batch when batch entity uniformity uses full ``torch.pdist``."""
@@ -950,14 +950,16 @@ class KGAUStrategy(Evaluator):
 
 		pdist_cap = self._max_batch_for_uniformity_pdist()
 		if pdist_cap is not None and batch_size > pdist_cap:
-			logger.info(
-				'KGAU train micro-batch: %d -> %d (uniformity_full_pdist memory cap, au_dim=%d)',
-				batch_size,
-				pdist_cap,
-				self._au_vector_dim(),
-			)
 			return pdist_cap
 		return batch_size
+
+	def _micro_batch_epoch_suffix(self, batch_size: int) -> str:
+		"""One-line micro-batch status for epoch logs (no per-batch spam)."""
+
+		micro = min(self._train_micro_batch_size(batch_size), batch_size)
+		if micro < batch_size:
+			return f' | micro-batch: yes (size={micro}, train batch={batch_size})'
+		return ' | micro-batch: no'
 
 	def _backward_au_loss(
 		self,
@@ -1472,24 +1474,27 @@ class KGAUStrategy(Evaluator):
 		gamma_suffix = _gamma_log_suffix(self.criterion) if (
 			self._should_log_gammas() or self._should_log_alpha()
 		) else ''
+		micro_suffix = self._micro_batch_epoch_suffix(batch_size)
 		if float(self.criterion.additive_margin) > 0.0:
 			logger.info(
 				'[EPOCH %s] train loss: %.6f | au: %.6f | align: %.6f | uniformity: %.6f | reg: %.6f | '
-				'kge: %.6f | unique q/t per batch: %.0f/%.0f (of %d) | margin-buffer pairs: %.2f%%%s',
+				'kge: %.6f | unique q/t per batch: %.0f/%.0f (of %d) | margin-buffer pairs: %.2f%%%s%s',
 				display_epoch, avg_loss, avg_au_loss, avg_align_loss, avg_unif_loss, avg_reg_loss,
 				avg_kge_loss,
 				avg_unique_q, avg_unique_t, batch_size,
 				100.0 * avg_margin_active,
 				tuni_suffix + gamma_suffix,
+				micro_suffix,
 			)
 		else:
 			logger.info(
 				'[EPOCH %s] train loss: %.6f | au: %.6f | align: %.6f | uniformity: %.6f | reg: %.6f | '
-				'kge: %.6f | unique q/t per batch: %.0f/%.0f (of %d)%s',
+				'kge: %.6f | unique q/t per batch: %.0f/%.0f (of %d)%s%s',
 				display_epoch, avg_loss, avg_au_loss, avg_align_loss, avg_unif_loss, avg_reg_loss,
 				avg_kge_loss,
 				avg_unique_q, avg_unique_t, batch_size,
 				tuni_suffix + gamma_suffix,
+				micro_suffix,
 			)
 		self.train_component_losses = {
 			'loss': avg_loss,

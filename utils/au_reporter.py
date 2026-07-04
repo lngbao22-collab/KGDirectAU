@@ -59,6 +59,7 @@ def _build_au_criterion(
 		assume_unit_norm=assume_unit_norm,
 		average_uniformity_terms=config_bool(args, 'average_uniformity_terms', False),
 		uniformity_full_pdist=config_bool(args, 'uniformity_full_pdist', False),
+		uniformity_pdist_gb=getattr(args, 'uniformity_pdist_gb', None),
 	).to(device)
 
 
@@ -211,11 +212,33 @@ class AUReporter:
 			record['epoch'], record['au_loss'], record['align_loss'], record['uniformity_loss'],
 		)
 
+	def _resolve_text_head_vector(
+		self,
+		model,
+		batch_dict: dict,
+		h_raw: torch.Tensor | None,
+	) -> torch.Tensor | None:
+		"""SimKGC only returns ``head_vector`` in training mode (self-negative path)."""
+
+		if h_raw is not None:
+			return h_raw
+		head_token_ids = batch_dict.get('head_token_ids')
+		if head_token_ids is None:
+			return None
+		h_raw = model.ent_embedder.encode(
+			head_token_ids,
+			batch_dict['head_mask'],
+			batch_dict['head_token_type_ids'],
+		)
+		if hasattr(model, '_normalize_au_vector'):
+			h_raw = model._normalize_au_vector(h_raw)
+		return h_raw
+
 	def _distinct_uniformity_inputs(
 		self,
 		q_raw: torch.Tensor,
 		t_raw: torch.Tensor,
-		h_raw: torch.Tensor,
+		h_raw: torch.Tensor | None,
 		q_keys: torch.Tensor,
 		t_keys: torch.Tensor,
 		h_keys: torch.Tensor,
@@ -224,7 +247,11 @@ class AUReporter:
 			return None, None, None
 		q_uni = select_distinct_rows(q_raw, q_keys) if self.criterion.gamma_active('q') else None
 		t_uni = select_distinct_rows(t_raw, t_keys) if self.criterion.gamma_active('t') else None
-		h_uni = select_distinct_rows(h_raw, h_keys) if self.criterion.gamma_active('h') else None
+		h_uni = (
+			select_distinct_rows(h_raw, h_keys)
+			if h_raw is not None and self.criterion.gamma_active('h')
+			else None
+		)
 		return q_uni, t_uni, h_uni
 
 	def _cross_uniformity_vectors(
@@ -246,8 +273,8 @@ class AUReporter:
 	def _entity_uniformity_vectors(
 		self,
 		model,
-		h_raw: torch.Tensor,
-		t_raw: torch.Tensor,
+		h_raw: torch.Tensor | None,
+		t_raw: torch.Tensor | None,
 		h_keys: torch.Tensor,
 		t_keys: torch.Tensor,
 		*,
@@ -290,12 +317,12 @@ class AUReporter:
 
 	def _batch_entity_uniformity_vectors(
 		self,
-		h_raw: torch.Tensor,
-		t_raw: torch.Tensor,
+		h_raw: torch.Tensor | None,
+		t_raw: torch.Tensor | None,
 		h_keys: torch.Tensor,
 		t_keys: torch.Tensor,
 	) -> torch.Tensor | None:
-		if h_raw.size(0) == 0:
+		if h_raw is None or t_raw is None or h_raw.size(0) == 0:
 			return None
 		if not self.au_deduplicate:
 			ent = torch.cat([h_raw, t_raw], dim=0)
@@ -320,7 +347,7 @@ class AUReporter:
 		model,
 		q_raw: torch.Tensor,
 		t_raw: torch.Tensor,
-		h_raw: torch.Tensor,
+		h_raw: torch.Tensor | None,
 		q_keys: torch.Tensor,
 		t_keys: torch.Tensor,
 		h_keys: torch.Tensor,
@@ -441,7 +468,7 @@ class AUReporter:
 				outputs = self.model(**batch_dict)
 				q_raw = outputs['hr_vector']
 				t_raw = outputs['tail_vector']
-				h_raw = outputs['head_vector']
+				h_raw = self._resolve_text_head_vector(model, batch_dict, outputs.get('head_vector'))
 				batch_n = len(examples)
 				total, l_align, l_unif = self._compute_batch_au(
 					model, q_raw, t_raw, h_raw, q_keys, t_keys, h_keys, epoch=epoch,

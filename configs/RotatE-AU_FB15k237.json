@@ -10,6 +10,7 @@
 
   "kgau_bidirectional": true,
   "uniformity_full_pdist": true,
+  "uniformity_pdist_gb": 15,
   "max_uniformity_samples": 0,
   "normalize_au_vectors": true,
   "gamma_q": 1.0,
@@ -21,7 +22,7 @@
   "au_deduplicate": false,
   "tuni": 4,
 
-  "dim": 1000,
+  "dim": 512,
   "adversarial_training": true,
   "margin": 9.0,
 

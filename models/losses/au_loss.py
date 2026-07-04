@@ -67,10 +67,12 @@ class KGAULoss(nn.Module):
 		assume_unit_norm: bool = False,
 		average_uniformity_terms: bool = False,
 		uniformity_full_pdist: bool = False,
+		uniformity_pdist_gb: float | None = None,
 	):
 		super().__init__()
 		self.average_uniformity_terms = bool(average_uniformity_terms)
 		self.uniformity_full_pdist = bool(uniformity_full_pdist)
+		self.uniformity_pdist_gb = uniformity_pdist_gb
 		self.tuni_as_alpha = bool(tuni_as_alpha)
 		self.learnable_au_alpha = bool(learnable_au_alpha)
 		self.learnable_au_gammas = bool(learnable_au_gammas)
@@ -273,7 +275,7 @@ class KGAULoss(nn.Module):
 		max_samples = int(getattr(self, 'max_uniformity_samples', 0) or 0)
 		if max_samples > 0:
 			return max_samples
-		pdist_budget = int(getattr(self, 'uniformity_pdist_bytes', 0) or 0) or (3 * 1024 * 1024 * 1024)
+		pdist_budget = max(int((self.uniformity_pdist_gb if self.uniformity_pdist_gb is not None else 3.0) * 1024 ** 3), 1)
 		return max(2, int((pdist_budget / (max(dim, 1) * 4)) ** 0.5))
 
 	def _subsample_uniformity_rows(self, x: torch.Tensor) -> torch.Tensor | None:

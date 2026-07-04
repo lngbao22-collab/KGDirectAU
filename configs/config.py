@@ -142,6 +142,10 @@ def build_parser() -> argparse.ArgumentParser:
                        help='checkpoint BERT encode chunks to reduce GPU memory during training')
     group.add_argument('--no-encode-checkpoint', '--no_encode_checkpoint', dest='encode_checkpoint',
                        action='store_false', help='disable BERT encode checkpointing (default)')
+    parser.add_argument('--uniformity-pdist-gb', '--uniformity_pdist_gb', default=None, type=float,
+                        dest='uniformity_pdist_gb',
+                        help='GiB budget for torch.pdist uniformity backward (default 3). Caps train micro-batch '
+                             'when uniformity_full_pdist and entity_uniformity_batch are enabled.')
     parser.add_argument('--max-uniformity-samples', '--max_uniformity_samples', default=None, type=int,
                         dest='max_uniformity_samples',
                         help='maximum number of embeddings used to estimate the AU uniformity term (0=no cap)')
