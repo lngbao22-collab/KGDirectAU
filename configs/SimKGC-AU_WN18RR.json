@@ -9,16 +9,21 @@
 
   "gamma_q": 1.0,
   "gamma_t": 1.0,
-  "gamma_ent": 0.0,
+  "gamma_cross": 0.0,
+  "gamma_ent": 1.0,
   "gamma_h": 0.0,
   "tuni": 4.0,
+  "average_uniformity_terms": true,
+  "uniformity_full_pdist": true,
+  "max_uniformity_samples": 0,
+  "entity_uniformity_batch": true,
 
   "dim": 768,
   "dropout": 0.1,
 
   "bert_encoder": "distilbert-base-uncased",
   "pooling": "mean",
-  "additive_margin": 0.02,
+  "additive_margin": 0.0,
   "finetune_t": true,
   "pre_batch": 0,
   "pre_batch_weight": 0.5,
@@ -28,7 +33,7 @@
   "rerank_n_hop": 2,
 
   "batch_size": 512,
-  "epochs": 400,
+  "epochs": 50,
   "lr": 5e-05,
   "weight_decay": 0.0001,
   "lr_scheduler": "linear",
