@@ -147,9 +147,12 @@ class AUReporter:
 			self.criterion.tuni = float(_scheduled_tuni_value(self.args, epoch))
 
 	def _reporting_criterion(self) -> KGAULoss:
-		"""Prefer the trainer's live criterion (already scheduled for this epoch)."""
+		"""Prefer the trainer's live KGAULoss (already scheduled for this epoch)."""
 
-		return getattr(self.trainer, 'criterion', self.criterion)
+		trainer_criterion = getattr(self.trainer, 'criterion', None)
+		if isinstance(trainer_criterion, KGAULoss):
+			return trainer_criterion
+		return self.criterion
 
 	def _epoch_config_snapshot(self) -> dict[str, float]:
 		criterion = self._reporting_criterion()

@@ -43,7 +43,12 @@
   "early_stopping_patience": 5,
   "early_stopping_min_epochs": 10,
   "early_stopping_min_metric": 0.05,
-  "report_au": true
+  "report_au": true,
+  "tuni": 4,
+  "gamma_q": 1.0,
+  "gamma_t": 1.0,
+  "gamma_ent": 1.0,
+  "gamma_cross": 1.0
 }
 
 
