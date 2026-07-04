@@ -16,7 +16,12 @@ class ContrastiveTrainingState(nn.Module):
 	def __init__(self, args: Any, hidden_size: int):
 		super().__init__()
 		self.args = args
-		info_nce_t = getattr(args, 'infonce_t', getattr(args, 't', 0.05))
+		info_nce_t = getattr(args, 'infonce_t', None)
+		if info_nce_t is None:
+			info_nce_t = getattr(args, 't', None)
+		if info_nce_t is None:
+			info_nce_t = 0.05
+		info_nce_t = float(info_nce_t)
 		self.log_inv_t = nn.Parameter(
 			torch.tensor(1.0 / info_nce_t).log(),
 			requires_grad=bool(getattr(args, 'finetune_t', True)),
