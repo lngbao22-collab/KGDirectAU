@@ -491,6 +491,17 @@ class TextKGEModel(KGEModel):
 			head = self._normalize_au_vector(head)
 		return query, tail, head
 
+	def _au_needs_head_vectors(self) -> bool:
+		"""True when AU head/entity uniformity (``gamma_h`` / ``gamma_ent``) is active.
+
+		Text encoders only encode head vectors on demand, so this decides whether the
+		training forward must produce them for the uniformity terms.
+		"""
+
+		gamma_h = float(getattr(self.args, 'gamma_h', 0.0) or 0.0)
+		gamma_ent = float(getattr(self.args, 'gamma_ent', 0.0) or 0.0)
+		return gamma_h > 0.0 or gamma_ent > 0.0
+
 	def forward(
 		self,
 		hr_token_ids=None,
@@ -525,7 +536,12 @@ class TextKGEModel(KGEModel):
 
 		hr_vector = self.query_embedder.encode(hr_token_ids, hr_mask, hr_token_type_ids)
 		use_self_negative = self.training and bool(getattr(self.args, 'use_self_negative', False))
-		if use_self_negative and head_token_ids is not None:
+		# Head vectors are also needed when the AU loss uses head/entity uniformity
+		# (``gamma_h`` / ``gamma_ent``); otherwise they would be ``None`` and crash uniformity.
+		need_head_vector = head_token_ids is not None and (
+			use_self_negative or (self.training and self._au_needs_head_vectors())
+		)
+		if need_head_vector:
 			batch_size = tail_token_ids.size(0)
 			combined_ids = torch.cat([tail_token_ids, head_token_ids], dim=0)
 			combined_mask = torch.cat([tail_mask, head_mask], dim=0)

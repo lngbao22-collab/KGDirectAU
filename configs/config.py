@@ -615,7 +615,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--epoch-per-eval', '--epoch_per_eval', default=None, type=int,
                         dest='epoch_per_eval', help='Run validation every N epochs')
     parser.add_argument('--optim', default=None, type=str,
-                        help='Optimizer: adam, adagrad, or sgd')
+                        help='Optimizer: adam, adamw, adagrad, or sgd')
     parser.add_argument('--kvsall-query-types', '--kvsall_query_types', default=None,
                         nargs='+', type=str, dest='kvsall_query_types',
                         help='KvsAll query types (e.g. sp_ _po)')

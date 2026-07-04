@@ -96,6 +96,8 @@ def _build_optimizer(args, parameters, weight_decay: float):
 
 	lr = float(getattr(args, 'lr', getattr(args, 'learning_rate', 2e-5)))
 	optim_name = str(getattr(args, 'optim', 'adam')).lower()
+	if optim_name == 'adamw':
+		return optim.AdamW(parameters, lr=lr, weight_decay=weight_decay)
 	if optim_name == 'adagrad':
 		return optim.Adagrad(parameters, lr=lr, weight_decay=weight_decay)
 	if optim_name == 'sgd':
@@ -158,6 +160,8 @@ def _build_kgau_optimizer(args, model, criterion: KGAULoss, weight_decay: float)
 		return _build_optimizer(args, model.parameters(), weight_decay)
 
 	optim_name = str(getattr(args, 'optim', 'adam')).lower()
+	if optim_name == 'adamw':
+		return optim.AdamW(param_groups)
 	if optim_name == 'adagrad':
 		return optim.Adagrad(param_groups)
 	if optim_name == 'sgd':
@@ -411,7 +415,12 @@ class KGAUStrategy(Evaluator):
 		batch_size = max(getattr(args, 'batch_size', 1), 1)
 		num_batches = max(math.ceil(len(self.train_examples) / batch_size), 1)
 		self.au_deduplicate = config_bool(args, 'au_deduplicate', True)
-		self.weight_decay = float(weight_decay) / num_batches
+		# AdamW (SimKGC-style) applies weight_decay as-is; legacy KGE optimizers keep the
+		# per-batch scaling that matches their historical regularization convention.
+		if str(getattr(args, 'optim', 'adam') or 'adam').lower() == 'adamw':
+			self.weight_decay = float(weight_decay)
+		else:
+			self.weight_decay = float(weight_decay) / num_batches
 
 		tuni_val = _config_float(args, 'tuni', _config_float(args, 'temperature', _config_float(args, 't', 2.0)))
 		learnable_tuni = config_bool(args, 'learnable_uniformity_scale', False)
@@ -708,7 +717,11 @@ class KGAUStrategy(Evaluator):
 
 		q_uni = select_distinct_rows(q_raw, q_keys) if self.criterion.gamma_active('q') else None
 		t_uni = select_distinct_rows(t_raw, t_keys) if self.criterion.gamma_active('t') else None
-		h_uni = select_distinct_rows(h_raw, h_keys) if self.criterion.gamma_active('h') else None
+		h_uni = (
+			select_distinct_rows(h_raw, h_keys)
+			if self.criterion.gamma_active('h') and h_raw is not None
+			else None
+		)
 		n_unique_q = q_uni.size(0) if q_uni is not None else 0
 		n_unique_t = t_uni.size(0) if t_uni is not None else 0
 		return q_uni, t_uni, h_uni, n_unique_q, n_unique_t
@@ -837,7 +850,7 @@ class KGAUStrategy(Evaluator):
 		Otherwise pools all batch head/tail rows (DirectAU-style batch uniformity).
 		"""
 
-		if not self.criterion.gamma_active('ent') or h_raw.size(0) == 0:
+		if not self.criterion.gamma_active('ent') or h_raw is None or t_raw is None or h_raw.size(0) == 0:
 			return None
 
 		if not self.au_deduplicate:
