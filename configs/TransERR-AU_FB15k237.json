@@ -1,6 +1,6 @@
 {
   "model": "TransERR-AU",
-  "dataset": "WN18RR",
+  "dataset": "FB15k237",
 
   "model_loss_path": "models/losses/au_loss.py",
   "model_strategy_path": "models/strategies/kgau_strategy.py",
@@ -27,13 +27,13 @@
 
   "adversarial_training": true,
   "adversarial_temperature": 0.5,
-  "margin": 12.0,
+  "margin": 20.0,
   "epsilon": 2.0,
   "add_reciprocal_relations": true,
 
   "batch_size": 2048,
   "training_cadence": "epoch",
-  "epochs": 1200,
+  "epochs": 376,
   "warm_up_ratio": [0.2, 0.5, 0.8],
   "lr_decay_factor": 0.1,
   "optim": "adam",
@@ -49,13 +49,13 @@
 
   "valid_steps": 2000,
   "save_checkpoint_steps": 2000,
-  "test_batch_size": 8,
+  "test_batch_size": 32,
   "score_query_chunk_size": 256,
   "eval_candidate_chunk_size": 2048,
   "eval_entity_chunk_size": 4096,
 
   "max_to_keep": 0,
-  "output_dir_prefix": "logs/TransERR-AU_WN18RR",
+  "output_dir_prefix": "logs/TransERR-AU_FB15k237",
 
   "tie_handling": "rounded_mean_rank",
   "tie_rtol": 0.0001,
@@ -63,7 +63,7 @@
 
   "epoch_per_eval": 5,
   "early_stopping_patience": 10,
-  "early_stopping_min_epochs": 1200,
+  "early_stopping_min_epochs": 376,
   "early_stopping_min_metric": 0.05,
 
   "normalize_lp_scores": true,
