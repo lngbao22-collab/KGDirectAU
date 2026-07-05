@@ -22,27 +22,30 @@
   "au_deduplicate": false,
   "tuni": 4,
 
-  "dim": 1000,
+  "dim": 128,
   "triple_relation_embedding": true,
 
   "adversarial_training": true,
+  "adversarial_temperature": 0.5,
   "margin": 12.0,
   "epsilon": 2.0,
   "add_reciprocal_relations": false,
 
   "batch_size": 2048,
   "training_cadence": "epoch",
-  "epochs": 400,
-  "warm_up_steps": 50000,
+  "epochs": 1200,
+  "warm_up_ratio": [0.2, 0.5, 0.8],
   "lr_decay_factor": 0.1,
   "optim": "adam",
-  "lr": 0.001,
+  "lr": 0.005,
   "weight_decay": 0.0,
   "shuffle_train": true,
   "use_amp": false,
+  "test_eval_last": true,
+  "test_eval_best": true,
 
   "n_sample": 0,
-  "regularization": 5e-06,
+  "regularization": 0.4,
 
   "valid_steps": 2000,
   "save_checkpoint_steps": 2000,
@@ -60,9 +63,9 @@
 
   "epoch_per_eval": 5,
   "early_stopping_patience": 10,
-  "early_stopping_min_epochs": 50,
+  "early_stopping_min_epochs": 400,
   "early_stopping_min_metric": 0.05,
 
   "normalize_lp_scores": true,
-  "report_au": true
+  "report_au": false
 }
