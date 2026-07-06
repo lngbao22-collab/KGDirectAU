@@ -5,15 +5,24 @@
   "model_loss_path": "models/losses/au_loss.py",
   "model_strategy_path": "models/strategies/kgau_strategy.py",
 
-  "head_eval_mode": "po_forward",
+  "head_eval_mode": "sp_inverse",
 
+  "kgau_bidirectional": false,
+  "add_reciprocal_relations": true,
+  "uniformity_full_pdist": true,
+  "max_uniformity_samples": 0,
+  "normalize_au_vectors": true,
   "gamma_q": 1.0,
   "gamma_t": 1.0,
-  "gamma_ent": 0.0,
-  "gamma_h": 0.0,
-  "tuni": 2.0,
+  "gamma_ent": 1.0,
+  "gamma_cross": 0.0,
+  "average_uniformity_terms": true,
+  "entity_uniformity_batch": true,
+  "au_deduplicate": false,
+  "tuni": 4,
 
-  "dim": 500,
+
+  "dim": 64,
 
   "lmbda": 0.5,
   "lmbda_two": 0.01,
@@ -29,6 +38,7 @@
   "max_to_keep": 0,
   "output_dir_prefix": "logs/DaBR-AU_WN18RR",
 
-  "report_au": true
+  "normalize_lp_scores": true,
+  "report_au": false
 }
 
