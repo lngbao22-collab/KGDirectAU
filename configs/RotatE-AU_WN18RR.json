@@ -6,9 +6,9 @@
   "model_strategy_path": "models/strategies/kgau_strategy.py",
   "model_sampler_path": "",
 
-  "head_eval_mode": "sp_inverse",
+  "head_eval_mode": "po_forward",
 
-  "kgau_bidirectional": false,
+  "kgau_bidirectional": true,
   "uniformity_full_pdist": true,
   "max_uniformity_samples": 0,
   "normalize_au_vectors": true,
@@ -25,7 +25,7 @@
 
   "adversarial_training": true,
   "margin": 6,
-  "add_reciprocal_relations": true,
+  "add_reciprocal_relations": false,
 
   "batch_size": 512,
   "epochs": 400,
