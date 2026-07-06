@@ -897,8 +897,10 @@ class KGAUStrategy(Evaluator):
 		h_keys: torch.Tensor,
 		t_keys: torch.Tensor,
 		*,
+		q_raw: torch.Tensor | None = None,
 		head_indices: torch.Tensor | None = None,
 		tail_indices: torch.Tensor | None = None,
+		predict_head: bool = False,
 	) -> torch.Tensor | None:
 		"""Entity vectors for ``gamma_ent``: batch dedup (text) or full table (embedding encoders)."""
 
@@ -923,6 +925,17 @@ class KGAUStrategy(Evaluator):
 						h_ent = model_obj._normalize_au_vector(h_ent)
 						t_ent = model_obj._normalize_au_vector(t_ent)
 					return self._batch_entity_uniformity_vectors(h_ent, t_ent, h_keys, t_keys)
+			# DaBR-AU returns raw entity embeddings as ``h_raw`` but relation-aware AU
+			# vectors as ``q_raw``/``t_raw``; pool heads/tails from the AU side only.
+			if (
+				q_raw is not None
+				and h_raw is not None
+				and t_raw is not None
+				and h_raw.size(-1) != t_raw.size(-1)
+			):
+				head_vecs = t_raw if predict_head else q_raw
+				tail_vecs = q_raw if predict_head else t_raw
+				return self._batch_entity_uniformity_vectors(head_vecs, tail_vecs, h_keys, t_keys)
 			return self._batch_entity_uniformity_vectors(h_raw, t_raw, h_keys, t_keys)
 		return self._catalog_entity_uniformity_vectors(model)
 
@@ -1234,7 +1247,7 @@ class KGAUStrategy(Evaluator):
 					model, ss, rs, ts, predict_head=predict_head)
 				ent_raw = self._entity_uniformity_vectors_for_loss(
 					model, h_raw, t_raw, h_keys, t_keys,
-					head_indices=ss, tail_indices=ts)
+					q_raw=q_raw, head_indices=ss, tail_indices=ts, predict_head=predict_head)
 				au_loss, l_align, l_unif, l_reg, _, _, margin_active = self._au_loss_with_distinct_keys(
 					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 				kge_parts = None
@@ -1253,7 +1266,7 @@ class KGAUStrategy(Evaluator):
 				model, ss, rs, ts, predict_head=predict_head)
 			ent_raw = self._entity_uniformity_vectors_for_loss(
 				model, h_raw, t_raw, h_keys, t_keys,
-				head_indices=ss, tail_indices=ts)
+				q_raw=q_raw, head_indices=ss, tail_indices=ts, predict_head=predict_head)
 			au_loss, l_align, l_unif, l_reg, _, _, margin_active = self._au_loss_with_distinct_keys(
 				q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 			if self.au_hybrid_adversarial_bce:
@@ -1312,7 +1325,8 @@ class KGAUStrategy(Evaluator):
 						predict_head=predict_head)
 					ent_raw = self._entity_uniformity_vectors_for_loss(
 						model, h_raw, t_raw, h_keys, t_keys,
-						head_indices=ss[start:end], tail_indices=ts[start:end])
+						q_raw=q_raw, head_indices=ss[start:end], tail_indices=ts[start:end],
+						predict_head=predict_head)
 					loss, l_align, l_unif, l_reg, _, _, margin_active = self._au_loss_with_distinct_keys(
 						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 				self._backward_au_loss(loss, fraction, use_amp=True)
@@ -1322,7 +1336,8 @@ class KGAUStrategy(Evaluator):
 					predict_head=predict_head)
 				ent_raw = self._entity_uniformity_vectors_for_loss(
 					model, h_raw, t_raw, h_keys, t_keys,
-					head_indices=ss[start:end], tail_indices=ts[start:end])
+					q_raw=q_raw, head_indices=ss[start:end], tail_indices=ts[start:end],
+					predict_head=predict_head)
 				loss, l_align, l_unif, l_reg, _, _, margin_active = self._au_loss_with_distinct_keys(
 					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 				self._backward_au_loss(loss, fraction, use_amp=False)
