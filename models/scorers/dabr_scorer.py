@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from base.kge_scorer import KGEScorer
 
@@ -260,16 +261,180 @@ class DaBRScorer(KGEScorer):
 			)
 		return scores
 
-	def au_representations(
+	@staticmethod
+	def _normalized_pair_score(left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+		left = F.normalize(left, p=2, dim=-1)
+		right = F.normalize(right, p=2, dim=-1)
+		return torch.sum(left * right, dim=-1)
+
+	@staticmethod
+	def _normalized_1vsall_score(query: torch.Tensor, candidates: torch.Tensor) -> torch.Tensor:
+		query = F.normalize(query, p=2, dim=-1)
+		candidates = F.normalize(candidates, p=2, dim=-1)
+		return torch.sum(query.unsqueeze(1) * candidates, dim=-1)
+
+	def _coalesce_dr(self, h_emb: torch.Tensor, dr_emb: torch.Tensor | None) -> torch.Tensor:
+		if dr_emb is None:
+			return torch.zeros_like(h_emb)
+		return dr_emb
+
+	def _au_head_vector(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		dr_emb: torch.Tensor | None = None,
+	) -> torch.Tensor:
+		"""Tail/head query side: ``cat(h⊗r, h+dr)``."""
+
+		dr_emb = self._coalesce_dr(h_emb, dr_emb)
+		q_mult = self._quat_mul(h_emb, r_emb)
+		return torch.cat([q_mult, h_emb + dr_emb], dim=-1)
+
+	def _au_tail_vector(self, t_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
+		"""Tail alignment / head-query side: ``cat(-t⊗r⁻¹, t)``."""
+
+		t_mult = -self._quat_mul(t_emb, self._quat_inv(r_emb))
+		return torch.cat([t_mult, t_emb], dim=-1)
+
+	def _au_tail_vectors_batch(self, entity_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
+		"""Relation-aware tail AU vectors ``[B, C, 2D]`` for 1-vs-all cosine LP."""
+
+		num_ent = entity_emb.size(0)
+		if r_emb.dim() == 1:
+			r_emb = r_emb.unsqueeze(0)
+		batch_size = r_emb.size(0)
+		ent_exp = entity_emb.unsqueeze(0).expand(batch_size, num_ent, -1)
+		r_exp = r_emb.unsqueeze(1).expand(batch_size, num_ent, -1)
+		flat_ent = ent_exp.reshape(batch_size * num_ent, -1)
+		flat_r = r_exp.reshape(batch_size * num_ent, -1)
+		t_mult = -self._quat_mul(flat_ent, flat_r).view(batch_size, num_ent, -1)
+		return torch.cat([t_mult, ent_exp], dim=-1)
+
+	def _au_head_vectors_batch(
+		self,
+		entity_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		dr_emb: torch.Tensor | None = None,
+	) -> torch.Tensor:
+		"""Relation-aware head AU vectors ``[B, C, 2D]`` for 1-vs-all cosine LP."""
+
+		num_ent = entity_emb.size(0)
+		if r_emb.dim() == 1:
+			r_emb = r_emb.unsqueeze(0)
+		batch_size = r_emb.size(0)
+		dr_emb = self._coalesce_dr(r_emb, dr_emb)
+		ent_exp = entity_emb.unsqueeze(0).expand(batch_size, num_ent, -1)
+		r_exp = r_emb.unsqueeze(1).expand(batch_size, num_ent, -1)
+		dr_exp = dr_emb.unsqueeze(1).expand(batch_size, num_ent, -1)
+		flat_ent = ent_exp.reshape(batch_size * num_ent, -1)
+		flat_r = r_exp.reshape(batch_size * num_ent, -1)
+		q_mult = self._quat_mul(flat_ent, flat_r).view(batch_size, num_ent, -1)
+		return torch.cat([q_mult, ent_exp + dr_exp], dim=-1)
+
+	def build_query(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		dr_emb: torch.Tensor | None = None,
+	) -> torch.Tensor:
+		"""Tail-prediction query vectors for cosine / Lp-distance link prediction."""
+
+		return self._au_head_vector(h_emb, r_emb, dr_emb)
+
+	def build_po_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+		"""Head-prediction query vectors for cosine / Lp-distance link prediction."""
+
+		return self._au_tail_vector(t_emb, r_emb)
+
+	def normalized_score_spo(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
 		t_emb: torch.Tensor,
 		dr_emb: torch.Tensor | None = None,
 		**kwargs,
+	) -> torch.Tensor:
+		dr_emb = self._coalesce_dr(h_emb, dr_emb)
+		return self._normalized_pair_score(
+			self.build_query(h_emb, r_emb, dr_emb=dr_emb),
+			self._au_tail_vector(t_emb, r_emb),
+		)
+
+	def normalized_score_po(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+		dr_emb: torch.Tensor | None = None,
+		**kwargs,
+	) -> torch.Tensor:
+		dr_emb = self._coalesce_dr(h_emb, dr_emb)
+		return self._normalized_pair_score(
+			self._au_head_vector(h_emb, r_emb, dr_emb),
+			self.build_po_query(r_emb, t_emb),
+		)
+
+	def normalized_score_sp_(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		all_t_embs: torch.Tensor,
+		dr_emb: torch.Tensor | None = None,
+		**kwargs,
+	) -> torch.Tensor:
+		dr_emb = self._coalesce_dr(h_emb, dr_emb)
+		query = self.build_query(h_emb, r_emb, dr_emb=dr_emb)
+		num_candidates = all_t_embs.size(0)
+		batch_size = h_emb.size(0)
+		embed_dim = all_t_embs.size(-1)
+		chunk_size = self._entity_chunk_size(batch_size, embed_dim * 2)
+		scores = h_emb.new_empty(batch_size, num_candidates)
+		for start in range(0, num_candidates, chunk_size):
+			end = min(start + chunk_size, num_candidates)
+			targets = self._au_tail_vectors_batch(all_t_embs[start:end], r_emb)
+			scores[:, start:end] = self._normalized_1vsall_score(query, targets)
+		return scores
+
+	def normalized_score_po_(
+		self,
+		all_h_embs: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+		dr_emb: torch.Tensor | None = None,
+		**kwargs,
+	) -> torch.Tensor:
+		dr_emb = self._coalesce_dr(t_emb, dr_emb)
+		query = self.build_po_query(r_emb, t_emb)
+		num_candidates = all_h_embs.size(0)
+		batch_size = t_emb.size(0)
+		embed_dim = all_h_embs.size(-1)
+		chunk_size = self._entity_chunk_size(batch_size, embed_dim * 2)
+		scores = t_emb.new_empty(batch_size, num_candidates)
+		for start in range(0, num_candidates, chunk_size):
+			end = min(start + chunk_size, num_candidates)
+			targets = self._au_head_vectors_batch(all_h_embs[start:end], r_emb, dr_emb)
+			scores[:, start:end] = self._normalized_1vsall_score(query, targets)
+		return scores
+
+	def au_representations(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+		dr_emb: torch.Tensor | None = None,
+		*,
+		predict_head: bool = False,
+		**kwargs,
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-		if dr_emb is None:
-			dr_emb = torch.zeros_like(h_emb)
-		q_mult = self._quat_mul(h_emb, r_emb)
-		t_mult = -self._quat_mul(t_emb, self._quat_inv(r_emb))
-		return torch.cat([q_mult, h_emb + dr_emb], dim=-1), torch.cat([t_mult, t_emb], dim=-1), h_emb
+		dr_emb = self._coalesce_dr(h_emb, dr_emb)
+		if predict_head:
+			return (
+				self.build_po_query(r_emb, t_emb),
+				self._au_head_vector(h_emb, r_emb, dr_emb),
+				h_emb,
+			)
+		return (
+			self.build_query(h_emb, r_emb, dr_emb=dr_emb),
+			self._au_tail_vector(t_emb, r_emb),
+			h_emb,
+		)

@@ -932,6 +932,9 @@ class KGAUStrategy(Evaluator):
 			model_name = model_name[:-3]
 		if model_name in {'rotate', 'complex', 'protate'}:
 			return max(dim * 2, 1)
+		if model_name == 'dabr':
+			# ``cat(quaternion, quaternion)`` with ``4 * dim`` blocks per side.
+			return max(dim * 8, 1)
 		return max(dim, 1)
 
 	def _uniformity_pdist_byte_budget(self) -> int:
