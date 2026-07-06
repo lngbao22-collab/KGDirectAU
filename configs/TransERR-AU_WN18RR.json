@@ -34,7 +34,7 @@
   "batch_size": 2048,
   "training_cadence": "epoch",
   "epochs": 120,
-  "warm_up_ratio": [0.2, 0.5, 0.8],
+  "warm_up_ratio": [0.1, 0.5, 0.8],
   "lr_decay_factor": 0.1,
   "optim": "adam",
   "lr": 0.001,
