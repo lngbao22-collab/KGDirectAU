@@ -29,10 +29,12 @@
   "add_reciprocal_relations": true,
 
   "batch_size": 1024,
-  "epochs": 400,
+  "epochs": 100,
   "optim": "adam",
   "lr": 1e-04,
   "weight_decay": 0.0,
+  "warm_up_ratio": [0.2, 0.5, 0.8],
+  "lr_decay_factor": 0.1,
   "test_eval_last": true,
   "test_eval_best": true,
   "shuffle_train": true,
