@@ -22,7 +22,7 @@
   "tuni": 4,
 
 
-  "dim": 64,
+  "dim": 500,
 
   "lmbda": 0.5,
   "lmbda_two": 0.01,
