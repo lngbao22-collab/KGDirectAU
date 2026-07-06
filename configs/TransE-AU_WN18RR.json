@@ -19,7 +19,7 @@
   "average_uniformity_terms": true,
   "entity_uniformity_batch": true,
   "au_deduplicate": false,
-  "tuni": 4,
+  "tuni": 2,
 
   "dim": 64,
   "transe_norm": 2,
@@ -31,11 +31,8 @@
   "batch_size": 512,
   "epochs": 400,
   "optim": "adam",
-  "lr": 0.002,
+  "lr": 1e-04,
   "weight_decay": 0.0,
-  "warm_up_epochs": 200,
-  "lr_decay_factor": 0.1,
-  "lr_decay_preserve_optimizer": true,
   "test_eval_last": true,
   "test_eval_best": true,
   "shuffle_train": true,
@@ -52,7 +49,7 @@
   "eval_entity_chunk_size": 4096,
 
   "early_stopping_patience": 10,
-  "early_stopping_min_epochs": 50,
+  "early_stopping_min_epochs": 100,
   "early_stopping_min_metric": 0.05,
 
   "max_to_keep": 0,
@@ -62,6 +59,6 @@
   "tie_rtol": 0.0001,
   "tie_atol": 1e-05,
 
-  "normalize_lp_scores": false,
-  "report_au": true
+  "normalize_lp_scores": true,
+  "report_au": false
 }

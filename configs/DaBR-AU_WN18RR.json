@@ -1,44 +1,56 @@
-{
-  "model": "DaBR-AU",
-  "dataset": "WN18RR",
-
-  "model_loss_path": "models/losses/au_loss.py",
-  "model_strategy_path": "models/strategies/kgau_strategy.py",
-
-  "head_eval_mode": "sp_inverse",
-
-  "kgau_bidirectional": false,
-  "add_reciprocal_relations": true,
-  "uniformity_full_pdist": true,
-  "max_uniformity_samples": 0,
-  "normalize_au_vectors": true,
-  "gamma_q": 1.0,
-  "gamma_t": 1.0,
-  "gamma_ent": 1.0,
-  "gamma_cross": 0.0,
-  "average_uniformity_terms": true,
-  "entity_uniformity_batch": true,
-  "au_deduplicate": false,
-  "tuni": 4,
-
-
-  "dim": 500,
-
-  "lmbda": 0.5,
-  "lmbda_two": 0.01,
-  "sample_freq": 1,
-  "lam": 0.5,
-
-  "batch_size": 512,
-  "epochs": 400,
-  "optim": "adagrad",
-  "lr": 0.1,
-  "weight_decay": 0.1,
-
-  "max_to_keep": 0,
-  "output_dir_prefix": "logs/DaBR-AU_WN18RR",
-
-  "normalize_lp_scores": true,
-  "report_au": false
-}
-
+{
+  "model": "DaBR-AU",
+  "dataset": "WN18RR",
+
+  "model_loss_path": "models/losses/au_loss.py",
+  "model_strategy_path": "models/strategies/kgau_strategy.py",
+
+  "head_eval_mode": "sp_inverse",
+
+  "kgau_bidirectional": false,
+  "add_reciprocal_relations": true,
+  "uniformity_full_pdist": true,
+  "max_uniformity_samples": 0,
+  "normalize_au_vectors": true,
+  "gamma_q": 1.0,
+  "gamma_t": 1.0,
+  "gamma_ent": 1.0,
+  "gamma_cross": 0.0,
+  "average_uniformity_terms": true,
+  "entity_uniformity_batch": true,
+  "au_deduplicate": false,
+  "tuni": 4,
+
+  "dim": 500,
+
+  "lmbda": 0.5,
+  "lmbda_two": 0.01,
+  "sample_freq": 1,
+  "lam": 0.5,
+
+  "batch_size": 512,
+  "epochs": 400,
+  "optim": "adam",
+  "lr": 0.0001,
+  "weight_decay": 0.0,
+  "shuffle_train": true,
+
+  "training_cadence": "epoch",
+  "epoch_per_eval": 5,
+  "eval_entity_chunk_size": 512,
+
+  "early_stopping_patience": 10,
+  "early_stopping_min_epochs": 50,
+  "early_stopping_min_metric": 0.05,
+
+  "max_to_keep": 0,
+  "output_dir_prefix": "logs/DaBR-AU_WN18RR",
+
+  "tie_handling": "rounded_mean_rank",
+  "tie_rtol": 0.0001,
+  "tie_atol": 1e-05,
+
+  "normalize_lp_scores": true,
+  "report_au": false
+}
+

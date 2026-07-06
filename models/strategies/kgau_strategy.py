@@ -910,16 +910,19 @@ class KGAUStrategy(Evaluator):
 				and config_bool(self.args, 'entity_uniformity_batch', False)
 			):
 				model_obj = get_model_obj(model)
-				h_ent = model_obj.embed_s(head_indices)
-				t_ent = model_obj.embed_o(tail_indices)
 				scorer = getattr(model_obj, 'scorer', None)
+				# Only map catalog entity rows when the scorer exposes a static AU entity
+				# table (pRotatE-AU). Relation-composed encoders (DaBR-AU, TransERR-AU)
+				# must reuse batch q/t AU vectors so uniformity matches alignment space.
 				if scorer is not None and hasattr(scorer, 'au_entity_embeddings'):
+					h_ent = model_obj.embed_s(head_indices)
+					t_ent = model_obj.embed_o(tail_indices)
 					h_ent = scorer.au_entity_embeddings(h_ent)
 					t_ent = scorer.au_entity_embeddings(t_ent)
-				if hasattr(model_obj, '_normalize_au_vector'):
-					h_ent = model_obj._normalize_au_vector(h_ent)
-					t_ent = model_obj._normalize_au_vector(t_ent)
-				return self._batch_entity_uniformity_vectors(h_ent, t_ent, h_keys, t_keys)
+					if hasattr(model_obj, '_normalize_au_vector'):
+						h_ent = model_obj._normalize_au_vector(h_ent)
+						t_ent = model_obj._normalize_au_vector(t_ent)
+					return self._batch_entity_uniformity_vectors(h_ent, t_ent, h_keys, t_keys)
 			return self._batch_entity_uniformity_vectors(h_raw, t_raw, h_keys, t_keys)
 		return self._catalog_entity_uniformity_vectors(model)
 

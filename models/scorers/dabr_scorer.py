@@ -374,6 +374,55 @@ class DaBRScorer(KGEScorer):
 			self.build_po_query(r_emb, t_emb),
 		)
 
+	def _group_batch_by_relation(
+		self,
+		r_emb: torch.Tensor,
+		*tensors: torch.Tensor,
+	) -> list[tuple[torch.Tensor, torch.Tensor, list[torch.Tensor]]]:
+		"""Group batch rows that share the same relation embedding."""
+
+		batch_size = r_emb.size(0)
+		if batch_size <= 1:
+			return [(torch.arange(batch_size, device=r_emb.device), r_emb, list(tensors))]
+
+		unique_r, inverse = torch.unique(r_emb, dim=0, return_inverse=True)
+		groups: list[tuple[torch.Tensor, torch.Tensor, list[torch.Tensor]]] = []
+		for rel_idx in range(unique_r.size(0)):
+			row_mask = inverse == rel_idx
+			row_indices = row_mask.nonzero(as_tuple=True)[0]
+			grouped = [tensor[row_mask] for tensor in tensors]
+			groups.append((row_indices, unique_r[rel_idx:rel_idx + 1], grouped))
+		return groups
+
+	def _normalized_sp_scores_chunked(
+		self,
+		query: torch.Tensor,
+		all_entity_embs: torch.Tensor,
+		r_emb: torch.Tensor,
+		*,
+		predict_head: bool,
+		dr_emb: torch.Tensor | None = None,
+	) -> torch.Tensor:
+		"""Cosine 1-vs-all scores with relation-aware AU candidates (chunked over entities)."""
+
+		num_candidates = all_entity_embs.size(0)
+		batch_size = query.size(0)
+		embed_dim = all_entity_embs.size(-1)
+		chunk_size = self._entity_chunk_size(max(batch_size, 1), embed_dim * 2)
+		scores = query.new_empty(batch_size, num_candidates)
+		vector_fn = self._au_head_vectors_batch if predict_head else self._au_tail_vectors_batch
+		for start in range(0, num_candidates, chunk_size):
+			end = min(start + chunk_size, num_candidates)
+			entity_chunk = all_entity_embs[start:end]
+			if predict_head:
+				targets = vector_fn(entity_chunk, r_emb, dr_emb)
+			else:
+				targets = vector_fn(entity_chunk, r_emb)
+			if targets.size(0) == 1 and batch_size > 1:
+				targets = targets.expand(batch_size, -1, -1)
+			scores[:, start:end] = self._normalized_1vsall_score(query, targets)
+		return scores
+
 	def normalized_score_sp_(
 		self,
 		h_emb: torch.Tensor,
@@ -383,16 +432,19 @@ class DaBRScorer(KGEScorer):
 		**kwargs,
 	) -> torch.Tensor:
 		dr_emb = self._coalesce_dr(h_emb, dr_emb)
-		query = self.build_query(h_emb, r_emb, dr_emb=dr_emb)
-		num_candidates = all_t_embs.size(0)
 		batch_size = h_emb.size(0)
-		embed_dim = all_t_embs.size(-1)
-		chunk_size = self._entity_chunk_size(batch_size, embed_dim * 2)
+		num_candidates = all_t_embs.size(0)
 		scores = h_emb.new_empty(batch_size, num_candidates)
-		for start in range(0, num_candidates, chunk_size):
-			end = min(start + chunk_size, num_candidates)
-			targets = self._au_tail_vectors_batch(all_t_embs[start:end], r_emb)
-			scores[:, start:end] = self._normalized_1vsall_score(query, targets)
+		for row_indices, r_row, (h_sub, dr_sub) in self._group_batch_by_relation(r_emb, h_emb, dr_emb):
+			r_sub = r_row.expand(h_sub.size(0), -1)
+			query = self.build_query(h_sub, r_sub, dr_emb=dr_sub)
+			group_scores = self._normalized_sp_scores_chunked(
+				query,
+				all_t_embs,
+				r_row,
+				predict_head=False,
+			)
+			scores.index_copy_(0, row_indices, group_scores)
 		return scores
 
 	def normalized_score_po_(
@@ -404,16 +456,20 @@ class DaBRScorer(KGEScorer):
 		**kwargs,
 	) -> torch.Tensor:
 		dr_emb = self._coalesce_dr(t_emb, dr_emb)
-		query = self.build_po_query(r_emb, t_emb)
-		num_candidates = all_h_embs.size(0)
 		batch_size = t_emb.size(0)
-		embed_dim = all_h_embs.size(-1)
-		chunk_size = self._entity_chunk_size(batch_size, embed_dim * 2)
+		num_candidates = all_h_embs.size(0)
 		scores = t_emb.new_empty(batch_size, num_candidates)
-		for start in range(0, num_candidates, chunk_size):
-			end = min(start + chunk_size, num_candidates)
-			targets = self._au_head_vectors_batch(all_h_embs[start:end], r_emb, dr_emb)
-			scores[:, start:end] = self._normalized_1vsall_score(query, targets)
+		for row_indices, r_row, (t_sub, dr_sub) in self._group_batch_by_relation(r_emb, t_emb, dr_emb):
+			r_sub = r_row.expand(t_sub.size(0), -1)
+			query = self.build_po_query(r_sub, t_sub)
+			group_scores = self._normalized_sp_scores_chunked(
+				query,
+				all_h_embs,
+				r_row,
+				predict_head=True,
+				dr_emb=dr_sub[:1] if dr_sub is not None else None,
+			)
+			scores.index_copy_(0, row_indices, group_scores)
 		return scores
 
 	def au_representations(
