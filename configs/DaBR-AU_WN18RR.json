@@ -27,6 +27,7 @@
   "dim": 64,
   "lmbda": 0.5,
   "lmbda_two": 0.01,
+  "dabr_distance_norm": 2,
   "sample_freq": 1,
   "lam": 0.5,
 

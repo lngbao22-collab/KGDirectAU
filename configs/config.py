@@ -466,6 +466,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--transe-norm', '--transe_norm', default=None, type=int,
                         dest='transe_norm',
                         help='TransE distance norm: 1 (classic L1) or 2 (L2, TransE-AU)')
+    parser.add_argument('--dabr-distance-norm', '--dabr_distance_norm', default=None, type=int,
+                        dest='dabr_distance_norm',
+                        help='DaBR additive-branch distance norm: 1 (paper L1) or 2 (L2, Option A)')
     triple_relation_group = parser.add_mutually_exclusive_group()
     triple_relation_group.add_argument(
         '--triple-relation-embedding', '--triple_relation_embedding',

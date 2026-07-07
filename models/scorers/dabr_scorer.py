@@ -22,6 +22,10 @@ class DaBRScorer(KGEScorer):
 		super().__init__()
 		self.args = args
 		self.para = nn.Parameter(torch.tensor([float(getattr(args, 'para', 0.1))]))
+		norm_p = int(getattr(args, 'dabr_distance_norm', 1) or 1)
+		if norm_p not in (1, 2):
+			raise ValueError(f'dabr_distance_norm must be 1 or 2, got {norm_p}')
+		self.distance_norm = norm_p
 
 	@staticmethod
 	def _normalize_quaternion(quaternion: torch.Tensor) -> torch.Tensor:
@@ -86,13 +90,23 @@ class DaBRScorer(KGEScorer):
 		return torch.cat([r / norm, -i / norm, -j / norm, -k / norm], dim=-1)
 
 	@classmethod
-	def _additive_penalty(cls, h_emb: torch.Tensor, dr_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-		"""L1 penalty on the additive DaBR branch."""
+	def _additive_penalty(
+		cls,
+		h_emb: torch.Tensor,
+		dr_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+		norm_p: int = 1,
+	) -> torch.Tensor:
+		"""Lp penalty on the quaternion-wise sum of the additive DaBR branch.
+
+		``norm_p=1`` reproduces the paper's L1 term; ``norm_p=2`` measures the same
+		``score_d`` vector (after the quaternion-wise sum) with L2 (Option A).
+		"""
 
 		hrt = h_emb + dr_emb - t_emb
 		s_d, x_d, y_d, z_d = cls._split_quaternion(hrt)
 		score_d = s_d + x_d + y_d + z_d
-		return torch.norm(score_d, p=1, dim=-1)
+		return torch.norm(score_d, p=norm_p, dim=-1)
 
 	@classmethod
 	def _score_from_hr(
@@ -102,6 +116,7 @@ class DaBRScorer(KGEScorer):
 		t_emb: torch.Tensor,
 		dr_emb: torch.Tensor,
 		para: float,
+		norm_p: int = 1,
 	) -> torch.Tensor:
 		"""Score rows when ``hr = h⊗r`` is already computed or derived inline.
 
@@ -116,7 +131,7 @@ class DaBRScorer(KGEScorer):
 		r_inv_norm = cls._normalize_quaternion(cls._quat_inv(r_emb))
 		tr = cls._quat_mul_q(t_emb, r_inv_norm)
 		score_s = torch.sum(hr * tr, dim=-1)
-		return score_s + para * cls._additive_penalty(h_emb, dr_emb, t_emb)
+		return score_s + para * cls._additive_penalty(h_emb, dr_emb, t_emb, norm_p)
 
 	@staticmethod
 	def regularization(quaternion: torch.Tensor) -> torch.Tensor:
@@ -162,6 +177,7 @@ class DaBRScorer(KGEScorer):
 			h_emb.unsqueeze(1),
 			dr_emb.unsqueeze(1),
 			t_emb_chunk.unsqueeze(0),
+			self.distance_norm,
 		)
 		return score_s + para_value * add_penalty
 
@@ -187,6 +203,7 @@ class DaBRScorer(KGEScorer):
 			all_h_exp,
 			dr_emb.unsqueeze(1).expand(-1, num_heads, -1),
 			t_emb.unsqueeze(1).expand(-1, num_heads, -1),
+			self.distance_norm,
 		)
 		return score_s + para_value * add_penalty
 
@@ -202,7 +219,9 @@ class DaBRScorer(KGEScorer):
 
 		if dr_emb is None:
 			dr_emb = torch.zeros_like(h_emb)
-		return self._score_from_hr(h_emb, r_emb, t_emb, dr_emb, self._coalesce_para(para, self.para))
+		return self._score_from_hr(
+			h_emb, r_emb, t_emb, dr_emb, self._coalesce_para(para, self.para), self.distance_norm
+		)
 
 	def score_sp_(
 		self,
