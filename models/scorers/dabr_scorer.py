@@ -103,13 +103,20 @@ class DaBRScorer(KGEScorer):
 		dr_emb: torch.Tensor,
 		para: float,
 	) -> torch.Tensor:
-		"""Score rows when ``hr = h⊗r`` is already computed or derived inline."""
+		"""Score rows when ``hr = h⊗r`` is already computed or derived inline.
+
+		Returns the paper's plausibility ``phi = <h⊗r, t⊗r^-1> + lambda * ||h+dr-t||_1``
+		(Eq. 12-13), where **higher is better**. This matches the codebase loss/eval
+		convention. The reference ``_calc`` returns ``-phi`` (OpenKE lower-is-better
+		energy); using ``-phi`` here would optimize the non-negative L1 distance term in
+		the wrong direction, so we keep the higher-is-better paper form.
+		"""
 
 		hr = cls._quat_mul(h_emb, r_emb)
 		r_inv_norm = cls._normalize_quaternion(cls._quat_inv(r_emb))
 		tr = cls._quat_mul_q(t_emb, r_inv_norm)
-		score_s = -torch.sum(hr * tr, dim=-1)
-		return score_s - para * cls._additive_penalty(h_emb, dr_emb, t_emb)
+		score_s = torch.sum(hr * tr, dim=-1)
+		return score_s + para * cls._additive_penalty(h_emb, dr_emb, t_emb)
 
 	@staticmethod
 	def regularization(quaternion: torch.Tensor) -> torch.Tensor:
@@ -150,13 +157,13 @@ class DaBRScorer(KGEScorer):
 		hr = self._quat_mul(h_emb, r_emb).unsqueeze(1)
 		r_inv_norm = self._normalize_quaternion(self._quat_inv(r_emb)).unsqueeze(1)
 		tr = self._quat_mul_q(t_emb_chunk.unsqueeze(0), r_inv_norm)
-		score_s = -torch.sum(hr * tr, dim=-1)
+		score_s = torch.sum(hr * tr, dim=-1)
 		add_penalty = self._additive_penalty(
 			h_emb.unsqueeze(1),
 			dr_emb.unsqueeze(1),
 			t_emb_chunk.unsqueeze(0),
 		)
-		return score_s - para_value * add_penalty
+		return score_s + para_value * add_penalty
 
 	def _score_po_candidate_chunk(
 		self,
@@ -175,13 +182,13 @@ class DaBRScorer(KGEScorer):
 		hr = self._quat_mul(flat_h, flat_r).view(batch_size, num_heads, -1)
 		r_inv_norm = self._normalize_quaternion(self._quat_inv(r_emb)).unsqueeze(1)
 		tr = self._quat_mul_q(t_emb.unsqueeze(1), r_inv_norm)
-		score_s = -torch.sum(hr * tr, dim=-1)
+		score_s = torch.sum(hr * tr, dim=-1)
 		add_penalty = self._additive_penalty(
 			all_h_exp,
 			dr_emb.unsqueeze(1).expand(-1, num_heads, -1),
 			t_emb.unsqueeze(1).expand(-1, num_heads, -1),
 		)
-		return score_s - para_value * add_penalty
+		return score_s + para_value * add_penalty
 
 	def score_spo(
 		self,
