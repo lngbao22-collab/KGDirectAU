@@ -19,9 +19,9 @@
   "entity_uniformity_batch": true,
   "au_deduplicate": false,
   "gamma_cross": 0,
-  "tuni": 2,
+  "tuni": 4,
 
-  "dim": 64,
+  "dim": 128,
 
   "adversarial_training": true,
   "margin": 6,
@@ -30,7 +30,7 @@
   "batch_size": 512,
   "epochs": 400,
   "optim": "adam",
-  "lr": 1e-04,
+  "lr": 5e-05,
   "weight_decay": 0.0,
   "test_eval_last": true,
   "test_eval_best": true,
