@@ -21,7 +21,7 @@
   "gamma_cross": 0,
   "tuni": 4,
 
-  "dim": 128,
+  "dim": 256,
 
   "adversarial_training": true,
   "margin": 6,

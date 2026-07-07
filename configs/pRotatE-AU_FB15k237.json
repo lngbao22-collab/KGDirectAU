@@ -22,7 +22,7 @@
   "au_deduplicate": false,
   "tuni": 2,
 
-  "dim": 128,
+  "dim": 256,
 
   "margin": 9.0,
   "epsilon": 2.0,
@@ -33,7 +33,7 @@
   "batch_size": 1024,
   "epochs": 400,
   "optim": "adam",
-  "lr": 1e-04,
+  "lr": 5e-05,
   "weight_decay": 0.0,
   "shuffle_train": true,
   "use_amp": true,
