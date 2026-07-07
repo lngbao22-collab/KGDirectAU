@@ -22,7 +22,7 @@
   "au_deduplicate": false,
   "tuni": 2,
 
-  "dim": 128,
+  "dim": 256,
   "triple_relation_embedding": true,
 
   "adversarial_training": true,
