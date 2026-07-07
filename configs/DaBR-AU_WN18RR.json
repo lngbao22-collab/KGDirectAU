@@ -32,8 +32,8 @@
 
   "batch_size": 1024,
   "epochs": 400,
-  "optim": "adam",
-  "lr": 0.0001,
+  "optim": "adagrad",
+  "lr": 0.1,
   "weight_decay": 0.0,
   "shuffle_train": true,
 
