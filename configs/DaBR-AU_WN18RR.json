@@ -25,7 +25,7 @@
   "au_deduplicate": false,
   "tuni": 2,
 
-  "dim": 256,
+  "dim": 512,
 
   "lmbda": 0.5,
   "lmbda_two": 0.01,
@@ -46,6 +46,8 @@
   "early_stopping_patience": 10,
   "early_stopping_min_epochs": 50,
   "early_stopping_min_metric": 0.05,
+  "test_eval_best": true,
+  "test_eval_last": true,
   "max_to_keep": 0,
   "output_dir_prefix": "logs/DaBR-AU_WN18RR",
   "tie_handling": "rounded_mean_rank",
