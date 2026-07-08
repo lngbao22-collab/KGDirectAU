@@ -11,7 +11,7 @@
   "kgau_bidirectional": false,
   "add_reciprocal_relations": true,
   "uniformity_full_pdist": true,
-  
+
   "max_uniformity_samples": 0,
   "normalize_au_vectors": true,
   "gamma_q": 1.0,
@@ -19,28 +19,29 @@
   "gamma_ent": 1.0,
   "gamma_cross": 0.0,
 
+  "alignment_mode": "dabr_blocks",
   "average_uniformity_terms": true,
   "entity_uniformity_batch": true,
   "au_deduplicate": false,
-  "tuni": 4,
+  "tuni": 2,
 
-  "dim": 64,
+  "dim": 256,
+
   "lmbda": 0.5,
   "lmbda_two": 0.01,
   "dabr_distance_norm": 2,
-  "sample_freq": 1,
-  "lam": 0.5,
 
-  "batch_size": 1024,
+  "batch_size": 512,
   "epochs": 400,
-  "optim": "adagrad",
-  "lr": 0.1,
+  "optim": "adam",
+  "lr": 5e-05,
   "weight_decay": 0.0,
   "shuffle_train": true,
 
   "training_cadence": "epoch",
   "epoch_per_eval": 5,
-  "eval_entity_chunk_size": 512,
+  "test_batch_size": 8,
+  "eval_entity_chunk_size": 4096,
 
   "early_stopping_patience": 10,
   "early_stopping_min_epochs": 50,
@@ -54,5 +55,4 @@
   "report_au": false
 
 }
-
 

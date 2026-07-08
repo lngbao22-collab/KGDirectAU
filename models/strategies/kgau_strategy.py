@@ -438,7 +438,7 @@ class KGAUStrategy(Evaluator):
 		normalize_uniformity = getattr(args, 'normalize_uniformity', None)
 		if normalize_uniformity is None:
 			normalize_uniformity = alignment_mode not in ('phase_residual', 'sin_phase')
-		if alignment_mode != 'cosine':
+		if alignment_mode != 'cosine' and alignment_mode != 'dabr_blocks':
 			logger.info('KGAU alignment mode: %s (normalize_uniformity=%s)', alignment_mode, normalize_uniformity)
 		normalize_au = getattr(model_obj, 'normalize_au_vectors', None)
 		normalize_lp = getattr(model_obj, 'normalize_lp_scores', None)

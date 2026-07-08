@@ -17,11 +17,15 @@ class DaBRScorer(KGEScorer):
 	"""DaBR score function with explicit 1-to-1 and 1-vs-All tensor paths."""
 
 	bidirectional_score_batch = True
+	kgau_alignment_mode = 'dabr_blocks'
 
 	def __init__(self, args=None):
 		super().__init__()
 		self.args = args
-		self.para = nn.Parameter(torch.tensor([float(getattr(args, 'para', 0.1))]))
+		para_init = getattr(args, 'para', None)
+		if para_init is None:
+			para_init = getattr(args, 'lmbda', 0.1)
+		self.para = nn.Parameter(torch.tensor([float(para_init)]))
 		norm_p = int(getattr(args, 'dabr_distance_norm', 1) or 1)
 		if norm_p not in (1, 2):
 			raise ValueError(f'dabr_distance_norm must be 1 or 2, got {norm_p}')
@@ -288,16 +292,35 @@ class DaBRScorer(KGEScorer):
 		return scores
 
 	@staticmethod
-	def _normalized_pair_score(left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+	def _split_au_blocks(vectors: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+		"""Split ``cat(branch_a, branch_b)`` AU vectors at the midpoint."""
+
+		mid = vectors.size(-1) // 2
+		return vectors[..., :mid], vectors[..., mid:]
+
+	@classmethod
+	def _normalized_pair_score(cls, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
 		left = F.normalize(left, p=2, dim=-1)
 		right = F.normalize(right, p=2, dim=-1)
 		return torch.sum(left * right, dim=-1)
 
-	@staticmethod
-	def _normalized_1vsall_score(query: torch.Tensor, candidates: torch.Tensor) -> torch.Tensor:
-		query = F.normalize(query, p=2, dim=-1)
-		candidates = F.normalize(candidates, p=2, dim=-1)
-		return torch.sum(query.unsqueeze(1) * candidates, dim=-1)
+	@classmethod
+	def _normalized_block_pair_score(cls, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+		"""Cosine on semantic and additive blocks separately (matches DaBR ``phi`` structure)."""
+
+		l_sem, l_add = cls._split_au_blocks(left)
+		r_sem, r_add = cls._split_au_blocks(right)
+		return cls._normalized_pair_score(l_sem, r_sem) + cls._normalized_pair_score(l_add, r_add)
+
+	@classmethod
+	def _normalized_1vsall_score(cls, query: torch.Tensor, candidates: torch.Tensor) -> torch.Tensor:
+		q_sem, q_add = cls._split_au_blocks(query)
+		c_sem, c_add = cls._split_au_blocks(candidates)
+		q_sem = F.normalize(q_sem, p=2, dim=-1)
+		q_add = F.normalize(q_add, p=2, dim=-1)
+		c_sem = F.normalize(c_sem, p=2, dim=-1)
+		c_add = F.normalize(c_add, p=2, dim=-1)
+		return (q_sem.unsqueeze(1) * c_sem).sum(dim=-1) + (q_add.unsqueeze(1) * c_add).sum(dim=-1)
 
 	def _coalesce_dr(self, h_emb: torch.Tensor, dr_emb: torch.Tensor | None) -> torch.Tensor:
 		if dr_emb is None:
@@ -323,17 +346,22 @@ class DaBRScorer(KGEScorer):
 		return torch.cat([t_mult, t_emb], dim=-1)
 
 	def _au_tail_vectors_batch(self, entity_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
-		"""Relation-aware tail AU vectors ``[B, C, 2D]`` for 1-vs-all cosine LP."""
+		"""Relation-aware tail AU vectors ``[B, C, 2D]`` for 1-vs-all cosine LP.
+
+		Must match ``_au_tail_vector``: ``cat(t⊗r⁻¹, t)``, not ``t⊗r``.
+		"""
 
 		num_ent = entity_emb.size(0)
 		if r_emb.dim() == 1:
 			r_emb = r_emb.unsqueeze(0)
 		batch_size = r_emb.size(0)
 		ent_exp = entity_emb.unsqueeze(0).expand(batch_size, num_ent, -1)
-		r_exp = r_emb.unsqueeze(1).expand(batch_size, num_ent, -1)
+		# Same inverse used by ``_au_tail_vector`` / native ``⟨h⊗r, t⊗r⁻¹⟩``.
+		r_inv = self._quat_inv(r_emb)
+		r_inv_exp = r_inv.unsqueeze(1).expand(batch_size, num_ent, -1)
 		flat_ent = ent_exp.reshape(batch_size * num_ent, -1)
-		flat_r = r_exp.reshape(batch_size * num_ent, -1)
-		t_mult = self._quat_mul(flat_ent, flat_r).view(batch_size, num_ent, -1)
+		flat_r_inv = r_inv_exp.reshape(batch_size * num_ent, -1)
+		t_mult = self._quat_mul(flat_ent, flat_r_inv).view(batch_size, num_ent, -1)
 		return torch.cat([t_mult, ent_exp], dim=-1)
 
 	def _au_head_vectors_batch(
@@ -348,8 +376,8 @@ class DaBRScorer(KGEScorer):
 		if r_emb.dim() == 1:
 			r_emb = r_emb.unsqueeze(0)
 		batch_size = r_emb.size(0)
-		dr_emb = self._coalesce_dr(r_emb, dr_emb)
 		ent_exp = entity_emb.unsqueeze(0).expand(batch_size, num_ent, -1)
+		dr_emb = self._coalesce_dr(ent_exp[:, 0], dr_emb)
 		r_exp = r_emb.unsqueeze(1).expand(batch_size, num_ent, -1)
 		dr_exp = dr_emb.unsqueeze(1).expand(batch_size, num_ent, -1)
 		flat_ent = ent_exp.reshape(batch_size * num_ent, -1)
@@ -381,7 +409,7 @@ class DaBRScorer(KGEScorer):
 		**kwargs,
 	) -> torch.Tensor:
 		dr_emb = self._coalesce_dr(h_emb, dr_emb)
-		return self._normalized_pair_score(
+		return self._normalized_block_pair_score(
 			self.build_query(h_emb, r_emb, dr_emb=dr_emb),
 			self._au_tail_vector(t_emb, r_emb),
 		)
@@ -395,7 +423,7 @@ class DaBRScorer(KGEScorer):
 		**kwargs,
 	) -> torch.Tensor:
 		dr_emb = self._coalesce_dr(h_emb, dr_emb)
-		return self._normalized_pair_score(
+		return self._normalized_block_pair_score(
 			self._au_head_vector(h_emb, r_emb, dr_emb),
 			self.build_po_query(r_emb, t_emb),
 		)

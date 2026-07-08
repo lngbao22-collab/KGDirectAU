@@ -406,6 +406,18 @@ class KGAULoss(nn.Module):
 		active_frac = float((scaled_dist_sq < geom_margin).float().mean().item())
 		return spread + buffer, active_frac
 
+	def _block_alignment_loss(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+		"""Squared-L2 alignment on per-block L2-normalized vectors (eval-consistent).
+
+		Unlike ``alignment_loss``, this always normalizes each block even when
+		``assume_unit_norm`` is set, because a global AU normalization does not make
+		individual ``dabr_blocks`` sub-vectors unit norm.
+		"""
+
+		q = F.normalize(q, p=2, dim=-1)
+		t = F.normalize(t, p=2, dim=-1)
+		return (q - t).pow(2).sum(dim=-1).mean()
+
 	def _raw_alignment_loss(
 		self,
 		q: torch.Tensor,
@@ -418,6 +430,18 @@ class KGAULoss(nn.Module):
 			return self.sin_phase_alignment_loss(q, t)
 		if self.alignment_mode == 'phase_residual':
 			return (q - t).pow(2).sum(dim=-1).mean()
+		if self.alignment_mode == 'dabr_blocks':
+			mid = q.size(-1) // 2
+			if mid <= 0 or mid * 2 != q.size(-1):
+				return self.alignment_loss(q, t)
+			# Each block must be L2-normalized independently so training matches the
+			# per-block cosine used at eval (``_normalized_block_pair_score``). A single
+			# global ``normalize_au_vectors`` leaves the blocks with unequal norms, which
+			# over-weights the additive branch and diverges from the scored geometry.
+			return (
+				self._block_alignment_loss(q[..., :mid], t[..., :mid])
+				+ self._block_alignment_loss(q[..., mid:], t[..., mid:])
+			)
 		return self.alignment_loss(q, t)
 
 	def forward(
