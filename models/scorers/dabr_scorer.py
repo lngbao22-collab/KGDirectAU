@@ -317,9 +317,9 @@ class DaBRScorer(KGEScorer):
 		return torch.cat([q_mult, h_emb + dr_emb], dim=-1)
 
 	def _au_tail_vector(self, t_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
-		"""Tail alignment / head-query side: ``cat(-t⊗r⁻¹, t)``."""
+		"""Tail alignment / head-query side: ``cat(t⊗r⁻¹, t)`` (matches native ``⟨h⊗r, t⊗r⁻¹⟩``)."""
 
-		t_mult = -self._quat_mul(t_emb, self._quat_inv(r_emb))
+		t_mult = self._quat_mul(t_emb, self._quat_inv(r_emb))
 		return torch.cat([t_mult, t_emb], dim=-1)
 
 	def _au_tail_vectors_batch(self, entity_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
@@ -333,7 +333,7 @@ class DaBRScorer(KGEScorer):
 		r_exp = r_emb.unsqueeze(1).expand(batch_size, num_ent, -1)
 		flat_ent = ent_exp.reshape(batch_size * num_ent, -1)
 		flat_r = r_exp.reshape(batch_size * num_ent, -1)
-		t_mult = -self._quat_mul(flat_ent, flat_r).view(batch_size, num_ent, -1)
+		t_mult = self._quat_mul(flat_ent, flat_r).view(batch_size, num_ent, -1)
 		return torch.cat([t_mult, ent_exp], dim=-1)
 
 	def _au_head_vectors_batch(
