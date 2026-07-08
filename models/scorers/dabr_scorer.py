@@ -333,11 +333,46 @@ class DaBRScorer(KGEScorer):
 		r_emb: torch.Tensor,
 		dr_emb: torch.Tensor | None = None,
 	) -> torch.Tensor:
-		"""Tail/head query side: ``cat(h⊗r, h+dr)``."""
+		"""Native head-candidate side: ``cat(h⊗r, h+dr)`` (used by the ``po_`` head path)."""
 
 		dr_emb = self._coalesce_dr(h_emb, dr_emb)
 		q_mult = self._quat_mul(h_emb, r_emb)
 		return torch.cat([q_mult, h_emb + dr_emb], dim=-1)
+
+	def _au_query_vector_tail(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		dr_emb: torch.Tensor | None = None,
+	) -> torch.Tensor:
+		"""Tail-prediction query ``cat(h⊗r², h+dr)`` so the tail candidate is raw ``t``.
+
+		Uses the unit-quaternion identity ``⟨h⊗r, t⊗r⁻¹⟩ = ⟨h⊗r², t⟩`` to fold the
+		relation onto the head. Both AU blocks then score against the raw entity, so all
+		entities form one relation-independent pool (see ``au_entity_embeddings``).
+		"""
+
+		dr_emb = self._coalesce_dr(h_emb, dr_emb)
+		r_norm = self._normalize_quaternion(r_emb)
+		q_mult = self._quat_mul_q(self._quat_mul_q(h_emb, r_norm), r_norm)
+		return torch.cat([q_mult, h_emb + dr_emb], dim=-1)
+
+	def au_entity_embeddings(self, entity_emb: torch.Tensor) -> torch.Tensor:
+		"""Relation-independent entity candidate: ``cat(e, e)``.
+
+		Both reformulated query blocks (semantic ``h⊗r²`` and additive ``h+dr``) score
+		against the raw entity, so an entity's candidate / uniformity representation is
+		just ``e`` duplicated to the two-block width. Enables cosine LP and entity
+		uniformity to spread the real entity table.
+		"""
+
+		return torch.cat([entity_emb, entity_emb], dim=-1)
+
+	@staticmethod
+	def _raw_from_entity_au(entity_au: torch.Tensor) -> torch.Tensor:
+		"""Recover raw entity rows from ``au_entity_embeddings`` output (``cat(e, e)``)."""
+
+		return entity_au[..., : entity_au.size(-1) // 2]
 
 	def _au_tail_vector(self, t_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
 		"""Tail alignment / head-query side: ``cat(t⊗r⁻¹, t)`` (matches native ``⟨h⊗r, t⊗r⁻¹⟩``)."""
@@ -393,7 +428,7 @@ class DaBRScorer(KGEScorer):
 	) -> torch.Tensor:
 		"""Tail-prediction query vectors for cosine / Lp-distance link prediction."""
 
-		return self._au_head_vector(h_emb, r_emb, dr_emb)
+		return self._au_query_vector_tail(h_emb, r_emb, dr_emb)
 
 	def build_po_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Head-prediction query vectors for cosine / Lp-distance link prediction."""
@@ -411,7 +446,7 @@ class DaBRScorer(KGEScorer):
 		dr_emb = self._coalesce_dr(h_emb, dr_emb)
 		return self._normalized_block_pair_score(
 			self.build_query(h_emb, r_emb, dr_emb=dr_emb),
-			self._au_tail_vector(t_emb, r_emb),
+			self.au_entity_embeddings(t_emb),
 		)
 
 	def normalized_score_po(
@@ -486,19 +521,22 @@ class DaBRScorer(KGEScorer):
 		**kwargs,
 	) -> torch.Tensor:
 		dr_emb = self._coalesce_dr(h_emb, dr_emb)
-		batch_size = h_emb.size(0)
-		num_candidates = all_t_embs.size(0)
-		scores = h_emb.new_empty(batch_size, num_candidates)
-		for row_indices, r_row, (h_sub, dr_sub) in self._group_batch_by_relation(r_emb, h_emb, dr_emb):
-			r_sub = r_row.expand(h_sub.size(0), -1)
-			query = self.build_query(h_sub, r_sub, dr_emb=dr_sub)
-			group_scores = self._normalized_sp_scores_chunked(
-				query,
-				all_t_embs,
-				r_row,
-				predict_head=False,
-			)
-			scores.index_copy_(0, row_indices, group_scores)
+		# Candidates are relation-independent (``cat(e, e)`` from ``au_entity_embeddings``),
+		# so no per-relation grouping is needed: build one query per row and score against
+		# the shared entity table, chunked over candidates for memory.
+		query = self.build_query(h_emb, r_emb, dr_emb=dr_emb)
+		return self._blockwise_1vsall_score(query, all_t_embs)
+
+	def _blockwise_1vsall_score(self, query: torch.Tensor, candidates: torch.Tensor) -> torch.Tensor:
+		"""Per-block cosine of ``query`` [B, 2D] vs relation-independent ``candidates`` [N, 2D]."""
+
+		batch_size = query.size(0)
+		num_candidates = candidates.size(0)
+		chunk_size = self._entity_chunk_size(max(batch_size, 1), candidates.size(-1))
+		scores = query.new_empty(batch_size, num_candidates)
+		for start in range(0, num_candidates, chunk_size):
+			end = min(start + chunk_size, num_candidates)
+			scores[:, start:end] = self._normalized_1vsall_score(query, candidates[start:end])
 		return scores
 
 	def normalized_score_po_(
@@ -510,6 +548,10 @@ class DaBRScorer(KGEScorer):
 		**kwargs,
 	) -> torch.Tensor:
 		dr_emb = self._coalesce_dr(t_emb, dr_emb)
+		# Head candidates arrive as ``au_entity_embeddings(e) = cat(e, e)``; recover raw ``e``
+		# and keep the native relation-aware head scoring (additive branch ``h+dr`` is not
+		# foldable to a raw-head candidate, unlike the tail path).
+		all_h_embs = self._raw_from_entity_au(all_h_embs)
 		batch_size = t_emb.size(0)
 		num_candidates = all_h_embs.size(0)
 		scores = t_emb.new_empty(batch_size, num_candidates)
@@ -543,8 +585,10 @@ class DaBRScorer(KGEScorer):
 				self._au_head_vector(h_emb, r_emb, dr_emb),
 				h_emb,
 			)
+		# Tail training: align/uniformize against the raw entity (``cat(t, t)``) so the
+		# uniformity term spreads the real entity table instead of relation-mixed vectors.
 		return (
 			self.build_query(h_emb, r_emb, dr_emb=dr_emb),
-			self._au_tail_vector(t_emb, r_emb),
+			self.au_entity_embeddings(t_emb),
 			h_emb,
 		)
