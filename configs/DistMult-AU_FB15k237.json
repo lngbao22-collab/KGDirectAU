@@ -47,7 +47,7 @@
   "test_batch_size": 16,
 
   "early_stopping_patience": 10,
-  "early_stopping_min_epochs": 100,
+  "early_stopping_min_epochs": 50,
   "early_stopping_min_metric": 0.05,
 
   "max_to_keep": 0,

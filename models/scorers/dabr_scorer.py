@@ -322,6 +322,22 @@ class DaBRScorer(KGEScorer):
 		c_add = F.normalize(c_add, p=2, dim=-1)
 		return (q_sem.unsqueeze(1) * c_sem).sum(dim=-1) + (q_add.unsqueeze(1) * c_add).sum(dim=-1)
 
+	@classmethod
+	def _distance_1vsall_score(
+		cls,
+		query: torch.Tensor,
+		candidates: torch.Tensor,
+		*,
+		degree: float,
+	) -> torch.Tensor:
+		"""Negative block-wise Lp distance (higher is better), mirroring ``_normalized_1vsall_score``."""
+
+		q_sem, q_add = cls._split_au_blocks(query)
+		c_sem, c_add = cls._split_au_blocks(candidates)
+		dist_sem = torch.norm(q_sem.unsqueeze(1) - c_sem, p=degree, dim=-1)
+		dist_add = torch.norm(q_add.unsqueeze(1) - c_add, p=degree, dim=-1)
+		return -(dist_sem + dist_add)
+
 	def _coalesce_dr(self, h_emb: torch.Tensor, dr_emb: torch.Tensor | None) -> torch.Tensor:
 		if dr_emb is None:
 			return torch.zeros_like(h_emb)
@@ -464,7 +480,7 @@ class DaBRScorer(KGEScorer):
 			groups.append((row_indices, unique_r[rel_idx:rel_idx + 1], grouped))
 		return groups
 
-	def _normalized_sp_scores_chunked(
+	def _au_sp_scores_chunked(
 		self,
 		query: torch.Tensor,
 		all_entity_embs: torch.Tensor,
@@ -472,8 +488,10 @@ class DaBRScorer(KGEScorer):
 		*,
 		predict_head: bool,
 		dr_emb: torch.Tensor | None = None,
+		use_distance: bool = False,
+		distance_degree: float = 2.0,
 	) -> torch.Tensor:
-		"""Cosine 1-vs-all scores with relation-aware AU candidates (chunked over entities)."""
+		"""1-vs-all scores with relation-aware AU candidates (chunked over entities)."""
 
 		num_candidates = all_entity_embs.size(0)
 		batch_size = query.size(0)
@@ -490,8 +508,53 @@ class DaBRScorer(KGEScorer):
 				targets = vector_fn(entity_chunk, r_emb)
 			if targets.size(0) == 1 and batch_size > 1:
 				targets = targets.expand(batch_size, -1, -1)
-			scores[:, start:end] = self._normalized_1vsall_score(query, targets)
+			if use_distance:
+				scores[:, start:end] = self._distance_1vsall_score(
+					query,
+					targets,
+					degree=distance_degree,
+				)
+			else:
+				scores[:, start:end] = self._normalized_1vsall_score(query, targets)
 		return scores
+
+	def _normalized_sp_scores_chunked(
+		self,
+		query: torch.Tensor,
+		all_entity_embs: torch.Tensor,
+		r_emb: torch.Tensor,
+		*,
+		predict_head: bool,
+		dr_emb: torch.Tensor | None = None,
+	) -> torch.Tensor:
+		return self._au_sp_scores_chunked(
+			query,
+			all_entity_embs,
+			r_emb,
+			predict_head=predict_head,
+			dr_emb=dr_emb,
+			use_distance=False,
+		)
+
+	def _distance_sp_scores_chunked(
+		self,
+		query: torch.Tensor,
+		all_entity_embs: torch.Tensor,
+		r_emb: torch.Tensor,
+		*,
+		predict_head: bool,
+		dr_emb: torch.Tensor | None = None,
+		distance_degree: float = 2.0,
+	) -> torch.Tensor:
+		return self._au_sp_scores_chunked(
+			query,
+			all_entity_embs,
+			r_emb,
+			predict_head=predict_head,
+			dr_emb=dr_emb,
+			use_distance=True,
+			distance_degree=distance_degree,
+		)
 
 	def normalized_score_sp_(
 		self,
@@ -516,6 +579,67 @@ class DaBRScorer(KGEScorer):
 				all_t_embs,
 				r_row,
 				predict_head=False,
+			)
+			scores.index_copy_(0, row_indices, group_scores)
+		return scores
+
+	def _coalesce_lp_distance_degree(self, kwargs: dict) -> float:
+		degree = kwargs.pop('lp_distance_degree', None)
+		if degree is None and self.args is not None:
+			degree = getattr(self.args, 'lp_distance_degree', None)
+		return float(degree if degree is not None else 2.0)
+
+	def distance_score_sp_(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		all_t_embs: torch.Tensor,
+		dr_emb: torch.Tensor | None = None,
+		**kwargs,
+	) -> torch.Tensor:
+		distance_degree = self._coalesce_lp_distance_degree(kwargs)
+		dr_emb = self._coalesce_dr(h_emb, dr_emb)
+		all_t_embs = self._raw_from_entity_au(all_t_embs)
+		batch_size = h_emb.size(0)
+		num_candidates = all_t_embs.size(0)
+		scores = h_emb.new_empty(batch_size, num_candidates)
+		for row_indices, r_row, (h_sub, dr_sub) in self._group_batch_by_relation(r_emb, h_emb, dr_emb):
+			r_sub = r_row.expand(h_sub.size(0), -1)
+			query = self.build_query(h_sub, r_sub, dr_emb=dr_sub)
+			group_scores = self._distance_sp_scores_chunked(
+				query,
+				all_t_embs,
+				r_row,
+				predict_head=False,
+				distance_degree=distance_degree,
+			)
+			scores.index_copy_(0, row_indices, group_scores)
+		return scores
+
+	def distance_score_po_(
+		self,
+		all_h_embs: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+		dr_emb: torch.Tensor | None = None,
+		**kwargs,
+	) -> torch.Tensor:
+		distance_degree = self._coalesce_lp_distance_degree(kwargs)
+		dr_emb = self._coalesce_dr(t_emb, dr_emb)
+		all_h_embs = self._raw_from_entity_au(all_h_embs)
+		batch_size = t_emb.size(0)
+		num_candidates = all_h_embs.size(0)
+		scores = t_emb.new_empty(batch_size, num_candidates)
+		for row_indices, r_row, (t_sub, dr_sub) in self._group_batch_by_relation(r_emb, t_emb, dr_emb):
+			r_sub = r_row.expand(t_sub.size(0), -1)
+			query = self.build_po_query(r_sub, t_sub)
+			group_scores = self._distance_sp_scores_chunked(
+				query,
+				all_h_embs,
+				r_row,
+				predict_head=True,
+				dr_emb=dr_sub[:1] if dr_sub is not None else None,
+				distance_degree=distance_degree,
 			)
 			scores.index_copy_(0, row_indices, group_scores)
 		return scores

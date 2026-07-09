@@ -15,7 +15,7 @@
   "dabr_reg_include_negatives": true,
 
   "n_batches": 100,
-  "epochs": 6000,
+  "epochs": 100,
   "optim": "adagrad",
   "lr": 0.1,
   "weight_decay": 0,

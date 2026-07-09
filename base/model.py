@@ -207,6 +207,18 @@ class KGEModel(nn.Module):
 			all_o_embs = self.embed_all_entities()
 		lp_entity_embs = self._lp_entity_vectors(all_o_embs)
 		if self._uses_distance_lp_scores():
+			if hasattr(self.scorer, 'distance_score_sp_'):
+				scorer_kwargs = {
+					**self._scorer_kwargs(p),
+					**kwargs,
+					'lp_distance_degree': float(getattr(self, 'lp_distance_degree', 2.0) or 2.0),
+				}
+				return self.scorer.distance_score_sp_(
+					self.embed_s(s),
+					self.embed_p(p),
+					lp_entity_embs,
+					**scorer_kwargs,
+				)
 			return self._distance_scores(self._tail_query_vectors(s, p), lp_entity_embs)
 		if self._uses_cosine_lp_scores():
 			if hasattr(self.scorer, 'normalized_score_sp_'):
@@ -256,6 +268,18 @@ class KGEModel(nn.Module):
 			all_s_embs = self.embed_all_entities()
 		lp_entity_embs = self._lp_entity_vectors(all_s_embs)
 		if self._uses_distance_lp_scores():
+			if hasattr(self.scorer, 'distance_score_po_'):
+				scorer_kwargs = {
+					**self._scorer_kwargs(p),
+					**kwargs,
+					'lp_distance_degree': float(getattr(self, 'lp_distance_degree', 2.0) or 2.0),
+				}
+				return self.scorer.distance_score_po_(
+					lp_entity_embs,
+					self.embed_p(p),
+					self.embed_o(o),
+					**scorer_kwargs,
+				)
 			return self._distance_scores(self._head_query_vectors(p, o), lp_entity_embs)
 		if self._uses_cosine_lp_scores():
 			if hasattr(self.scorer, 'normalized_score_po_'):
