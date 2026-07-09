@@ -28,7 +28,7 @@
   "margin": 6,
   "add_reciprocal_relations": true,
 
-  "batch_size": 512,
+  "batch_size": 1024,
   "epochs": 400,
   "optim": "adam",
   "lr": 1e-04,
@@ -48,7 +48,7 @@
   "eval_entity_chunk_size": 4096,
 
   "early_stopping_patience": 10,
-  "early_stopping_min_epochs": 50,
+  "early_stopping_min_epochs": 10,
   "early_stopping_min_metric": 0.05,
 
   "max_to_keep": 0,
