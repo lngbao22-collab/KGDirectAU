@@ -7,10 +7,10 @@
 
   "head_eval_mode": "sp_inverse",
 
-  "gamma_q": 1.0,
-  "gamma_t": 1.0,
+  "gamma_q": 0.5,
+  "gamma_t": 0.5,
   "gamma_cross": 0.0,
-  "gamma_ent": 1.0,
+  "gamma_ent": 0.5,
   "gamma_h": 0.0,
   "tuni": 4.0,
   "average_uniformity_terms": true,
