@@ -20,9 +20,9 @@
   "average_uniformity_terms": true,
   "entity_uniformity_batch": true,
   "au_deduplicate": false,
-  "tuni": 2,
+  "tuni": 4,
 
-  "dim": 256,
+  "dim": 64,
   "triple_relation_embedding": true,
 
   "adversarial_training": true,
