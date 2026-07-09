@@ -35,7 +35,7 @@
 
   "batch_size": 512,
   "epochs": 10,
-  "lr": 1e-05,
+  "lr": 5e-05,
   "weight_decay": 0.0001,
   "optim": "adamw",
   "lr_scheduler": "linear",
