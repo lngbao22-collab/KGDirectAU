@@ -14,5 +14,5 @@ models/losses/LOSS_RELATIONSHIPS.md
 configs/ComplEx-AU_WN18RR_learnable_tuni.json
 configs/ComplEx_WN18RR_bpr.json
 docs/CONFIG_EXTRACTION_TEMPLATE.md
-scripts/refactor_configs.py
+scritps/
 tests

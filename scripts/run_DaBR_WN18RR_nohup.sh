@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+GIT_EDITOR=true git rebase --continue#!/usr/bin/env bash
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
