@@ -1,7 +1,5 @@
 """Alignment and uniformity loss for KGAU."""
 
-from __future__ import annotations
-
 import math
 
 import torch

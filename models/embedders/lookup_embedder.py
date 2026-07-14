@@ -1,7 +1,5 @@
 """Lookup-table embedders and factories for all index-based KGE models."""
 
-from __future__ import annotations
-
 import math
 from typing import Any
 

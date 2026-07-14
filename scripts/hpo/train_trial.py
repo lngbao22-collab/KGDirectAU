@@ -1,7 +1,5 @@
 """Run one HPO trial: training only (no test evaluation)."""
 
-from __future__ import annotations
-
 import argparse
 import json
 import os

@@ -1,7 +1,5 @@
 """Verify triple-classification eval fix scope across all training configs."""
 
-from __future__ import annotations
-
 import json
 import os
 from pathlib import Path

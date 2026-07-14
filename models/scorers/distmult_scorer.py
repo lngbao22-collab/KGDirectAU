@@ -1,13 +1,11 @@
 """Pure DistMult scorer operating on raw tensors only."""
 
-from __future__ import annotations
-
 import torch
 
 from base.kge_scorer import KGEScorer
 
 
-def build_scorer(args) -> DistMultScorer:
+def build_scorer(args) -> 'DistMultScorer':
 	return DistMultScorer(args)
 
 

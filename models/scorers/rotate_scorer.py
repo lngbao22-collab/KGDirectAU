@@ -1,7 +1,5 @@
 """Pure RotatE scorer operating on raw tensors only."""
 
-from __future__ import annotations
-
 import math
 
 import torch
@@ -9,7 +7,7 @@ import torch
 from base.kge_scorer import KGEScorer
 
 
-def build_scorer(args) -> RotatEScorer:
+def build_scorer(args) -> 'RotatEScorer':
 	return RotatEScorer(args)
 
 
@@ -242,7 +240,7 @@ class RotatEScorer(KGEScorer):
 		q_re, q_im = self._rotate_query(h_re, h_im, r_emb, inverse=False)
 		return torch.cat([q_re, q_im], dim=-1)
 
-	def build_po_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def build_inv_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Head-prediction query vectors for cosine link prediction."""
 
 		t_re, t_im = self._split_complex(t_emb)
@@ -350,5 +348,5 @@ class RotatEScorer(KGEScorer):
 		**kwargs,
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 		if predict_head:
-			return self.build_po_query(r_emb, t_emb), h_emb, h_emb
+			return self.build_inv_query(r_emb, t_emb), h_emb, h_emb
 		return self.build_query(h_emb, r_emb), t_emb, h_emb

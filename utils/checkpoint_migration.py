@@ -1,7 +1,5 @@
 """Checkpoint key remapping for legacy SimKGC ``CustomBertModel`` checkpoints."""
 
-from __future__ import annotations
-
 from collections import OrderedDict
 
 

@@ -1,7 +1,5 @@
 """Pure pRotatE scorer operating on raw tensors only."""
 
-from __future__ import annotations
-
 import math
 
 import torch
@@ -10,7 +8,7 @@ import torch.nn as nn
 from base.kge_scorer import KGEScorer
 
 
-def build_scorer(args) -> pRotatEScorer:
+def build_scorer(args) -> 'pRotatEScorer':
 	return pRotatEScorer(args)
 
 
@@ -149,7 +147,7 @@ class pRotatEScorer(KGEScorer):
 		composed = self._wrap_phase(self._phase(h_emb) + self._phase(r_emb))
 		return self._cosine_phase_vector(composed)
 
-	def build_po_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def build_inv_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Head-prediction query vectors for cosine / Lp-distance link prediction."""
 
 		composed = self._wrap_phase(self._phase(r_emb) - self._phase(t_emb))
@@ -166,7 +164,7 @@ class pRotatEScorer(KGEScorer):
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 		head_vec = self.au_entity_embeddings(h_emb)
 		if predict_head:
-			return self.build_po_query(r_emb, t_emb), head_vec, head_vec
+			return self.build_inv_query(r_emb, t_emb), head_vec, head_vec
 		return self.build_query(h_emb, r_emb), self.au_entity_embeddings(t_emb), head_vec
 
 	def au_entity_embeddings(self, entity_emb: torch.Tensor) -> torch.Tensor:

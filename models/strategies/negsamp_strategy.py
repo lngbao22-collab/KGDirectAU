@@ -1,7 +1,5 @@
 """Negative-sampling training paradigm (LibKGE ``TrainingJobNegativeSampling`` flow)."""
 
-from __future__ import annotations
-
 import math
 from typing import Iterable
 

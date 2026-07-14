@@ -1,7 +1,5 @@
 """Report alignment-uniformity (AU) loss during training without affecting gradients."""
 
-from __future__ import annotations
-
 import csv
 import json
 from pathlib import Path

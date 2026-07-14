@@ -1,7 +1,5 @@
 """Pairwise margin ranking loss for translational models (LibKGE ``margin_ranking`` loss)."""
 
-from __future__ import annotations
-
 import math
 
 import torch

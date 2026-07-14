@@ -24,7 +24,7 @@ def _get_entity_dict() -> EntityDict:
 	return get_entity_dict()
 
 
-def _get_link_graph() -> TripletDict:
+def _get_link_graph() -> LinkGraph:
 	"""Get the link graph, which provides neighbor information for entities."""
 
 	return get_link_graph()

@@ -1,7 +1,5 @@
 """Shared embedding utilities used by model binders and lookup embedders."""
 
-from __future__ import annotations
-
 import json
 import os
 from typing import Any

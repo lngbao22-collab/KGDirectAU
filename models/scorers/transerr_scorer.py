@@ -1,14 +1,12 @@
 """Pure TransERR scorer operating on raw tensors only."""
 
-from __future__ import annotations
-
 import torch
 import torch.nn.functional as F
 
 from base.kge_scorer import KGEScorer
 
 
-def build_scorer(args) -> TransERRScorer:
+def build_scorer(args) -> 'TransERRScorer':
 	return TransERRScorer(args)
 
 
@@ -226,7 +224,7 @@ class TransERRScorer(KGEScorer):
 		_wh, r_mid, _wt = self._relation_parts(r_emb)
 		return self._head_space(h_emb, r_emb) + r_mid
 
-	def build_po_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def build_inv_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Head-prediction query in TransERR's transformed entity space."""
 
 		_wh, r_mid, _wt = self._relation_parts(r_emb)
@@ -244,10 +242,10 @@ class TransERRScorer(KGEScorer):
 		h_target = self._head_space(h_emb, r_emb)
 		t_target = self._tail_space(t_emb, r_emb)
 		if predict_head:
-			return self.build_po_query(r_emb, t_emb), h_target, h_target
+			return self.build_inv_query(r_emb, t_emb), h_target, h_target
 		return self.build_query(h_emb, r_emb), t_target, h_target
 
-	def normalized_score_spo(
+	def normalized_score_sp(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -261,7 +259,7 @@ class TransERRScorer(KGEScorer):
 		r_emb: torch.Tensor,
 		t_emb: torch.Tensor,
 	) -> torch.Tensor:
-		return self._normalized_pair_score(self._head_space(h_emb, r_emb), self.build_po_query(r_emb, t_emb))
+		return self._normalized_pair_score(self._head_space(h_emb, r_emb), self.build_inv_query(r_emb, t_emb))
 
 	def normalized_score_sp_(
 		self,
@@ -291,7 +289,7 @@ class TransERRScorer(KGEScorer):
 		num_candidates = all_h_embs.size(0)
 		batch_size = t_emb.size(0)
 		chunk_size = self._entity_chunk_size(batch_size)
-		query = self.build_po_query(r_emb, t_emb)
+		query = self.build_inv_query(r_emb, t_emb)
 		scores = t_emb.new_empty(batch_size, num_candidates)
 		for start in range(0, num_candidates, chunk_size):
 			end = min(start + chunk_size, num_candidates)

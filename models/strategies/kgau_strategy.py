@@ -1,7 +1,5 @@
 """Training strategy for KGAU."""
 
-from __future__ import annotations
-
 import inspect
 import os
 import math

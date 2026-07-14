@@ -14,7 +14,7 @@
   "lmbda_two": 0.01,
   "dabr_reg_include_negatives": true,
 
-  "n_batches": 100,
+  "n_batches": 400,
   "epochs": 10000,
   "optim": "adagrad",
   "lr": 0.05,

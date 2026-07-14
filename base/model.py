@@ -1,7 +1,5 @@
 """Abstract and unified model interfaces for KGDirectAU."""
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from typing import Any, Mapping
 
@@ -159,10 +157,14 @@ class KGEModel(nn.Module):
 		return -torch.cdist(query_vectors, candidate_vectors, p=p)
 
 	def _tail_query_vectors(self, s: torch.Tensor, p: torch.Tensor) -> torch.Tensor:
-		return self.scorer.build_query(self.embed_s(s), self.embed_p(p))
+		return self.scorer.build_query(
+			self.embed_s(s),
+			self.embed_p(p),
+			**self._scorer_kwargs(p),
+		)
 
 	def _head_query_vectors(self, p: torch.Tensor, o: torch.Tensor) -> torch.Tensor:
-		return self.scorer.build_po_query(self.embed_p(p), self.embed_o(o))
+		return self.scorer.build_inv_query(self.embed_p(p), self.embed_o(o))
 
 	def score_spo(
 		self,
@@ -177,9 +179,9 @@ class KGEModel(nn.Module):
 			distance_degree = float(getattr(self, 'lp_distance_degree', 2.0) or 2.0)
 			return -torch.linalg.vector_norm(query - tail, ord=distance_degree, dim=-1)
 		if self._uses_cosine_lp_scores():
-			if hasattr(self.scorer, 'normalized_score_spo'):
+			if hasattr(self.scorer, 'normalized_score_sp'):
 				scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
-				return self.scorer.normalized_score_spo(
+				return self.scorer.normalized_score_sp(
 					self.embed_s(s),
 					self.embed_p(p),
 					self.embed_o(o),

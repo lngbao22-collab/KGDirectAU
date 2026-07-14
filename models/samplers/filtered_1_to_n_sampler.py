@@ -1,7 +1,5 @@
 """Filtered 1-N negative sampler adapted from RotatE TrainDataset."""
 
-from __future__ import annotations
-
 import numpy as np
 import torch
 

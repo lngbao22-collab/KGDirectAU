@@ -1,7 +1,5 @@
 """Optuna hyperparameter search for ComplEx-AU (LibKGE-style space)."""
 
-from __future__ import annotations
-
 import argparse
 import json
 import os
