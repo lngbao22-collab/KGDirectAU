@@ -1,13 +1,11 @@
 """Pure TransE scorer operating on raw tensors only."""
 
-from __future__ import annotations
-
 import torch
 
 from base.kge_scorer import KGEScorer
 
 
-def build_scorer(args) -> TransEScorer:
+def build_scorer(args) -> 'TransEScorer':
 	return TransEScorer(args)
 
 
@@ -108,7 +106,7 @@ class TransEScorer(KGEScorer):
 	def build_query(self, h_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
 		return h_emb + r_emb
 
-	def build_po_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def build_inv_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Head-prediction query: ``t - r`` so positives satisfy ``h ≈ t - r``."""
 
 		return t_emb - r_emb

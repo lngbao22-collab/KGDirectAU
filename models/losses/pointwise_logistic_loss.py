@@ -1,7 +1,5 @@
 """Pointwise logistic (softplus) loss for DaBR."""
 
-from __future__ import annotations
-
 import torch
 
 from models.losses.loss_utilities import compute_softplus_loss as _compute_softplus_loss

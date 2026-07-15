@@ -1,7 +1,5 @@
 """Pure cosine scorer and contrastive training state for SimKGC."""
 
-from __future__ import annotations
-
 from typing import Any
 
 import torch
@@ -86,7 +84,7 @@ class SimKGCScorer(KGEScorer):
 		return q_emb, t_emb, head_emb
 
 
-def build_scorer(args) -> SimKGCScorer:
+def build_scorer(args) -> 'SimKGCScorer':
 	return SimKGCScorer(args)
 
 

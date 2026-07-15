@@ -1,7 +1,5 @@
 """Capability markers for embedder implementations."""
 
-from __future__ import annotations
-
 from typing import Literal
 
 InputMode = Literal['indices', 'tokens']

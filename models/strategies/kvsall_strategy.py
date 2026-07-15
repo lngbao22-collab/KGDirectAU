@@ -1,7 +1,5 @@
 """KvsAll training: LibKGE-style sp_ and _po queries with KL/BCE multi-hot loss."""
 
-from __future__ import annotations
-
 from collections import defaultdict
 from typing import Any
 
@@ -308,4 +306,4 @@ class KvsAllStrategy:
 
 
 Strategy = KvsAllStrategy
-
+

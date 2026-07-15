@@ -1,7 +1,5 @@
 """Five-pillar component factory: embedder, scorer, loss, sampler, strategy."""
 
-from __future__ import annotations
-
 from importlib import import_module
 import importlib.util
 import inspect

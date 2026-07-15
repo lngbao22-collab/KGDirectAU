@@ -1,7 +1,5 @@
 """KL divergence loss for KvsAll multi-hot targets (LibKGE ``kl`` loss)."""
 
-from __future__ import annotations
-
 import torch
 
 from models.losses.loss_utilities import compute_softmax_loss

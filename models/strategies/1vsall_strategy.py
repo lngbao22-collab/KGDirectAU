@@ -1,7 +1,5 @@
 """1-vs-all broadcasting training paradigm (LibKGE ``TrainingJob1vsAll`` flow)."""
 
-from __future__ import annotations
-
 import math
 
 import torch

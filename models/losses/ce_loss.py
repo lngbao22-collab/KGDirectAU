@@ -1,7 +1,5 @@
 """Multi-class cross entropy loss for 1vsAll broadcasting (LibKGE ``ce`` loss)."""
 
-from __future__ import annotations
-
 import torch
 
 from models.losses.loss_utilities import compute_softmax_loss

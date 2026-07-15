@@ -1,7 +1,5 @@
 """Standard binary cross entropy loss for KvsAll and multi-hot targets (LibKGE ``bce`` loss)."""
 
-from __future__ import annotations
-
 import math
 import os
 

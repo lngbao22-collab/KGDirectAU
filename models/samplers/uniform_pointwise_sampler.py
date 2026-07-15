@@ -1,7 +1,5 @@
 """Pointwise negative sampling for DaBR training (Bernoulli corruption)."""
 
-from __future__ import annotations
-
 from collections import defaultdict
 import random
 

@@ -1,7 +1,5 @@
 """Bayesian Personalized Ranking (BPR) loss for negative-sampling training."""
 
-from __future__ import annotations
-
 import torch
 
 from models.losses.loss_utilities import compute_bpr_loss

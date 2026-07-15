@@ -1,7 +1,5 @@
 """Protocol and base class for pure-tensor KGE score functions."""
 
-from __future__ import annotations
-
 import torch
 import torch.nn as nn
 
@@ -25,7 +23,7 @@ class KGEScorer(nn.Module):
 
 		return h_emb * r_emb
 
-	def build_po_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def build_inv_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Build head-prediction query vectors (DistMult default: ``t * r``)."""
 
 		return t_emb * r_emb
@@ -42,9 +40,9 @@ class KGEScorer(nn.Module):
 		"""Return (query, align_target, head_entity) for alignment / uniformity losses.
 
 		Tail prediction (default): align ``build_query(h, r)`` with the tail entity.
-		Head prediction: align ``build_po_query(r, t)`` with the head entity (GB-Magic head-batch).
+		Head prediction: align ``build_inv_query(r, t)`` with the head entity (GB-Magic head-batch).
 		"""
 
 		if predict_head:
-			return self.build_po_query(r_emb, t_emb), h_emb, h_emb
+			return self.build_inv_query(r_emb, t_emb), h_emb, h_emb
 		return self.build_query(h_emb, r_emb), t_emb, h_emb

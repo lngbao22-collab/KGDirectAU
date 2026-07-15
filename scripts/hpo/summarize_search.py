@@ -1,7 +1,5 @@
 """Summarize an Optuna HPO study and export the best trial config."""
 
-from __future__ import annotations
-
 import argparse
 import json
 import os

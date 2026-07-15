@@ -1,13 +1,11 @@
 """Pure ComplEx scorer operating on raw tensors only."""
 
-from __future__ import annotations
-
 import torch
 
 from base.kge_scorer import KGEScorer
 
 
-def build_scorer(args) -> ComplExScorer:
+def build_scorer(args) -> 'ComplExScorer':
 	return ComplExScorer(args)
 
 
@@ -102,7 +100,7 @@ class ComplExScorer(KGEScorer):
 		r_re, r_im = self._split_complex(r_emb)
 		return torch.cat([h_re * r_re - h_im * r_im, h_re * r_im + h_im * r_re], dim=-1)
 
-	def build_po_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def build_inv_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Head-batch query: complex conjugate of ``r`` multiplied by ``t``."""
 
 		r_re, r_im = self._split_complex(r_emb)

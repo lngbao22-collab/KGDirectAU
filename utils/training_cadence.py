@@ -1,7 +1,5 @@
 """Universal step-based vs epoch-based training cadence helpers."""
 
-from __future__ import annotations
-
 from typing import Any
 
 
