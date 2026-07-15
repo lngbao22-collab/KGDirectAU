@@ -13,9 +13,10 @@
   "lmbda": 0.5,
   "lmbda_two": 0.01,
   "dabr_reg_include_negatives": true,
+  "openke_batch_sampling": true,
 
-  "n_batches": 400,
-  "epochs": 10000,
+  "batch_size": 1024,
+  "epochs": 2000,
   "optim": "adagrad",
   "lr": 0.05,
   "weight_decay": 0,

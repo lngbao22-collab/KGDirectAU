@@ -345,7 +345,28 @@ class NegSampStrategy:
 			yield from self.train_dataloader
 			return
 
+		from utils.openke_batch_sampling import (
+			iter_openke_index_batches,
+			resolve_openke_batch_size,
+			resolve_openke_n_batches,
+			uses_openke_batch_sampling,
+		)
+
+		triples = self.train_triples
+		if triples is None:
+			return
 		batch_size = max(getattr(self.args, 'batch_size', 1024), 1)
+		if uses_openke_batch_sampling(self.args):
+			# OpenKE / DaBR fallback when no DataLoader was built: sample indices
+			# with replacement for ``n_batches`` steps (``getBatch`` semantics).
+			del epoch
+			num_examples = int(triples.size(0))
+			openke_bs = resolve_openke_batch_size(num_examples, self.args)
+			n_batches = resolve_openke_n_batches(num_examples, openke_bs, self.args)
+			for indices in iter_openke_index_batches(num_examples, openke_bs, n_batches):
+				yield triples.index_select(0, indices)
+			return
+
 		for chunk in self._batch_chunks(self._shuffled_triples(epoch, stream='tail'), batch_size):
 			yield chunk
 

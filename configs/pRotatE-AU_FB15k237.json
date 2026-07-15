@@ -26,7 +26,6 @@
 
   "margin": 9.0,
   "epsilon": 2.0,
-  "modulus": 0.0055,
 
   "add_reciprocal_relations": true,
 

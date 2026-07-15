@@ -571,8 +571,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help='RotatE/pRotatE embedding margin (gamma in KnowledgeGraphEmbedding)')
     parser.add_argument('--epsilon', default=None, type=float,
                         help='RotatE/pRotatE embedding_range epsilon (default 2.0; range = (margin+epsilon)/dim)')
-    parser.add_argument('--modulus', default=None, type=float,
-                        help='pRotatE score modulus (default 0.5 * embedding_range)')
     parser.add_argument('--l-norm', '--l_norm', default=None, type=float, dest='l_norm',
                         help='RotatE distance Lp norm')
     parser.add_argument('--adversarial-temperature', '--adversarial_temperature',
@@ -643,6 +641,18 @@ def build_parser() -> argparse.ArgumentParser:
         help='DaBR: regularize over positive triples only (default)')
     parser.add_argument('--n-batches', '--n_batches', default=None, type=int,
                         dest='n_batches', help='Training batches per epoch (OpenKE nbatches; sets batch_size)')
+    openke_batch_group = parser.add_mutually_exclusive_group()
+    openke_batch_group.add_argument(
+        '--openke-batch-sampling', '--openke_batch_sampling',
+        dest='openke_batch_sampling', action='store_true', default=None,
+        help='Sample training positives with replacement each batch (OpenKE/DaBR getBatch); '
+             'defaults on for DaBR / DaBR-AU',
+    )
+    openke_batch_group.add_argument(
+        '--no-openke-batch-sampling', '--no_openke_batch_sampling',
+        dest='openke_batch_sampling', action='store_false',
+        help='Disable OpenKE with-replacement positive sampling (epoch shuffle / without replacement)',
+    )
     parser.add_argument('--valid-metric', '--valid_metric', default=None, type=str,
                         dest='valid_metric', help='Validation metric for checkpointing (e.g. mrr, hit@10)')
 

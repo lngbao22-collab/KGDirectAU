@@ -14,7 +14,6 @@
   "adversarial_temperature": 0.5,
   "margin": 6.0,
   "epsilon": 2.0,
-  "modulus": 0.008,
 
   "batch_size": 512,
   "epochs": 400,

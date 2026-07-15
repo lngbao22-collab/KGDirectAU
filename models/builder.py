@@ -1059,21 +1059,48 @@ def _prepare_train_triples(args, model: nn.Module) -> torch.Tensor:
 
 def _prepare_pointwise_dataloader(args):
 	from data.dataloader import collate_pointwise
+	from utils.openke_batch_sampling import (
+		resolve_openke_batch_size,
+		resolve_openke_n_batches,
+		uses_openke_batch_sampling,
+	)
 
 	train_examples = _load_train_examples(args)
 	train_dataset = PointwiseDataset(train_examples)
-	n_batches = getattr(args, 'n_batches', None)
-	if n_batches:
-		args.batch_size = max(len(train_examples) // int(n_batches), 1)
-	batch_size = max(getattr(args, 'batch_size', 1), 1)
+	num_examples = len(train_examples)
+	batch_size = resolve_openke_batch_size(num_examples, args)
+	args.batch_size = batch_size
+	loader_kwargs = {
+		'collate_fn': collate_pointwise,
+		'num_workers': getattr(args, 'workers', 0),
+		'pin_memory': torch.cuda.is_available(),
+	}
+	# OpenKE / DaBR: each positive is drawn independently with replacement
+	# (``i = rand_max(id, trainTotal)``), for a fixed number of batches per epoch.
+	if uses_openke_batch_sampling(args):
+		n_batches = resolve_openke_n_batches(num_examples, batch_size, args)
+		num_samples = batch_size * n_batches
+		sampler = torch.utils.data.RandomSampler(
+			train_dataset,
+			replacement=True,
+			num_samples=num_samples,
+		)
+		batch_sampler = torch.utils.data.BatchSampler(
+			sampler,
+			batch_size=batch_size,
+			drop_last=True,
+		)
+		return torch.utils.data.DataLoader(
+			train_dataset,
+			batch_sampler=batch_sampler,
+			**loader_kwargs,
+		)
 	return torch.utils.data.DataLoader(
 		train_dataset,
 		batch_size=batch_size,
 		shuffle=True,
-		collate_fn=collate_pointwise,
-		num_workers=getattr(args, 'workers', 0),
-		pin_memory=torch.cuda.is_available(),
 		drop_last=True,
+		**loader_kwargs,
 	)
 
 

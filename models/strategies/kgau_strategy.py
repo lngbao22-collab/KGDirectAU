@@ -621,9 +621,26 @@ class KGAUStrategy(Evaluator):
 		batch_size,
 		shuffle: bool = False,
 	) -> Iterator[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
-		"""Iterate over batches of examples; optionally shuffle index order each epoch."""
+		"""Iterate over batches of examples; optionally shuffle or OpenKE-sample with replacement."""
+
+		from utils.openke_batch_sampling import (
+			iter_openke_triple_batches,
+			resolve_openke_batch_size,
+			resolve_openke_n_batches,
+			uses_openke_batch_sampling,
+		)
 
 		num_examples = len(src)
+		if uses_openke_batch_sampling(self.args):
+			# Match OpenKE ``getBatch``: each positive slot is an independent
+			# uniform draw with replacement from the full training set.
+			openke_batch_size = resolve_openke_batch_size(num_examples, self.args)
+			n_batches = resolve_openke_n_batches(num_examples, openke_batch_size, self.args)
+			yield from iter_openke_triple_batches(
+				src, rel, dst, openke_batch_size, n_batches,
+			)
+			return
+
 		if shuffle and num_examples > 1:
 			order = torch.randperm(num_examples, device=src.device)
 			src = src.index_select(0, order)

@@ -57,10 +57,8 @@ class pRotatEScorer(KGEScorer):
 		self.margin = float(6.0 if margin_value is None else margin_value)
 		epsilon = float(getattr(args, "epsilon", 2.0))
 		self.embedding_range = float((self.margin + epsilon) / max(self.dim, 1))
-		modulus_init = getattr(args, 'modulus', None)
-		if modulus_init is None:
-			modulus_init = 0.5 * self.embedding_range
-		self.modulus = nn.Parameter(torch.tensor(float(modulus_init)))
+		# Matches KnowledgeGraphEmbedding pRotatE: modulus = 0.5 * embedding_range.
+		self.modulus = nn.Parameter(torch.tensor([[0.5 * self.embedding_range]]))
 
 	def _phase(self, embeddings: torch.Tensor) -> torch.Tensor:
 		"""Map raw tensors into the phase space used by pRotatE."""
@@ -80,7 +78,8 @@ class pRotatEScorer(KGEScorer):
 		return torch.cat([torch.cos(phase), torch.sin(phase)], dim=-1)
 
 	def _score_phase(self, phase: torch.Tensor) -> torch.Tensor:
-		return self.margin - torch.abs(torch.sin(phase)).sum(dim=-1) * self.modulus
+		# squeeze: KGE stores modulus as [[m]]; keep broadcast-safe for [B] and [B, N].
+		return self.margin - torch.abs(torch.sin(phase)).sum(dim=-1) * self.modulus.squeeze()
 
 	def score_spo(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Return standard pRotatE tail scores for matching batches of triples."""
