@@ -15,7 +15,7 @@
   "finetune_t": true,
   "infonce_t": 0.05,
   "use_self_negative": true,
-  "pre_batch": 0,
+  "pre_batch": 2,
   "pre_batch_weight": 0.0,
   "grad_clip": 10.0,
   "max_num_tokens": 50,
