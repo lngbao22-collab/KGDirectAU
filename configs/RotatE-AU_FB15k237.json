@@ -22,7 +22,7 @@
   "au_deduplicate": false,
   "tuni": 2,
 
-  "dim": 128,
+  "dim": 256,
   "adversarial_training": true,
   "margin": 9.0,
 
