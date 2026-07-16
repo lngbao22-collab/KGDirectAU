@@ -14,7 +14,7 @@
   "normalize_au_vectors": true,
   "gamma_q": 0,
   "gamma_t": 0,
-  "gamma_ent": 0.5,
+  "gamma_ent": 1,
   "gamma_cross": 0,
   "average_uniformity_terms": true,
   "entity_uniformity_batch": true,
