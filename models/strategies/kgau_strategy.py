@@ -668,11 +668,14 @@ class KGAUStrategy(Evaluator):
 		"""Epochs between full link-prediction validation runs.
 
 		KGAU validation is epoch-based, so it is driven by ``epoch_per_eval``
-		(``0`` or unset means validate every epoch). The step-based
-		``eval_every_n_step`` knob is intentionally not consulted here.
+		(``0`` or unset means validate every epoch). Accepts legacy
+		``eval_every_epoch``. The step-based ``eval_every_n_step`` knob is
+		intentionally not consulted here.
 		"""
 
 		raw = getattr(self.args, 'epoch_per_eval', None)
+		if raw is None:
+			raw = getattr(self.args, 'eval_every_epoch', None)
 		interval = int(raw) if raw is not None else 0
 		if interval <= 0 or interval > int(self.args.epochs):
 			return 1

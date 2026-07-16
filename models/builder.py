@@ -394,7 +394,10 @@ def init_index_kge_trainer(trainer, model: nn.Module, args) -> None:
 
 
 def _kge_validation_interval(args) -> int:
+	# Prefer epoch_per_eval; accept legacy eval_every_epoch used by older DaBR configs.
 	raw = getattr(args, 'epoch_per_eval', None)
+	if raw is None:
+		raw = getattr(args, 'eval_every_epoch', None)
 	if raw is not None:
 		interval = int(raw)
 		if interval <= 0:
@@ -423,6 +426,8 @@ def _kge_should_validate_at_epoch_end(args, epoch: int, *, stopping: bool = Fals
 	if stopping:
 		return True
 	raw = getattr(args, 'epoch_per_eval', None)
+	if raw is None:
+		raw = getattr(args, 'eval_every_epoch', None)
 	if raw is None:
 		return False
 	interval = int(raw)
