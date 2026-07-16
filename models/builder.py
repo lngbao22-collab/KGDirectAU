@@ -477,11 +477,80 @@ def _kge_resolve_monitor_metric(args) -> str:
 	return str(getattr(args, 'valid_metric', None) or 'mrr')
 
 
+def _kge_normalize_metric_name(metric_name: str) -> str:
+	return str(metric_name or '').lower().replace('-', '_')
+
+
+def _kge_is_scorer_valid_metric(metric_name: str) -> bool:
+	"""True when valid_metric names an LP scorer (cosine / original / lp_distance_l*)."""
+
+	name = _kge_normalize_metric_name(metric_name)
+	if name in {'cosine', 'original', 'native', 'lp_distance', 'distance', 'lp', 'l_distance'}:
+		return True
+	return name.startswith('lp_distance_l')
+
+
+def _kge_resolve_valid_lp_score_mode(args) -> str | None:
+	"""Map scorer-style valid_metric to an lp_score_mode override, else None."""
+
+	name = _kge_normalize_metric_name(getattr(args, 'valid_metric', None))
+	if not name or not _kge_is_scorer_valid_metric(name):
+		return None
+	if name == 'cosine':
+		return 'cosine'
+	if name in {'original', 'native'}:
+		return 'original'
+	return 'lp_distance'
+
+
+def _kge_resolve_valid_distance_degree(args) -> float | None:
+	"""Parse Lp degree from valid_metric like lp_distance_l2; else None (use config default)."""
+
+	name = _kge_normalize_metric_name(getattr(args, 'valid_metric', None))
+	if not name.startswith('lp_distance_l'):
+		return None
+	suffix = name[len('lp_distance_l'):]
+	if not suffix:
+		return None
+	try:
+		degree = float(suffix)
+	except ValueError:
+		return None
+	if degree <= 0:
+		raise ValueError(f'Invalid lp distance degree in valid_metric: {name}')
+	return degree
+
+
+def _kge_valid_scorer_label(args, score_mode: str | None = None) -> str:
+	"""Human-readable scorer label for validation logs."""
+
+	mode = score_mode or _kge_resolve_valid_lp_score_mode(args)
+	if mode == 'lp_distance':
+		from base.evaluator import _lp_distance_label
+
+		degree = _kge_resolve_valid_distance_degree(args)
+		if degree is not None:
+			if float(degree).is_integer():
+				return f'lp_distance_l{int(degree)}'
+			return f'lp_distance_l{degree:g}'
+		return _lp_distance_label(args)
+	if mode:
+		return mode
+	monitor = _kge_normalize_metric_name(_kge_resolve_monitor_metric(args))
+	if _kge_is_scorer_valid_metric(monitor):
+		return monitor
+	return ''
+
+
 def _kge_metric_value(metric_dict: dict | None, metric_name: str):
 	if not metric_dict:
 		return None
 	if metric_name in metric_dict:
-		return metric_dict[metric_name]
+		value = metric_dict[metric_name]
+		# Nested dual-scorer metrics: monitor MRR under that scorer.
+		if isinstance(value, dict):
+			return value.get('mrr')
+		return value
 	aliases = {
 		'hit@10': ('hits@10',),
 		'hits@10': ('hit@10',),
@@ -493,6 +562,17 @@ def _kge_metric_value(metric_dict: dict | None, metric_name: str):
 	for alt in aliases.get(metric_name, ()):
 		if alt in metric_dict:
 			return metric_dict[alt]
+	# Scorer-style valid_metric on a flat single-scorer validation dict.
+	if _kge_is_scorer_valid_metric(metric_name):
+		name = _kge_normalize_metric_name(metric_name)
+		for key, value in metric_dict.items():
+			if isinstance(value, dict) and _kge_normalize_metric_name(key) == name:
+				return value.get('mrr')
+		if name.startswith('lp_distance'):
+			for key, value in metric_dict.items():
+				if isinstance(value, dict) and _kge_normalize_metric_name(key).startswith('lp_distance'):
+					return value.get('mrr')
+		return metric_dict.get('mrr')
 	return None
 
 
@@ -516,7 +596,9 @@ def _kge_extract_monitor_value(metric_dict: dict, train_loss: float | None = Non
 def eval_index_kge_epoch(trainer, epoch: int, *, step: int | None = None) -> dict:
 	"""Run validation link prediction for index-based KGE strategies."""
 
-	from base.evaluator import log_bidirectional_link_metrics
+	from contextlib import nullcontext
+
+	from base.evaluator import log_bidirectional_link_metrics, lp_score_mode_context
 
 	trainer.model.eval()
 	if hasattr(trainer, 'optimizer') and trainer.optimizer is not None:
@@ -533,16 +615,26 @@ def eval_index_kge_epoch(trainer, epoch: int, *, step: int | None = None) -> dic
 	valid_exs, valid_backward_exs = _kge_get_valid_examples(trainer)
 	valid_output_path = os.path.join(trainer.args.output_dir, 'valid_link_prediction.log')
 	eval_batch_size = _eval_batch_size(trainer.args)
-	forward_metrics = trainer.evaluator.evaluate_link_prediction_inplace(
-		trainer.model, valid_eval_path, trainer.entity_dict, valid_output_path,
-		batch_size=eval_batch_size, eval_forward=True, examples=valid_exs,
+	score_mode = _kge_resolve_valid_lp_score_mode(trainer.args)
+	distance_degree = _kge_resolve_valid_distance_degree(trainer.args)
+	scorer_label = _kge_valid_scorer_label(trainer.args, score_mode)
+	score_ctx = (
+		lp_score_mode_context(trainer.model, score_mode, distance_degree)
+		if score_mode
+		else nullcontext()
 	)
-	backward_metrics = trainer.evaluator.evaluate_link_prediction_inplace(
-		trainer.model, valid_eval_path, trainer.entity_dict, valid_output_path,
-		batch_size=eval_batch_size, eval_forward=False, examples=valid_backward_exs,
-	)
+	with score_ctx:
+		forward_metrics = trainer.evaluator.evaluate_link_prediction_inplace(
+			trainer.model, valid_eval_path, trainer.entity_dict, valid_output_path,
+			batch_size=eval_batch_size, eval_forward=True, examples=valid_exs,
+		)
+		backward_metrics = trainer.evaluator.evaluate_link_prediction_inplace(
+			trainer.model, valid_eval_path, trainer.entity_dict, valid_output_path,
+			batch_size=eval_batch_size, eval_forward=False, examples=valid_backward_exs,
+		)
 	if forward_metrics or backward_metrics:
-		scope_label = f'[STEP {step}] Valid' if step is not None else f'[EPOCH {epoch + 1}] Valid'
+		prefix = f'[STEP {step}] Valid' if step is not None else f'[EPOCH {epoch + 1}] Valid'
+		scope_label = f'{prefix} ({scorer_label} scorer)' if scorer_label else prefix
 		metric_dict.update(
 			log_bidirectional_link_metrics(scope_label, forward_metrics, backward_metrics)
 		)

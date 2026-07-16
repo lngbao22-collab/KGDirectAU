@@ -654,7 +654,9 @@ def build_parser() -> argparse.ArgumentParser:
         help='Disable OpenKE with-replacement positive sampling (epoch shuffle / without replacement)',
     )
     parser.add_argument('--valid-metric', '--valid_metric', default=None, type=str,
-                        dest='valid_metric', help='Validation metric for checkpointing (e.g. mrr, hit@10)')
+                        dest='valid_metric',
+                        help='Validation metric for checkpointing/early stop '
+                             '(e.g. mrr, hit@10, or scorer label lp_distance_l2)')
 
     # L3 regularization and weighted LibKGE-style flags.
     parser.add_argument('--regularize-p', '--regularize_p', default=None, type=int,

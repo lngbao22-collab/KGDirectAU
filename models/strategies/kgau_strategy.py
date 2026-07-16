@@ -11,12 +11,25 @@ from torch import optim
 from torch.optim import Adam
 
 from base.embeddings import use_reciprocal_relations
-from base.evaluator import Evaluator, log_bidirectional_link_metrics
+from contextlib import nullcontext
+
+from base.evaluator import Evaluator, log_bidirectional_link_metrics, lp_score_mode_context
 from data.dataloader import collate
 from data.dataset import Dataset, load_data
 from data.dict_hub import get_entity_dict, get_relation_id_map
 from base.embeddings import compute_kge_regularization, embedding_l3_penalty
-from models.builder import build_lr_scheduler, config_bool, config_int, load_attr_from_path, step_lr_scheduler
+from models.builder import (
+	_kge_metric_value,
+	_kge_resolve_monitor_metric,
+	_kge_resolve_valid_distance_degree,
+	_kge_resolve_valid_lp_score_mode,
+	_kge_valid_scorer_label,
+	build_lr_scheduler,
+	config_bool,
+	config_int,
+	load_attr_from_path,
+	step_lr_scheduler,
+)
 from models.losses.loss_utilities import compute_adversarial_negsamp_losses_chunked
 from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, last_model_path, save_checkpoint
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
@@ -1372,18 +1385,18 @@ class KGAUStrategy(Evaluator):
 			n_uq_log, n_ut_log, avg_margin, total,
 		)
 
-	def _extract_monitor_value(self, metric_dict, valid_metric='mrr') -> float | None:
+	def _extract_monitor_value(self, metric_dict, valid_metric=None) -> float | None:
 		"""Extract the value to monitor for checkpointing decisions from the metric dictionary."""
 
-		if not metric_dict:
-			return None
-		if valid_metric in metric_dict:
-			return metric_dict[valid_metric]
-		if 'loss' in metric_dict:
+		monitor_name = valid_metric or _kge_resolve_monitor_metric(self.args)
+		value = _kge_metric_value(metric_dict, monitor_name)
+		if value is not None:
+			return value
+		if metric_dict and 'loss' in metric_dict:
 			return -metric_dict['loss']
-		for value in metric_dict.values():
-			if isinstance(value, (int, float)):
-				return value
+		for candidate in (metric_dict or {}).values():
+			if isinstance(candidate, (int, float)):
+				return candidate
 		return None
 
 	def _resolve_link_prediction_path(self, path: str) -> str:
@@ -1655,14 +1668,28 @@ class KGAUStrategy(Evaluator):
 		if valid_eval_path:
 			valid_entity_dict = get_entity_dict()
 			valid_output_path = os.path.join(self.args.output_dir, 'valid_link_prediction.log')
-			forward_metrics = self.evaluate_link_prediction_inplace(
-				self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=True)
-			backward_metrics = self.evaluate_link_prediction_inplace(
-				self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=False)
+			score_mode = _kge_resolve_valid_lp_score_mode(self.args)
+			distance_degree = _kge_resolve_valid_distance_degree(self.args)
+			scorer_label = _kge_valid_scorer_label(self.args, score_mode)
+			if not scorer_label and score_mode is None:
+				# Fall back to the model's configured LP scorer for log labeling.
+				model_mode = getattr(get_model_obj(self.model), 'lp_score_mode', None)
+				scorer_label = _kge_valid_scorer_label(self.args, model_mode) if model_mode else ''
+			score_ctx = (
+				lp_score_mode_context(self.model, score_mode, distance_degree)
+				if score_mode
+				else nullcontext()
+			)
+			with score_ctx:
+				forward_metrics = self.evaluate_link_prediction_inplace(
+					self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=True)
+				backward_metrics = self.evaluate_link_prediction_inplace(
+					self.model, valid_eval_path, valid_entity_dict, valid_output_path, eval_forward=False)
+			scope_label = f'[EPOCH {display_epoch}] Valid'
+			if scorer_label:
+				scope_label = f'{scope_label} ({scorer_label} scorer)'
 			metric_dict.update(
-				log_bidirectional_link_metrics(
-					f'[EPOCH {display_epoch}] Valid', forward_metrics, backward_metrics
-				)
+				log_bidirectional_link_metrics(scope_label, forward_metrics, backward_metrics)
 			)
 		else:
 			logger.warning('[EPOCH %s] No validation link-prediction split found; skipping valid LP metrics', display_epoch)
@@ -1683,12 +1710,14 @@ class KGAUStrategy(Evaluator):
 		patience = int(patience) if patience else None
 		min_epochs = int(getattr(self.args, 'early_stopping_min_epochs', 0) or 0)
 		min_metric = getattr(self.args, 'early_stopping_min_metric', None)
+		monitor_name = _kge_resolve_monitor_metric(self.args)
 		bad_counts = 0
 		if patience is not None and patience > 0:
 			logger.info(
-				'KGAU early stopping: stop after %d validation(s) without MRR improvement '
+				'KGAU early stopping: stop after %d validation(s) without %s improvement '
 				'(min_epochs=%d).',
 				patience,
+				monitor_name,
 				min_epochs,
 			)
 		else:
@@ -1724,15 +1753,20 @@ class KGAUStrategy(Evaluator):
 			report_au_validation(self, epoch, metric_dict if validated else None)
 
 			is_best = False
-			if validated and metric_dict and 'mrr' in metric_dict:
-				monitor_value = metric_dict['mrr']
+			monitor_value = _kge_metric_value(metric_dict, monitor_name) if validated and metric_dict else None
+			if monitor_value is not None:
 				is_best = self.best_metric is None or monitor_value > self.best_metric.get('score', float('-inf'))
 				if is_best:
-					self.best_metric = {'score': monitor_value, 'metrics': metric_dict, 'epoch': epoch}
+					self.best_metric = {
+						'score': monitor_value,
+						'metric': monitor_name,
+						'metrics': metric_dict,
+						'epoch': epoch,
+					}
 					bad_counts = 0
 				else:
-					best_mrr = None if self.best_metric is None else self.best_metric.get('score')
-					if min_metric is None or (best_mrr is not None and best_mrr >= float(min_metric)):
+					best_score = None if self.best_metric is None else self.best_metric.get('score')
+					if min_metric is None or (best_score is not None and best_score >= float(min_metric)):
 						bad_counts += 1
 
 			max_to_keep = getattr(self.args, 'max_to_keep', 5)
@@ -1763,8 +1797,8 @@ class KGAUStrategy(Evaluator):
 
 			if patience is not None and bad_counts >= patience and (epoch + 1) >= min_epochs:
 				logger.info(
-					'[EARLY STOP] No validation MRR improvement for %d evaluations (epoch %s).',
-					patience, epoch + 1,
+					'[EARLY STOP] No validation %s improvement for %d evaluations (epoch %s).',
+					monitor_name, patience, epoch + 1,
 				)
 				break
 
@@ -1785,6 +1819,8 @@ class KGAUStrategy(Evaluator):
 		return {
 			'best_epoch': None if self.best_metric is None else self.best_metric.get('epoch'),
 			'best_mrr': None if self.best_metric is None else self.best_metric.get('score'),
+			'best_monitor_metric': None if self.best_metric is None else self.best_metric.get('metric'),
+			'best_monitor_score': None if self.best_metric is None else self.best_metric.get('score'),
 			'best_checkpoint_path': self.best_checkpoint_path,
 			'train_time': self.train_time,
 			'valid_time': self.valid_time,
