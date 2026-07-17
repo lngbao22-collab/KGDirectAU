@@ -329,6 +329,7 @@ class TransERRScorer(KGEScorer):
 		num_candidates = all_t_embs.size(0)
 		batch_size = h_emb.size(0)
 		chunk_size = self._entity_chunk_size(batch_size)
+		
 		query = self.build_query(h_emb, r_emb)
 		scores = h_emb.new_empty(batch_size, num_candidates)
 		for start in range(0, num_candidates, chunk_size):
