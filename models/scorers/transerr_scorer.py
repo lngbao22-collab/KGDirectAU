@@ -98,6 +98,24 @@ class TransERRScorer(KGEScorer):
 		candidates = F.normalize(candidates, p=2, dim=-1)
 		return torch.sum(query.unsqueeze(1) * candidates, dim=-1)
 
+	@staticmethod
+	def _distance_1vsall_score(
+		query: torch.Tensor,
+		candidates: torch.Tensor,
+		distance_degree: float,
+	) -> torch.Tensor:
+		return -torch.linalg.vector_norm(
+			query.unsqueeze(1) - candidates,
+			ord=distance_degree,
+			dim=-1,
+		)
+
+	def _lp_distance_degree(self, kwargs: dict) -> float:
+		degree = kwargs.pop('lp_distance_degree', None)
+		if degree is None and self.args is not None:
+			degree = getattr(self.args, 'lp_distance_degree', None)
+		return float(degree if degree is not None else 2.0)
+
 	def _align_for_candidates(
 		self,
 		h_emb: torch.Tensor,
@@ -295,4 +313,56 @@ class TransERRScorer(KGEScorer):
 			end = min(start + chunk_size, num_candidates)
 			target = self._candidate_space(all_h_embs[start:end], wh)
 			scores[:, start:end] = self._normalized_1vsall_score(query, target)
+		return scores
+
+	def distance_score_sp_(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		all_t_embs: torch.Tensor,
+		**kwargs,
+	) -> torch.Tensor:
+		"""Score tails by Lp distance in TransERR's relation-transformed space."""
+
+		distance_degree = self._lp_distance_degree(kwargs)
+		_wh, _r_mid, wt = self._relation_parts(r_emb)
+		num_candidates = all_t_embs.size(0)
+		batch_size = h_emb.size(0)
+		chunk_size = self._entity_chunk_size(batch_size)
+		query = self.build_query(h_emb, r_emb)
+		scores = h_emb.new_empty(batch_size, num_candidates)
+		for start in range(0, num_candidates, chunk_size):
+			end = min(start + chunk_size, num_candidates)
+			target = self._candidate_space(all_t_embs[start:end], wt)
+			scores[:, start:end] = self._distance_1vsall_score(
+				query,
+				target,
+				distance_degree,
+			)
+		return scores
+
+	def distance_score_po_(
+		self,
+		all_h_embs: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+		**kwargs,
+	) -> torch.Tensor:
+		"""Score heads by Lp distance in TransERR's relation-transformed space."""
+
+		distance_degree = self._lp_distance_degree(kwargs)
+		wh, _r_mid, _wt = self._relation_parts(r_emb)
+		num_candidates = all_h_embs.size(0)
+		batch_size = t_emb.size(0)
+		chunk_size = self._entity_chunk_size(batch_size)
+		query = self.build_inv_query(r_emb, t_emb)
+		scores = t_emb.new_empty(batch_size, num_candidates)
+		for start in range(0, num_candidates, chunk_size):
+			end = min(start + chunk_size, num_candidates)
+			target = self._candidate_space(all_h_embs[start:end], wh)
+			scores[:, start:end] = self._distance_1vsall_score(
+				query,
+				target,
+				distance_degree,
+			)
 		return scores
