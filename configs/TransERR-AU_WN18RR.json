@@ -67,8 +67,7 @@
   "early_stopping_min_metric": 0.05,
 
   "normalize_lp_scores": true,
-  "lp_score_mode": "lp_distance",
   "lp_distance_degree": 2,
-  "valid_metric": "lp_distance_l2",
+  "valid_metric": "cosine",
   "report_au": false
 }
