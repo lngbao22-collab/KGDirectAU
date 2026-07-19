@@ -8,7 +8,7 @@
 
   "head_eval_mode": "po_forward",
 
-  "dim": 1000,
+  "dim": 128,
   "triple_relation_embedding": true,
 
   "adversarial_training": true,
