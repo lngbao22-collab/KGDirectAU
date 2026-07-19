@@ -1,4 +1,4 @@
-"""Optuna hyperparameter search for ComplEx-AU (LibKGE-style space)."""
+"""Optuna hyperparameter search for KGAU configs."""
 
 import argparse
 import json
@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any
 
 import optuna
-from optuna.samplers import TPESampler
+from optuna.samplers import GridSampler, TPESampler
 
 
 def _repo_root() -> str:
@@ -51,6 +51,43 @@ def _uniformity_active(params: dict, base_cfg: dict) -> bool:
 	merged = dict(base_cfg)
 	merged.update(params)
 	return any(float(merged.get(key, 0.0) or 0.0) > 0.0 for key in ('gamma_q', 'gamma_t', 'gamma_h', 'gamma_ent', 'gamma_cross'))
+
+
+def _grid_search_space(param_specs: dict) -> dict[str, list[Any]]:
+	"""Build an Optuna GridSampler search space from categorical parameter specs."""
+
+	grid: dict[str, list[Any]] = {}
+	for name, spec in param_specs.items():
+		if spec.get('when'):
+			raise ValueError(f'grid sampler does not support conditional param {name!r}')
+		if spec['type'] != 'categorical':
+			raise ValueError(
+				f'grid sampler requires categorical parameters; got {name!r} type={spec["type"]!r}'
+			)
+		grid[name] = list(spec['choices'])
+	if not grid:
+		raise ValueError('grid sampler requires at least one categorical parameter')
+	return grid
+
+
+def _grid_size(grid: dict[str, list[Any]]) -> int:
+	size = 1
+	for values in grid.values():
+		size *= max(len(values), 1)
+	return size
+
+
+def _resolve_sampler(search_space: dict, *, n_startup_trials: int, seed: int = 42):
+	"""Return ``(sampler, grid_or_none)`` from search-space ``sampler`` field."""
+
+	sampler_name = str(search_space.get('sampler', 'tpe') or 'tpe').strip().lower()
+	param_specs = search_space['parameters']
+	if sampler_name in {'grid', 'gridsampler'}:
+		grid = _grid_search_space(param_specs)
+		return GridSampler(grid, seed=seed), grid
+	if sampler_name in {'tpe', 'tpesampler', ''}:
+		return TPESampler(n_startup_trials=n_startup_trials, seed=seed), None
+	raise ValueError(f'Unsupported sampler {sampler_name!r}; use "tpe" or "grid"')
 
 
 def _build_trial_config(
@@ -118,21 +155,35 @@ def _run_trial_subprocess(repo_root: str, trial_config_path: str, *, log_path: s
 
 
 def main() -> int:
-	parser = argparse.ArgumentParser(description='Run ComplEx-AU HPO with Optuna')
+	parser = argparse.ArgumentParser(description='Run KGAU HPO with Optuna')
 	parser.add_argument(
 		'--search-space',
 		default='scripts/hpo/search_space_complex_au_wn18rr.json',
 		help='Search space JSON (relative to repo root)',
 	)
-	parser.add_argument('--n-trials', type=int, default=30, help='Number of Optuna trials')
+	parser.add_argument(
+		'--n-trials',
+		type=int,
+		default=None,
+		help='Number of Optuna trials (default: 30 for TPE, full grid size for grid sampler)',
+	)
 	parser.add_argument('--n-startup-trials', type=int, default=10, help='Random trials before TPE')
-	parser.add_argument('--study-name', default='complex_au_wn18rr', help='Optuna study name')
+	parser.add_argument(
+		'--study-name',
+		default='',
+		help='Optuna study name (default: search-space study_name, else complex_au_wn18rr)',
+	)
 	parser.add_argument(
 		'--storage',
 		default='',
 		help='Optuna storage URL (default: sqlite under logs/hpo/)',
 	)
-	parser.add_argument('--screening-epochs', type=int, default=30, help='Epoch cap when --screening is enabled')
+	parser.add_argument(
+		'--screening-epochs',
+		type=int,
+		default=None,
+		help='Epoch cap when screening is enabled (default: screening_overrides.epochs, else 30)',
+	)
 	parser.add_argument('--no-screening', dest='screening', action='store_false', help='Full-epoch search')
 	parser.set_defaults(screening=True)
 	parser.add_argument('--smoke-test', action='store_true', help='Run a single quick trial to verify pipeline')
@@ -154,16 +205,43 @@ def main() -> int:
 	study_root = os.path.join(repo_root, 'logs', 'hpo', study_dir)
 	os.makedirs(study_root, exist_ok=True)
 	storage = args.storage or f'sqlite:///{os.path.join(study_root, "optuna.db")}'
+	study_name = args.study_name or search_space.get('study_name') or 'complex_au_wn18rr'
+	sampler, grid = _resolve_sampler(search_space, n_startup_trials=args.n_startup_trials)
 	study = optuna.create_study(
-		study_name=args.study_name,
+		study_name=study_name,
 		storage=storage,
 		direction='maximize',
 		load_if_exists=True,
-		sampler=TPESampler(n_startup_trials=args.n_startup_trials, seed=42),
+		sampler=sampler,
 	)
 
-	n_trials = 1 if args.smoke_test else args.n_trials
 	param_specs = search_space['parameters']
+	if args.smoke_test:
+		n_trials = 1
+	elif args.n_trials is not None:
+		n_trials = args.n_trials
+	elif grid is not None:
+		n_trials = _grid_size(grid)
+	else:
+		n_trials = 30
+
+	if grid is not None and not args.smoke_test:
+		remaining = max(_grid_size(grid) - len(study.trials), 0)
+		if remaining == 0:
+			print(f'Grid already exhausted ({len(study.trials)} trials); summarizing existing study.', flush=True)
+			n_trials = 0
+		else:
+			n_trials = min(n_trials, remaining)
+
+	screening_epochs = args.screening_epochs
+	if args.screening and screening_epochs is None:
+		screening_epochs = search_space.get('screening_overrides', {}).get('epochs', 30)
+
+	print(
+		f'Study={study_name} sampler={type(sampler).__name__} n_trials={n_trials} '
+		f'screening={args.screening} screening_epochs={screening_epochs if args.screening else None}',
+		flush=True,
+	)
 
 	def objective(trial: optuna.Trial) -> float:
 		sampled: dict[str, Any] = {}
@@ -184,7 +262,7 @@ def main() -> int:
 			sampled,
 			output_dir=trial_dir,
 			screening=args.screening,
-			screening_epochs=args.screening_epochs if args.screening else None,
+			screening_epochs=int(screening_epochs) if args.screening else None,
 		)
 		_save_json(trial_config_path, trial_cfg)
 
@@ -214,7 +292,13 @@ def main() -> int:
 		)
 		return best_mrr
 
-	study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
+	if n_trials > 0:
+		study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
+
+	completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE and t.value is not None]
+	if not completed:
+		print('No completed trials; nothing to summarize.', flush=True)
+		return 1
 
 	best = study.best_trial
 	best_params = dict(best.params)
@@ -229,15 +313,18 @@ def main() -> int:
 	_save_json(best_config_path, best_config)
 
 	summary = {
-		'study_name': args.study_name,
+		'study_name': study_name,
+		'sampler': type(sampler).__name__,
 		'n_trials': len(study.trials),
 		'best_trial': best.number,
 		'best_mrr': best.value,
 		'best_params': best_params,
 		'best_config_path': best_config_path,
 		'screening': args.screening,
-		'screening_epochs': args.screening_epochs if args.screening else None,
+		'screening_epochs': int(screening_epochs) if args.screening else None,
 	}
+	if grid is not None:
+		summary['grid_size'] = _grid_size(grid)
 	_save_json(os.path.join(study_root, 'study_summary.json'), summary)
 	print(json.dumps(summary, indent=2))
 	return 0

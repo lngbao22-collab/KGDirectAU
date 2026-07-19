@@ -1,0 +1,27 @@
+{
+  "description": "Stage-2 refine grid for gamma_ent on ComplEx-AU WN18RR v3. Edit choices to neighbors of the stage-1 winner (example assumes peak near 2.0).",
+  "base_config": "configs/ComplEx-AU_WN18RR_v3.json",
+  "study_dir": "ComplEx-AU_WN18RR_v3_gamma_ent_refine",
+  "study_name": "complex_au_wn18rr_v3_gamma_ent_refine",
+  "sampler": "grid",
+  "objective": "maximize_valid_mrr",
+  "fixed_overrides": {
+    "gamma_q": 0,
+    "gamma_t": 0,
+    "gamma_cross": 0,
+    "test_eval_last": false,
+    "test_eval_best": false
+  },
+  "screening_overrides": {
+    "epochs": 100,
+    "early_stopping_patience": 5,
+    "early_stopping_min_epochs": 50,
+    "early_stopping_min_metric": 0.03
+  },
+  "parameters": {
+    "gamma_ent": {
+      "type": "categorical",
+      "choices": [1.0, 1.5, 2.0, 2.5, 3.0]
+    }
+  }
+}
