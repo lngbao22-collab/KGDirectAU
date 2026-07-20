@@ -69,6 +69,5 @@
   "normalize_lp_scores": true,
   "lp_score_mode": "lp_distance",
   "lp_distance_degree": 2,
-  "valid_metric": "lp_distance_l2",
-  "report_au": false
+  "valid_metric": "lp_distance_l2"
 }

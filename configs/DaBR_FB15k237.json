@@ -32,6 +32,5 @@
   "early_stopping_min_metric": 0.05,
 
   "max_to_keep": 0,
-  "output_dir_prefix": "logs/DaBR_FB15k237",
-  "report_au": false
+  "output_dir_prefix": "logs/DaBR_FB15k237"
 }

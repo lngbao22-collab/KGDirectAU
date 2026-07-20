@@ -133,9 +133,8 @@ def log_run_timing(
     valid_time: float,
     total_time: float,
     num_train_epochs: Optional[int] = None,
-    au_report_time: Optional[float] = None,
 ) -> Optional[float]:
-    """Log training/validation/total timing; AU report time is logged separately."""
+    """Log training/validation/total timing."""
 
     epoch_time = time_per_train_epoch(train_time, num_train_epochs)
     logger.info('[Timing] Training time (s): %.2f', round(train_time, 2))
@@ -143,8 +142,6 @@ def log_run_timing(
     logger.info('[Timing] Total run time (s): %.2f', round(total_time, 2))
     if epoch_time is not None:
         logger.info('[Timing] Time per training epoch (s): %.2f', round(epoch_time, 2))
-    if au_report_time is not None and au_report_time > 0.0:
-        logger.info('[Timing] AU report time (s): %.2f (excluded from training time)', round(au_report_time, 2))
     return epoch_time
 
 

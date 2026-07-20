@@ -600,7 +600,6 @@ class KGAUStrategy(Evaluator):
 		self.train_time = 0.0
 		self.valid_time = 0.0
 		self.total_time = 0.0
-		self.au_report_time = 0.0
 		self.memory_tracker = PhaseMemoryTracker()
 
 	def _resolve_relation_index(self, relation: str) -> int:
@@ -1740,9 +1739,6 @@ class KGAUStrategy(Evaluator):
 			self.train_time += time.time() - epoch_train_start
 			num_train_epochs = epoch + 1
 
-			from utils.au_reporter import report_au_after_epoch
-			report_au_after_epoch(self, epoch)
-
 			validated = self._should_validate(epoch)
 			metric_dict: dict = {}
 			if validated:
@@ -1751,9 +1747,6 @@ class KGAUStrategy(Evaluator):
 				metric_dict = self.eval_epoch(epoch, train_loss=train_loss)
 				self.memory_tracker.end_phase('eval')
 				self.valid_time += time.time() - eval_start
-
-			from utils.au_reporter import report_au_validation
-			report_au_validation(self, epoch, metric_dict if validated else None)
 
 			is_best = False
 			monitor_value = _kge_metric_value(metric_dict, monitor_name) if validated and metric_dict else None
@@ -1806,14 +1799,11 @@ class KGAUStrategy(Evaluator):
 				break
 
 		self.total_time = time.time() - total_start_time
-		from utils.au_reporter import finalize_au_report
-		finalize_au_report(self)
 		epoch_time = log_run_timing(
 			train_time=self.train_time,
 			valid_time=self.valid_time,
 			total_time=self.total_time,
 			num_train_epochs=num_train_epochs,
-			au_report_time=self.au_report_time,
 		)
 		logger.info('[Memory] Training peak: %s', format_memory(self.memory_tracker.train_peak_mb))
 		logger.info('[Memory] Eval peak: %s', format_memory(self.memory_tracker.eval_peak_mb))

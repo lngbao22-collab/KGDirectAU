@@ -35,7 +35,6 @@
   "output_dir_prefix": "logs/DaBR_WN18RR",
   "tie_handling": "rounded_mean_rank",
   "tie_rtol": 0.0001,
-  "tie_atol": 1e-05,
-  "report_au": false
+  "tie_atol": 1e-05
 }
 

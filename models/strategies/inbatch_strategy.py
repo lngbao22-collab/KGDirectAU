@@ -222,16 +222,10 @@ class InBatchStrategy(Evaluator):
 			train_time += time.time() - epoch_train_start
 			num_train_epochs = epoch + 1
 
-			from utils.au_reporter import report_au_after_epoch
-			report_au_after_epoch(self, epoch)
-
 			if self._should_validate(epoch):
 				val_start = time.time()
 				metric_dict, is_best = self._run_eval(epoch=epoch)
 				valid_time += time.time() - val_start
-
-				from utils.au_reporter import report_au_validation
-				report_au_validation(self, epoch, metric_dict)
 
 				bad_counts = _kge_update_early_stopping_bad_count(
 					self,
@@ -258,14 +252,11 @@ class InBatchStrategy(Evaluator):
 		self.valid_time = valid_time
 		self.total_time = time.time() - total_start
 		self.num_train_epochs = num_train_epochs
-		from utils.au_reporter import finalize_au_report
-		finalize_au_report(self)
 		log_run_timing(
 			train_time=train_time,
 			valid_time=valid_time,
 			total_time=self.total_time,
 			num_train_epochs=self.num_train_epochs,
-			au_report_time=getattr(self, 'au_report_time', 0.0),
 		)
 		logger.info('[Timing] Training time (s): %s', round(train_time, 2))
 		logger.info('[Timing] Total run time (s): %s', round(self.total_time, 2))

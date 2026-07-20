@@ -383,7 +383,6 @@ def init_index_kge_trainer(trainer, model: nn.Module, args) -> None:
 	trainer.train_time = 0.0
 	trainer.valid_time = 0.0
 	trainer.total_time = 0.0
-	trainer.au_report_time = 0.0
 	trainer.memory_tracker = PhaseMemoryTracker()
 	trainer._cached_valid_exs = None
 	trainer._cached_valid_backward_exs = None
@@ -689,14 +688,11 @@ def _kge_train_loop_result(trainer) -> dict:
 	from utils.logger import logger, log_run_timing
 
 	num_train_epochs = getattr(trainer, 'num_train_epochs', None)
-	from utils.au_reporter import finalize_au_report
-	finalize_au_report(trainer)
 	epoch_time = log_run_timing(
 		train_time=trainer.train_time,
 		valid_time=trainer.valid_time,
 		total_time=trainer.total_time,
 		num_train_epochs=num_train_epochs,
-		au_report_time=getattr(trainer, 'au_report_time', 0.0),
 	)
 	logger.info('[Memory] Training peak: %s', format_memory(trainer.memory_tracker.train_peak_mb))
 	logger.info('[Memory] Eval peak: %s', format_memory(trainer.memory_tracker.eval_peak_mb))
@@ -817,9 +813,6 @@ def run_epoch_based_kge_train_loop(trainer, dataloader=None) -> dict:
 		trainer.memory_tracker.end_phase('train')
 		trainer.train_time += time.time() - train_start
 
-		from utils.au_reporter import report_au_after_epoch
-		report_au_after_epoch(trainer, epoch)
-
 		validated = _kge_should_validate(trainer.args, epoch)
 		metric_dict = {}
 		if validated:
@@ -828,9 +821,6 @@ def run_epoch_based_kge_train_loop(trainer, dataloader=None) -> dict:
 			metric_dict = eval_index_kge_epoch(trainer, epoch)
 			trainer.memory_tracker.end_phase('eval')
 			trainer.valid_time += time.time() - eval_start
-
-		from utils.au_reporter import report_au_validation
-		report_au_validation(trainer, epoch, metric_dict if validated else None)
 
 		is_best = False
 		if validated and metric_dict:
@@ -926,9 +916,6 @@ def run_step_based_kge_train_loop(trainer, dataloader=None) -> dict:
 				current_step,
 			)
 
-		from utils.au_reporter import report_au_after_epoch
-		report_au_after_epoch(trainer, epoch)
-
 		stopping = should_stop_at_step(trainer, current_step)
 		scheduled_epoch_eval = _kge_should_validate_at_epoch_end(trainer.args, epoch, stopping=False)
 		validated = _kge_should_validate_at_epoch_end(trainer.args, epoch, stopping=stopping)
@@ -949,9 +936,6 @@ def run_step_based_kge_train_loop(trainer, dataloader=None) -> dict:
 					bad_counts=bad_counts,
 					min_metric=min_metric,
 				)
-
-		from utils.au_reporter import report_au_validation
-		report_au_validation(trainer, epoch, metric_dict if validated else None)
 
 		if batch_count > 0:
 			_save_index_kge_checkpoint(trainer, epoch, is_best, step=current_step)
@@ -1015,8 +999,6 @@ def run_kge_train_loop(trainer) -> dict:
 		trainer.memory_tracker.end_phase('train')
 		trainer.train_time += time.time() - epoch_train_start
 		num_train_epochs = epoch + 1
-		from utils.au_reporter import report_au_after_epoch
-		report_au_after_epoch(trainer, epoch)
 		if max_steps is None:
 			if _kge_should_validate(trainer.args, epoch):
 				trainer._run_eval(epoch=epoch)
@@ -1028,14 +1010,11 @@ def run_kge_train_loop(trainer) -> dict:
 
 	trainer.num_train_epochs = num_train_epochs
 	trainer.total_time = time.time() - total_start
-	from utils.au_reporter import finalize_au_report
-	finalize_au_report(trainer)
 	epoch_time = log_run_timing(
 		train_time=trainer.train_time,
 		valid_time=trainer.valid_time,
 		total_time=trainer.total_time,
 		num_train_epochs=num_train_epochs,
-		au_report_time=getattr(trainer, 'au_report_time', 0.0),
 	)
 	logger.info('[Memory] Training peak: %s', format_memory(trainer.memory_tracker.train_peak_mb))
 	logger.info('[Memory] Eval peak: %s', format_memory(trainer.memory_tracker.eval_peak_mb))
@@ -1266,6 +1245,4 @@ def build_pipeline(args, ngpus_per_node: int = 1):
 	strategy_kwargs = _strategy_init_kwargs(args, strategy_path, model, train_triples)
 
 	trainer = StrategyClass(model, sampler, loss_fn, args, ngpus_per_node=ngpus_per_node, **strategy_kwargs)
-	from utils.au_reporter import attach_au_reporter
-	attach_au_reporter(trainer, args)
 	return trainer

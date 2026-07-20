@@ -29,7 +29,6 @@ class Trainer(ABC):
         self.train_time = 0.0
         self.valid_time = 0.0
         self.total_time = 0.0
-        self.au_report_time = 0.0
         self.memory_tracker = PhaseMemoryTracker()
 
         self._setup_training()
@@ -85,14 +84,9 @@ class Trainer(ABC):
             self.memory_tracker.end_phase('train')
             self.train_time += time.time() - epoch_train_start
             num_train_epochs = epoch + 1
-            from utils.au_reporter import report_au_after_epoch
-            report_au_after_epoch(self, epoch)
             from models.builder import _kge_should_validate
             if _kge_should_validate(self.args, epoch):
                 self._run_eval(epoch=epoch)
-
-        from utils.au_reporter import finalize_au_report
-        finalize_au_report(self)
 
         self.total_time = time.time() - total_start_time
         epoch_time = log_run_timing(
@@ -100,7 +94,6 @@ class Trainer(ABC):
             valid_time=self.valid_time,
             total_time=self.total_time,
             num_train_epochs=num_train_epochs,
-            au_report_time=self.au_report_time,
         )
         logger.info('[Memory] Training peak: %s', format_memory(self.memory_tracker.train_peak_mb))
         logger.info('[Memory] Eval peak: %s', format_memory(self.memory_tracker.eval_peak_mb))
@@ -137,8 +130,6 @@ class Trainer(ABC):
         metric_dict = self.eval_epoch(epoch)
         self.memory_tracker.end_phase('eval')
         self.valid_time += time.time() - eval_start
-        from utils.au_reporter import report_au_validation
-        report_au_validation(self, epoch, metric_dict)
         monitor_value = self._extract_monitor_value(metric_dict)
         is_best = monitor_value is not None and (self.best_metric is None or monitor_value > self.best_metric.get('score', float('-inf')))
         if is_best:

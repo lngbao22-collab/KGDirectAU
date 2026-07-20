@@ -42,8 +42,7 @@
   "epoch_per_eval": 1,
   "early_stopping_patience": 5,
   "early_stopping_min_epochs": 10,
-  "early_stopping_min_metric": 0.05,
-  "report_au": false
+  "early_stopping_min_metric": 0.05
 }
 
 

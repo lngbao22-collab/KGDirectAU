@@ -389,23 +389,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help='Evaluate test set from best_model.mdl (best valid MRR checkpoint)')
     parser.add_argument('--no-test-eval-best', '--no_test_eval_best', dest='test_eval_best',
                         action='store_false', help='Do not evaluate test from best_model.mdl')
-    report_au_group = parser.add_mutually_exclusive_group()
-    report_au_group.add_argument(
-        '--report-au', '--report_au',
-        dest='report_au',
-        action='store_true',
-        default=None,
-        help='report alignment-uniformity loss each epoch (no effect on training or eval)',
-    )
-    report_au_group.add_argument(
-        '--no-report-au', '--no_report_au',
-        dest='report_au',
-        action='store_false',
-        help='disable AU reporting mode',
-    )
-    parser.add_argument('--report-au-max-batches', '--report_au_max_batches', default=None, type=int,
-                        dest='report_au_max_batches',
-                        help='cap AU report batches per epoch (default: all training batches)')
     normalize_group = parser.add_mutually_exclusive_group()
     normalize_group.add_argument(
         '--normalize-lp-scores', '--normalize_lp_scores',
