@@ -29,11 +29,10 @@
   "add_reciprocal_relations": true,
 
   "batch_size": 1024,
-  "epochs": 100,
+  "epochs": 400,
   "optim": "adam",
   "lr": 1e-04,
   "weight_decay": 0.0,
-  "warm_up_ratio": [0.2, 0.5, 0.8],
   "lr_decay_factor": 0.1,
   "test_eval_last": true,
   "test_eval_best": true,
@@ -62,8 +61,7 @@
   "tie_atol": 1e-05,
 
   "normalize_lp_scores": true,
-  "lp_score_mode": "lp_distance",
   "lp_distance_degree": 2,
-  "valid_metric": "lp_distance_l2",
+  "valid_metric": "cosine",
   "report_au": false
 }

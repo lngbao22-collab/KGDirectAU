@@ -1,0 +1,212 @@
+================================================================================
+  HƯỚNG DẪN SỬ DỤNG - KGDirectAU
+  Train mô hình và xem kết quả huấn luyện
+================================================================================
+
+Tài liệu này hướng dẫn cách chạy train, chọn config, ghi đè tham số, và đọc
+kết quả. Giả định bạn đã hoàn tất cài đặt theo HuongDanCaiDat.txt.
+
+
+1. TỔNG QUAN QUY TRÌNH
+
+  Bước 1: Kích hoạt môi trường ảo
+  Bước 2: Chọn file config (configs/*.json)
+  Bước 3: Chạy python main.py
+  Bước 4: Theo dõi log trong quá trình train
+  Bước 5: Đọc kết quả trong thư mục logs/
+
+
+2. KÍCH HOẠT MÔI TRƯỜNG
+
+  Windows (PowerShell), tại thư mục gốc repo:
+    cd D:\KLv2\KGDirectAU
+    .venv\Scripts\Activate.ps1
+
+  Linux / macOS:
+    cd /đường/dẫn/KGDirectAU
+    source .venv/bin/activate
+
+
+3. CHỌN MÔ HÌNH VÀ DATASET
+
+  Mỗi thí nghiệm được định nghĩa bởi một file JSON trong configs/.
+  Tên file thường có dạng: <TênMôHình>_<Dataset>.json
+
+  Ví dụ trên WN18RR:
+    DistMult_WN18RR_adversarial_bce.json    — DistMult (base)
+    DistMult-AU_WN18RR.json                 — DistMult + KGAU (AU)
+    SimKGC_WN18RR.json                      — SimKGC (dùng BERT)
+    SimKGC-AU_WN18RR.json                   — SimKGC + KGAU
+
+  Phiên bản FB15k-237: tìm file có "_FB15k237" trong tên, ví dụ:
+    configs/DistMult_FB15k237_adversarial_bce.json
+    configs/SimKGC-AU_FB15k237.json
+
+  Mô hình AU (có hậu tố -AU): dùng au_loss.py + kgau_strategy.py, không cần
+  negative sampling riêng.
+
+  Bảng đầy đủ config và thành phần: xem README.md (mục "Shipped configs").
+
+
+4. CHẠY TRAIN
+
+  Lệnh cơ bản:
+
+    python main.py --config-path configs/<tên_file_config>.json
+
+  --- Ví dụ WN18RR ---
+
+    # Mô hình cơ bản
+    python main.py --config-path configs/DistMult_WN18RR_adversarial_bce.json
+    python main.py --config-path configs/ComplEx_WN18RR_adversarial_bce.json
+    python main.py --config-path configs/RotatE_WN18RR_adversarial_bce.json
+    python main.py --config-path configs/pRotatE_WN18RR_adversarial_bce.json
+    python main.py --config-path configs/DaBR_WN18RR.json
+    python main.py --config-path configs/TransE_WN18RR_margin_ranking.json
+    python main.py --config-path configs/TransERR_WN18RR.json
+    python main.py --config-path configs/SimKGC_WN18RR.json
+
+    # Phiên bản AU (KGAU)
+    python main.py --config-path configs/DistMult-AU_WN18RR.json
+    python main.py --config-path configs/ComplEx-AU_WN18RR.json
+    python main.py --config-path configs/RotatE-AU_WN18RR.json
+    python main.py --config-path configs/pRotatE-AU_WN18RR.json
+    python main.py --config-path configs/DaBR-AU_WN18RR.json
+    python main.py --config-path configs/TransE-AU_WN18RR.json
+    python main.py --config-path configs/TransERR-AU_WN18RR.json
+    python main.py --config-path configs/SimKGC-AU_WN18RR.json
+
+  --- Viết tắt config ---
+
+    python main.py @configs/SimKGC_WN18RR.json
+
+  (@configs/... tương đương --config-path configs/...)
+
+
+5. GHI ĐÈ THAM SỐ TỪ DÒNG LỆNH
+
+  File JSON là nguồn cấu hình chính. Có thể ghi đè bằng flag CLI:
+
+    python main.py --config-path configs/SimKGC_WN18RR.json --batch-size 32 --epochs 100
+
+  Một số flag hay dùng:
+    --task lp          Chỉ chạy link prediction (bỏ triple classification)
+    --task tc          Chỉ triple classification
+    --task both        Cả hai (mặc định tùy config)
+    --batch-size N     Kích thước mini-batch
+    --epochs N         Số epoch train
+    --lr X             Learning rate
+
+  Danh sách đầy đủ:
+    python main.py --help
+
+
+6. THƯ MỤC KẾT QUẢ SAU TRAIN
+
+  Mặc định kết quả lưu tại:
+
+    logs/<TênMôHình>_<Dataset>_<YYYY-MM-DD>_<HH-MM-SS>/
+
+  Ví dụ:
+    logs/SimKGC_WN18RR_2026-07-20_18-30-45/
+
+  Các file quan trọng trong thư mục này:
+
+  +------------------+----------------------------------------------------------+
+  | File             | Nội dung                                                 |
+  +------------------+----------------------------------------------------------+
+  | run.log          | Log chi tiết quá trình train (loss, metric từng epoch)   |
+  | results.txt      | Tóm tắt kết quả cuối: metric test, thời gian, config     |
+  | best_model.mdl   | Trọng số mô hình tốt nhất trên tập validation            |
+  | last_model.mdl   | Trọng số mô hình ở epoch cuối cùng                       |
+  +------------------+----------------------------------------------------------+
+
+  Lưu ý: Thư mục logs/ thường không commit lên git.
+
+
+7. THEO DÕI TRONG LÚC TRAIN (run.log)
+
+  Cách 1 — xem trực tiếp trên terminal:
+    Output hiện ngay khi chạy python main.py
+
+  Cách 2 — mở file log (train chạy lâu / chạy background):
+
+    Windows PowerShell:
+      Get-Content logs\SimKGC_WN18RR_2026-07-20_18-30-45\run.log -Wait -Tail 50
+
+    Linux / macOS:
+      tail -f logs/SimKGC_WN18RR_2026-07-20_18-30-45/run.log
+
+  Trong run.log bạn sẽ thấy:
+    - Thông tin GPU / số tham số mô hình
+    - Loss từng batch / epoch
+    - Metric validation (MRR, Hits@1, Hits@3, Hits@10 cho link prediction)
+    - Thông báo lưu checkpoint (best / last)
+    - Kết quả đánh giá test (nếu config bật test_eval_best / test_eval_last)
+
+
+8. ĐỌC KẾT QUẢ CUỐI (results.txt)
+
+  Sau khi train xong, mở file results.txt trong thư mục log tương ứng.
+
+  File này thường chứa:
+    - Metric link prediction trên tập test:
+        MRR, MR (Mean Rank), Hits@1, Hits@3, Hits@10
+      (Một số mô hình AU có nhiều scorer: cosine, original, lp_distance...)
+    - Metric triple classification (nếu chạy task tc hoặc both):
+        accuracy, precision, recall, F1...
+    - Epoch tốt nhất trên validation (best_epoch, best_mrr)
+    - Thời gian train / valid / test / tổng
+    - Peak memory (MB) nếu được ghi nhận
+    - Tóm tắt cấu hình đã dùng
+
+  Ví dụ mở file (Windows):
+    notepad logs\SimKGC_WN18RR_2026-07-20_18-30-45\results.txt
+
+  Ví dụ mở file (Linux):
+    cat logs/SimKGC_WN18RR_2026-07-20_18-30-45/results.txt
+
+
+9. SỬ DỤNG LẠI CHECKPOINT
+  Trọng số đã lưu:
+    best_model.mdl  — tốt nhất trên validation (ưu tiên dùng cho đánh giá)
+    last_model.mdl  — epoch cuối
+
+  Để đánh giá lại hoặc tiếp tục từ checkpoint, chỉ định trong config JSON
+  hoặc CLI (tùy config):
+    --eval-model-path logs/<thư_mục_run>/best_model.mdl
+
+  Một số config có:
+    "test_eval_best": true   — tự động test với best_model.mdl sau train
+    "test_eval_last": true   — tự động test với last_model.mdl sau train
+
+
+10. LỖI THƯỜNG GẶP
+
+  "FileNotFoundError: train.txt.json"
+    -> Chưa chạy preprocess hoặc thiếu train.txt trong data/WN18RR/
+
+  "torch.cuda.is_available() = False"
+    -> Cài sai bản PyTorch; xem lại HuongDanCaiDat.txt mục 5
+
+  "No checkpoint found"
+    -> Train chưa lưu xong hoặc thư mục output sai
+
+  Out of memory (CUDA OOM)
+    -> Giảm --batch-size hoặc dùng mô hình nhẹ hơn (DistMult thay vì SimKGC)
+
+  Config không tồn tại
+    -> Kiểm tra tên file trong configs/ (phân biệt hoa thường, ví dụ WN18RR)
+
+
+11. TÓM TẮT LỆNH NHANH
+
+  # Train SimKGC trên WN18RR
+  python main.py --config-path configs/SimKGC_WN18RR.json
+
+  # Train DistMult-AU, chỉ link prediction, 100 epoch
+  python main.py --config-path configs/DistMult-AU_WN18RR.json --task lp --epochs 100
+
+  # Xem kết quả
+  type logs\<thư_mục_run>\results.txt        (Windows)
+  cat logs/<thư_mục_run>/results.txt         (Linux)
