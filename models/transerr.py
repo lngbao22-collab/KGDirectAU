@@ -1,9 +1,9 @@
-"""Pure TransERR scorer operating on raw tensors only."""
+"""TransERR scorer and model (``score_emb``)."""
 
 import torch
 import torch.nn.functional as F
 
-from base.model import KGEScorer
+from base.model import KGEScorer, KGEModel
 
 
 def build_scorer(args) -> 'TransERRScorer':
@@ -11,11 +11,13 @@ def build_scorer(args) -> 'TransERRScorer':
 
 
 class TransERRScorer(KGEScorer):
-	"""TransERR score function with explicit 1-to-1 and 1-vs-All tensor paths.
+	"""TransERR score function via a single ``score_emb``.
 
 	Matches ``KnowledgeGraphEmbedding`` TransERR (Sun et al.) when
 	``triple_relation_embedding`` is enabled: higher score is better,
 	``gamma - ||h⊗wh + r - t⊗wt||_1`` with normalized quaternion relation parts.
+
+	``combine`` modes: ``hrt``, ``hr_``, ``_rt``, ``hr_c``, ``_rt_c``.
 	"""
 
 	bidirectional_score_batch = True
@@ -64,6 +66,14 @@ class TransERRScorer(KGEScorer):
 	def _tail_space(self, t_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
 		_wh, _r_mid, wt = self._relation_parts(r_emb)
 		return self._calc(t_emb, self._q_norm(wt))
+
+	def _compose_hr_query(self, h_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
+		_wh, r_mid, _wt = self._relation_parts(r_emb)
+		return self._head_space(h_emb, r_emb) + r_mid
+
+	def _compose_rt_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+		_wh, r_mid, _wt = self._relation_parts(r_emb)
+		return self._tail_space(t_emb, r_emb) - r_mid
 
 	def _candidate_space(self, entity_embs: torch.Tensor, relation_part: torch.Tensor) -> torch.Tensor:
 		s_a, x_a, y_a, z_a = torch.chunk(entity_embs, 4, dim=-1)
@@ -184,84 +194,46 @@ class TransERRScorer(KGEScorer):
 		memory_limit = max(1, bytes_budget // per_candidate)
 		return max(1, min(configured, memory_limit))
 
-	def score_hrt(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-		return self._score_tensor(h_emb, r_emb, t_emb)
+	def supports_candidate_scoring(self) -> bool:
+		return True
 
-	def score_rt(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-		return self._score_tensor(h_emb, r_emb, t_emb)
-
-	def score_hrt_candidates(
+	def score_emb(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
 		t_emb: torch.Tensor,
-	) -> torch.Tensor:
-		return self._score_tensor(h_emb, r_emb, t_emb)
-
-	def score_rt_candidates(
-		self,
-		h_emb: torch.Tensor,
-		r_emb: torch.Tensor,
-		t_emb: torch.Tensor,
-	) -> torch.Tensor:
-		return self._score_tensor(h_emb, r_emb, t_emb)
-
-	def score_hr_(
-		self,
-		h_emb: torch.Tensor,
-		r_emb: torch.Tensor,
-		all_t_embs: torch.Tensor,
-	) -> torch.Tensor:
-		num_candidates = all_t_embs.size(0)
-		batch_size = h_emb.size(0)
-		chunk_size = self._entity_chunk_size(batch_size)
-		scores = h_emb.new_empty(batch_size, num_candidates)
-		for start in range(0, num_candidates, chunk_size):
-			end = min(start + chunk_size, num_candidates)
-			scores[:, start:end] = self._score_tensor(h_emb, r_emb, all_t_embs[start:end])
-		return scores
-
-	def score_rt_(
-		self,
-		all_h_embs: torch.Tensor,
-		r_emb: torch.Tensor,
-		t_emb: torch.Tensor,
-	) -> torch.Tensor:
-		num_candidates = all_h_embs.size(0)
-		batch_size = t_emb.size(0)
-		chunk_size = self._entity_chunk_size(batch_size)
-		scores = t_emb.new_empty(batch_size, num_candidates)
-		for start in range(0, num_candidates, chunk_size):
-			end = min(start + chunk_size, num_candidates)
-			scores[:, start:end] = self._score_tensor(all_h_embs[start:end], r_emb, t_emb)
-		return scores
-
-	def build_query(self, h_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
-		"""Tail-prediction query in TransERR's transformed entity space."""
-
-		_wh, r_mid, _wt = self._relation_parts(r_emb)
-		return self._head_space(h_emb, r_emb) + r_mid
-
-	def build_inv_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-		"""Head-prediction query in TransERR's transformed entity space."""
-
-		_wh, r_mid, _wt = self._relation_parts(r_emb)
-		return self._tail_space(t_emb, r_emb) - r_mid
-
-	def au_representations(
-		self,
-		h_emb: torch.Tensor,
-		r_emb: torch.Tensor,
-		t_emb: torch.Tensor,
-		*,
-		predict_head: bool = False,
+		combine: str,
 		**kwargs,
-	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-		h_target = self._head_space(h_emb, r_emb)
-		t_target = self._tail_space(t_emb, r_emb)
-		if predict_head:
-			return self.build_inv_query(r_emb, t_emb), h_target, h_target
-		return self.build_query(h_emb, r_emb), t_target, h_target
+	) -> torch.Tensor:
+		"""TransERR scores under ``combine``: ``hrt``, ``hr_``, ``_rt``, ``hr_c``, ``_rt_c``."""
+
+		del kwargs
+		n = r_emb.size(0)
+		if combine == 'hrt':
+			return self._score_tensor(h_emb, r_emb, t_emb).view(n, -1)
+		if combine in ('hr_c', '_rt_c'):
+			return self._score_tensor(h_emb, r_emb, t_emb)
+		if combine == 'hr_':
+			num_candidates = t_emb.size(0)
+			batch_size = h_emb.size(0)
+			chunk_size = self._entity_chunk_size(batch_size)
+			scores = h_emb.new_empty(batch_size, num_candidates)
+			for start in range(0, num_candidates, chunk_size):
+				end = min(start + chunk_size, num_candidates)
+				scores[:, start:end] = self._score_tensor(h_emb, r_emb, t_emb[start:end])
+			return scores
+		if combine == '_rt':
+			num_candidates = h_emb.size(0)
+			batch_size = t_emb.size(0)
+			chunk_size = self._entity_chunk_size(batch_size)
+			scores = t_emb.new_empty(batch_size, num_candidates)
+			for start in range(0, num_candidates, chunk_size):
+				end = min(start + chunk_size, num_candidates)
+				scores[:, start:end] = self._score_tensor(h_emb[start:end], r_emb, t_emb)
+			return scores
+		raise ValueError(f'cannot handle combine="{combine}"')
+
+
 
 	def normalized_score_hr(
 		self,
@@ -269,7 +241,7 @@ class TransERRScorer(KGEScorer):
 		r_emb: torch.Tensor,
 		t_emb: torch.Tensor,
 	) -> torch.Tensor:
-		return self._normalized_pair_score(self.build_query(h_emb, r_emb), self._tail_space(t_emb, r_emb))
+		return self._normalized_pair_score(self._compose_hr_query(h_emb, r_emb), self._tail_space(t_emb, r_emb))
 
 	def normalized_score_rt(
 		self,
@@ -277,7 +249,7 @@ class TransERRScorer(KGEScorer):
 		r_emb: torch.Tensor,
 		t_emb: torch.Tensor,
 	) -> torch.Tensor:
-		return self._normalized_pair_score(self._head_space(h_emb, r_emb), self.build_inv_query(r_emb, t_emb))
+		return self._normalized_pair_score(self._head_space(h_emb, r_emb), self._compose_rt_query(r_emb, t_emb))
 
 	def normalized_score_hr_(
 		self,
@@ -289,7 +261,7 @@ class TransERRScorer(KGEScorer):
 		num_candidates = all_t_embs.size(0)
 		batch_size = h_emb.size(0)
 		chunk_size = self._entity_chunk_size(batch_size)
-		query = self.build_query(h_emb, r_emb)
+		query = self._compose_hr_query(h_emb, r_emb)
 		scores = h_emb.new_empty(batch_size, num_candidates)
 		for start in range(0, num_candidates, chunk_size):
 			end = min(start + chunk_size, num_candidates)
@@ -307,7 +279,7 @@ class TransERRScorer(KGEScorer):
 		num_candidates = all_h_embs.size(0)
 		batch_size = t_emb.size(0)
 		chunk_size = self._entity_chunk_size(batch_size)
-		query = self.build_inv_query(r_emb, t_emb)
+		query = self._compose_rt_query(r_emb, t_emb)
 		scores = t_emb.new_empty(batch_size, num_candidates)
 		for start in range(0, num_candidates, chunk_size):
 			end = min(start + chunk_size, num_candidates)
@@ -330,7 +302,7 @@ class TransERRScorer(KGEScorer):
 		batch_size = h_emb.size(0)
 		chunk_size = self._entity_chunk_size(batch_size)
 		
-		query = self.build_query(h_emb, r_emb)
+		query = self._compose_hr_query(h_emb, r_emb)
 		scores = h_emb.new_empty(batch_size, num_candidates)
 		for start in range(0, num_candidates, chunk_size):
 			end = min(start + chunk_size, num_candidates)
@@ -356,7 +328,7 @@ class TransERRScorer(KGEScorer):
 		num_candidates = all_h_embs.size(0)
 		batch_size = t_emb.size(0)
 		chunk_size = self._entity_chunk_size(batch_size)
-		query = self.build_inv_query(r_emb, t_emb)
+		query = self._compose_rt_query(r_emb, t_emb)
 		scores = t_emb.new_empty(batch_size, num_candidates)
 		for start in range(0, num_candidates, chunk_size):
 			end = min(start + chunk_size, num_candidates)
@@ -367,3 +339,59 @@ class TransERRScorer(KGEScorer):
 				distance_degree,
 			)
 		return scores
+
+
+class TransERRModel(KGEModel):
+	"""Bind lookup embedders to ``TransERRScorer`` (``scorers`` length 1 by default)."""
+
+	target_uses_relation = True
+
+	def __init__(
+		self,
+		ent_embedder,
+		rel_embedder,
+		scorers=None,
+		args=None,
+		aux_embedders=None,
+	):
+		if scorers is None:
+			scorers = [TransERRScorer(args)]
+		super().__init__(
+			ent_embedder,
+			rel_embedder,
+			scorers=scorers,
+			args=args,
+			aux_embedders=aux_embedders,
+		)
+
+	target_uses_relation = True
+
+	def query_encoder(self, h: torch.Tensor, r: torch.Tensor, **kwargs) -> torch.Tensor:
+		del kwargs
+		scorer = self.get_scorer()
+		return scorer._compose_hr_query(self.embed_h(h), self.embed_r(r))
+
+	def inverse_query_encoder(self, r: torch.Tensor, t: torch.Tensor, **kwargs) -> torch.Tensor:
+		del kwargs
+		scorer = self.get_scorer()
+		return scorer._compose_rt_query(self.embed_r(r), self.embed_t(t))
+
+	def target_encoder(
+		self,
+		h: torch.Tensor,
+		r: torch.Tensor,
+		t: torch.Tensor,
+		*,
+		predict_head: bool = False,
+		**kwargs,
+	) -> torch.Tensor:
+		del kwargs
+		scorer = self.get_scorer()
+		r_emb = self.embed_r(r)
+		if predict_head:
+			return scorer._head_space(self.embed_h(h), r_emb)
+		return scorer._tail_space(self.embed_t(t), r_emb)
+
+	def uniformity_head_encoder(self, h: torch.Tensor, r: torch.Tensor, **kwargs) -> torch.Tensor:
+		del kwargs
+		return self.get_scorer()._head_space(self.embed_h(h), self.embed_r(r))

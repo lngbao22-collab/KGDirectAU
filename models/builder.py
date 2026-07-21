@@ -12,8 +12,6 @@ import torch
 import torch.nn as nn
 
 from base.model import (
-	KGEModel,
-	TextKGEModel,
 	compute_kge_regularization,
 	kbc_forward_relation_count,
 	use_kbc_reciprocal_relations,
@@ -111,11 +109,45 @@ def build_relation_embedder(args) -> nn.Module:
 	return load_attr_from_path(embedder_path, 'build_relation_embedder')(args)
 
 
-def build_scorer_module(args) -> nn.Module:
+def build_scorer_module(args) -> nn.Module | list[nn.Module]:
 	scorer_path = _config_path(args, 'model_scorer_path', 'model_encoder_path')
 	if not scorer_path:
 		raise ValueError('model_scorer_path is required')
+	module = import_module_from_path(scorer_path)
+	if hasattr(module, 'build_scorers'):
+		scorers = module.build_scorers(args)
+		if not isinstance(scorers, (list, tuple)):
+			raise TypeError(f'{scorer_path} build_scorers must return a sequence')
+		return list(scorers)
 	return load_attr_from_path(scorer_path, 'build_scorer')(args)
+
+
+def _resolve_model_class(scorer_path: str):
+	"""Return the concrete ``*Model`` class exported by a model module."""
+
+	from base.model import KGEModel, TextKGEModel
+
+	module = import_module_from_path(scorer_path)
+	explicit = getattr(module, 'MODEL_CLASS', None)
+	if explicit is not None:
+		return explicit
+
+	candidates = []
+	for name, obj in inspect.getmembers(module, inspect.isclass):
+		if obj.__module__ != module.__name__:
+			continue
+		if not name.endswith('Model'):
+			continue
+		if obj in (KGEModel, TextKGEModel):
+			continue
+		if issubclass(obj, KGEModel):
+			candidates.append(obj)
+	if len(candidates) == 1:
+		return candidates[0]
+	if not candidates:
+		raise AttributeError(f'{scorer_path} has no *Model class subclassing KGEModel')
+	names = ', '.join(sorted(c.__name__ for c in candidates))
+	raise AttributeError(f'{scorer_path} has multiple Model classes ({names}); set MODEL_CLASS')
 
 
 def _is_token_embedder_model(args, ent_embedder: nn.Module | None = None) -> bool:
@@ -129,12 +161,18 @@ def bind_model(
 	args,
 	ent_embedder: nn.Module,
 	rel_embedder: nn.Module,
-	scorer: nn.Module,
+	scorer: nn.Module | list[nn.Module],
 	aux_embedders: dict[str, nn.Module] | None = None,
 ) -> nn.Module:
-	"""Bind embedders and scorer into ``KGEModel`` or ``TextKGEModel``."""
+	"""Bind embedders and scorers into the concrete ``*Model`` from ``model_scorer_path``."""
 
-	if embedder_input_mode(ent_embedder) == 'tokens':
+	from base.model import TextKGEModel
+
+	scorer_path = _config_path(args, 'model_scorer_path', 'model_encoder_path')
+	model_cls = _resolve_model_class(scorer_path)
+	scorers = scorer if isinstance(scorer, list) else [scorer]
+
+	if issubclass(model_cls, TextKGEModel):
 		from copy import deepcopy
 
 		from models.embedders.text_embedder import TextQueryEmbedder
@@ -143,9 +181,15 @@ def bind_model(
 			query_embedder = TextQueryEmbedder(args, shared_encoder=ent_embedder.encoder)
 		else:
 			query_embedder = TextQueryEmbedder(args, shared_encoder=deepcopy(ent_embedder.encoder))
-		return TextKGEModel(ent_embedder, query_embedder, scorer, args)
+		return model_cls(ent_embedder, query_embedder, scorers=scorers, args=args)
 
-	return KGEModel(ent_embedder, rel_embedder, scorer, args, aux_embedders=aux_embedders)
+	return model_cls(
+		ent_embedder,
+		rel_embedder,
+		scorers=scorers,
+		args=args,
+		aux_embedders=aux_embedders,
+	)
 
 
 def _build_aux_embedders(args) -> dict[str, nn.Module] | None:

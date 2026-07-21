@@ -41,8 +41,8 @@ from utils.training_cadence import (
 	maybe_decay_lr_at_step,
 )
 from models.losses.au_loss import KGAULoss, distinct_first_indices, select_distinct_rows, _GAMMA_NAMES
-from models.scorers.protate_scorer import normalize_protate_phases
-from models.scorers.rotate_scorer import normalize_rotate_phases
+from models.protate import normalize_protate_phases
+from models.rotate import normalize_rotate_phases
 
 
 def _load_encoder(args) -> torch.nn.Module:
@@ -73,7 +73,7 @@ def _uses_text_inputs(args, model=None) -> bool:
 	if embedder_path.endswith('text_embedder.py'):
 		return True
 	scorer_path = str(getattr(args, 'model_scorer_path', '') or getattr(args, 'model_encoder_path', '') or '')
-	return os.path.basename(scorer_path) in {'bert_encoder.py', 'simkgc_scorer.py'}
+	return os.path.basename(scorer_path) in {'bert_encoder.py', 'simkgc.py'}
 
 
 def _config_float(args, name: str, default: float) -> float:
@@ -942,7 +942,7 @@ class KGAUStrategy(Evaluator):
 				and config_bool(self.args, 'entity_uniformity_batch', False)
 			):
 				model_obj = get_model_obj(model)
-				scorer = getattr(model_obj, 'scorer', None)
+				scorer = model_obj.get_scorer()
 				# Only map catalog entity rows when the scorer exposes a static AU entity
 				# table (pRotatE-AU). Relation-composed encoders (DaBR-AU, TransERR-AU)
 				# must reuse batch q/t AU vectors so uniformity matches alignment space.
@@ -1117,12 +1117,8 @@ class KGAUStrategy(Evaluator):
 		if raw is not None and int(raw) <= 0:
 			return None
 		model_obj = get_model_obj(self.model)
-		scorer = getattr(model_obj, 'scorer', None)
-		uses_batched = (
-			scorer is not None
-			and hasattr(scorer, 'score_hrt_candidates')
-			and hasattr(scorer, 'score_rt_candidates')
-		)
+		scorer = model_obj.get_scorer()
+		uses_batched = scorer is not None and scorer.supports_candidate_scoring()
 		if raw is None:
 			return None if uses_batched else 128
 		chunk_size = int(raw)
@@ -1138,11 +1134,11 @@ class KGAUStrategy(Evaluator):
 		mode: str,
 	):
 		model_obj = get_model_obj(self.model)
-		scorer = model_obj.scorer
+		scorer = model_obj.get_scorer()
 		h_emb = model_obj.embed_h(h)
 		r_emb = model_obj.embed_r(r)
 		t_emb = model_obj.embed_t(t)
-		pos_scores = scorer.score_hrt(h_emb, r_emb, t_emb)
+		pos_scores = scorer.score_emb(h_emb, r_emb, t_emb, 'hrt').view(-1)
 		return {
 			'mode': mode,
 			'h_emb': h_emb,
@@ -1167,14 +1163,14 @@ class KGAUStrategy(Evaluator):
 		chunk_neg = neg_slice.size(1)
 		if context is not None:
 			model_obj = get_model_obj(self.model)
-			scorer = model_obj.scorer
+			scorer = model_obj.get_scorer()
 			batch_size = h.size(0)
 			if mode == 'tail-batch':
 				t_emb = model_obj.embed_t(neg_slice.reshape(-1)).view(batch_size, chunk_neg, -1)
-				return scorer.score_hrt_candidates(context['h_emb'], context['r_emb'], t_emb)
+				return scorer.score_emb(context['h_emb'], context['r_emb'], t_emb, 'hr_c')
 			if mode == 'head-batch':
 				h_emb = model_obj.embed_h(neg_slice.reshape(-1)).view(batch_size, chunk_neg, -1)
-				return scorer.score_rt_candidates(h_emb, context['r_emb'], context['t_emb'])
+				return scorer.score_emb(h_emb, context['r_emb'], context['t_emb'], '_rt_c')
 			raise ValueError(f'Unsupported hybrid negative-sampling mode: {mode}')
 
 		if mode == 'tail-batch':

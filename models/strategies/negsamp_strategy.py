@@ -23,8 +23,8 @@ from models.losses.loss_utilities import (
 	compute_adversarial_negsamp_losses_chunked,
 	compute_standard_negsamp_losses_chunked,
 )
-from models.scorers.protate_scorer import normalize_protate_phases
-from models.scorers.rotate_scorer import normalize_rotate_phases
+from models.protate import normalize_protate_phases
+from models.rotate import normalize_rotate_phases
 from utils.device import get_model_obj
 from utils.logger import logger
 from utils.training_cadence import init_step_cadence_state, maybe_decay_lr_at_step, uses_step_cadence
@@ -90,8 +90,8 @@ class NegSampStrategy:
 		return 'adversarial_bce' in path
 
 	def _supports_batched_candidate_scoring(self, model_obj) -> bool:
-		scorer = getattr(model_obj, 'scorer', None)
-		return scorer is not None and hasattr(scorer, 'score_hrt_candidates') and hasattr(scorer, 'score_rt_candidates')
+		scorer = model_obj.get_scorer()
+		return scorer is not None and scorer.supports_candidate_scoring()
 
 	def _positive_scores(
 		self,
@@ -114,11 +114,9 @@ class NegSampStrategy:
 			r_emb = model_obj.embed_r(r)
 		if t_emb is None:
 			t_emb = model_obj.embed_t(t)
-		scorer = model_obj.scorer
-		if mode == 'head-batch' and hasattr(scorer, 'score_rt'):
-			return scorer.score_rt(h_emb, r_emb, t_emb)
-		if hasattr(scorer, 'score_hrt'):
-			return scorer.score_hrt(h_emb, r_emb, t_emb)
+		scorer = model_obj.get_scorer()
+		if scorer is not None:
+			return scorer.score_emb(h_emb, r_emb, t_emb, 'hrt').view(-1)
 		return self.model.score_hrt(h, r, t)
 
 	def _candidate_scoring_context(
@@ -383,13 +381,13 @@ class NegSampStrategy:
 		if context is not None:
 			batch_size, num_neg = neg_entity_ids.shape
 			model_obj = get_model_obj(self.model)
-			scorer = model_obj.scorer
+			scorer = model_obj.get_scorer()
 			if mode == 'tail-batch':
 				t_emb = model_obj.embed_t(neg_entity_ids.reshape(-1)).view(batch_size, num_neg, -1)
-				neg_scores = scorer.score_hrt_candidates(context['h_emb'], context['r_emb'], t_emb)
+				neg_scores = scorer.score_emb(context['h_emb'], context['r_emb'], t_emb, 'hr_c')
 			elif mode == 'head-batch':
 				h_emb = model_obj.embed_h(neg_entity_ids.reshape(-1)).view(batch_size, num_neg, -1)
-				neg_scores = scorer.score_rt_candidates(h_emb, context['r_emb'], context['t_emb'])
+				neg_scores = scorer.score_emb(h_emb, context['r_emb'], context['t_emb'], '_rt_c')
 			else:
 				raise ValueError(f'Unsupported negative-sampling mode: {mode}')
 			return context['pos_scores'], neg_scores
@@ -428,14 +426,14 @@ class NegSampStrategy:
 		chunk_neg = neg_slice.size(1)
 		if context is not None:
 			model_obj = get_model_obj(self.model)
-			scorer = model_obj.scorer
+			scorer = model_obj.get_scorer()
 			batch_size = h.size(0)
 			if mode == 'tail-batch':
 				t_emb = model_obj.embed_t(neg_slice.reshape(-1)).view(batch_size, chunk_neg, -1)
-				return scorer.score_hrt_candidates(context['h_emb'], context['r_emb'], t_emb)
+				return scorer.score_emb(context['h_emb'], context['r_emb'], t_emb, 'hr_c')
 			if mode == 'head-batch':
 				h_emb = model_obj.embed_h(neg_slice.reshape(-1)).view(batch_size, chunk_neg, -1)
-				return scorer.score_rt_candidates(h_emb, context['r_emb'], context['t_emb'])
+				return scorer.score_emb(h_emb, context['r_emb'], context['t_emb'], '_rt_c')
 			raise ValueError(f'Unsupported negative-sampling mode: {mode}')
 
 		if mode == 'tail-batch':
@@ -544,7 +542,7 @@ class NegSampStrategy:
 		if reg_coef <= 0.0:
 			return None
 		model_obj = get_model_obj(self.model)
-		scorer = getattr(model_obj, 'scorer', None)
+		scorer = model_obj.get_scorer()
 		reg_fn = getattr(scorer, 'embedding_regularization', None)
 		if reg_fn is not None:
 			return reg_coef * reg_fn(model_obj)
@@ -568,7 +566,7 @@ class NegSampStrategy:
 		neg_triples: torch.Tensor | None = None,
 	) -> torch.Tensor | None:
 		model_obj = get_model_obj(self.model)
-		scorer = getattr(model_obj, 'scorer', None)
+		scorer = model_obj.get_scorer()
 		reg_fn = getattr(model_obj, 'regularization', None) or getattr(scorer, 'regularization', None)
 		if reg_fn is None:
 			return None

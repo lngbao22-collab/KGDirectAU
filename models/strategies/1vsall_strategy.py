@@ -66,7 +66,7 @@ class OneVsAllStrategy:
 		scores_hr = self.model.score_hr_(h_idx, r_idx)
 		loss_hr = self.loss_fn(scores_hr, t_idx)
 
-		if self.bidirectional and hasattr(model_obj.scorer, 'score_rt_'):
+		if self.bidirectional and getattr(model_obj.get_scorer(), 'bidirectional_score_batch', False):
 			scores_rt = self.model.score_rt_(r_idx, t_idx)
 			loss_rt = self.loss_fn(scores_rt, h_idx)
 			loss = (loss_hr + loss_rt) / 2.0

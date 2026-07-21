@@ -175,7 +175,7 @@ Each model is assembled from five composable pieces (`models/builder.py`):
 
 - **embedder** (`models/embedders/`): entity/relation embedding modules.
   - `lookup_embedder.py` for index-based KGE models; `text_embedder.py` for SimKGC.
-- **scorer** (`models/scorers/`): model-specific scoring function.
+- **scorer** (`models/`): model-specific scoring function.
   - Example: `distmult_scorer.py`, `simkgc_scorer.py`
 - **loss** (`models/losses/`): training objective.
   - Example: `adversarial_bce_loss.py`, `au_loss.py`, `infonce_loss.py`

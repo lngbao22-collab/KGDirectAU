@@ -5,7 +5,7 @@ Class hierarchy (aligned with libkge ``kge.model.kge_model``):
 * ``KGEBase`` — shared base for models, scorers, and embedders
 * ``KGEScorer`` — pure-tensor relational score functions (libkge ``RelationalScorer``)
 * ``KGEEmbedder`` — embedders for a fixed vocabulary of objects
-* ``KGEModel`` — binder that ties entity/relation embedders to a scorer
+* ``KGEModel`` — binder that ties entity/relation embedders to one or more scorers
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import os
 from abc import ABC, abstractmethod
-from typing import Any, List, Mapping
+from typing import Any, List, Mapping, Sequence
 
 import torch
 import torch.nn as nn
@@ -599,47 +599,44 @@ class KGEBase(nn.Module):
 
 
 class KGEScorer(KGEBase):
-	"""Pure tensor KGE logic — no embedding index lookups.
+	"""Pure tensor KGE score functions — no embedding index lookups.
 
-	Subclasses implement ``score_hrt`` / ``score_hr_`` / ``score_rt_`` for link
-	prediction.  Optional hooks:
+	**Scorer contract:** subclasses implement ``score_emb(h, r, t, combine)``.
 
-	* ``build_query`` — tail-prediction query vectors (cosine LP when enabled).
-	* ``au_representations`` — (query, tail, head) vectors for KGAU training.
-	* ``au_entity_embeddings`` — optional full-table entity vectors for uniformity.
+	``combine`` modes:
+
+	* ``hrt`` — row-wise triples → ``[n, 1]``
+	* ``hr_`` — each ``(h, r)`` vs all tails → ``[n, n_t]``
+	* ``_rt`` — each ``(r, t)`` vs all heads → ``[n, n_h]``
+	* ``hr_c`` — many tail candidates per row (``t`` is ``[B, C, D]``) → ``[B, C]``
+	* ``_rt_c`` — many head candidates per row (``h`` is ``[B, C, D]``) → ``[B, C]``
+
+	Query / target composition for KGAU and cosine LP lives on ``KGEModel``.
+
+	Optional hook:
+
+	* ``au_entity_embeddings`` — map entity rows into the AU / alternate LP space.
 	"""
 
 	bidirectional_score_batch: bool = False
 	kgau_alignment_mode: str | None = None
 
-	def build_query(self, h_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
-		"""Build tail-prediction query vectors (DistMult default: ``h * r``)."""
-
-		return h_emb * r_emb
-
-	def build_inv_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-		"""Build head-prediction query vectors (DistMult default: ``t * r``)."""
-
-		return t_emb * r_emb
-
-	def au_representations(
+	def score_emb(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
 		t_emb: torch.Tensor,
-		*,
-		predict_head: bool = False,
-		**kwargs,
-	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-		"""Return (query, align_target, head_entity) for alignment / uniformity losses.
+		combine: str,
+		**kwargs: Any,
+	) -> torch.Tensor:
+		"""Score embeddings under ``combine`` (see class docstring)."""
 
-		Tail prediction (default): align ``build_query(h, r)`` with the tail entity.
-		Head prediction: align ``build_inv_query(r, t)`` with the head entity (GB-Magic head-batch).
-		"""
+		raise NotImplementedError(f'{type(self).__name__} must implement score_emb')
 
-		if predict_head:
-			return self.build_inv_query(r_emb, t_emb), h_emb, h_emb
-		return self.build_query(h_emb, r_emb), t_emb, h_emb
+	def supports_candidate_scoring(self) -> bool:
+		"""Whether ``combine`` modes ``hr_c`` / ``_rt_c`` are available."""
+
+		return False
 
 
 class KGEEmbedder(KGEBase):
@@ -697,25 +694,26 @@ class BaseModel(nn.Module, ABC):
 
 
 class KGEModel(KGEBase):
-	"""LibKGE-style binder that ties entity/relation embedders to a pure relational scorer.
+	"""LibKGE-style binder that ties entity/relation embedders to relational scorers.
 
-	The scorer owns all tensor math (scoring, ``build_query``, ``au_representations``).
-	This class owns index lookups, optional auxiliary relation embedders, normalization
-	flags, and 1-vs-all delegation.
+	``scorers`` is a non-empty list of ``KGEScorer`` modules. Single-score models use
+	length 1; hybrid models (e.g. DaBR) may register multiple component scorers.
+	Default LP / AU math delegates to ``scorers[0]`` (the primary scorer); subclasses
+	may combine several entries.
 	"""
 
 	def __init__(
 		self,
 		ent_embedder: nn.Module,
 		rel_embedder: nn.Module,
-		scorer: nn.Module,
+		scorers: Sequence[nn.Module] | nn.Module,
 		args: Any | None = None,
 		aux_embedders: Mapping[str, nn.Module] | None = None,
 	):
 		super().__init__(args)
 		self.ent_embedder = ent_embedder
 		self.rel_embedder = rel_embedder
-		self.scorer = scorer
+		self.scorers = self._as_scorer_list(scorers)
 		self.aux_embedders = nn.ModuleDict(dict(aux_embedders or {}))
 		self.rel_to_idx = load_relation_to_idx(args) if args is not None else {}
 		self.normalize_lp_scores = _normalize_lp_flag(args) if args is not None else False
@@ -723,13 +721,25 @@ class KGEModel(KGEBase):
 		self.lp_distance_degree = _lp_distance_degree(args) if args is not None else 2.0
 		self.normalize_au_vectors = _normalize_au_flag(args) if args is not None else False
 
+	@staticmethod
+	def _as_scorer_list(scorers: Sequence[nn.Module] | nn.Module) -> nn.ModuleList:
+		if isinstance(scorers, nn.ModuleList):
+			modules = list(scorers)
+		elif isinstance(scorers, nn.Module):
+			modules = [scorers]
+		else:
+			modules = list(scorers)
+		if not modules:
+			raise ValueError('scorers must contain at least one KGEScorer')
+		return nn.ModuleList(modules)
+
 	@property
 	def bidirectional_score_batch(self) -> bool:
-		return bool(getattr(self.scorer, 'bidirectional_score_batch', False))
+		return bool(getattr(self.get_scorer(), 'bidirectional_score_batch', False))
 
 	@property
 	def kgau_alignment_mode(self) -> str | None:
-		return getattr(self.scorer, 'kgau_alignment_mode', None)
+		return getattr(self.get_scorer(), 'kgau_alignment_mode', None)
 
 	def get_h_embedder(self) -> nn.Module:
 		return self.ent_embedder
@@ -740,8 +750,13 @@ class KGEModel(KGEBase):
 	def get_r_embedder(self) -> nn.Module:
 		return self.rel_embedder
 
-	def get_scorer(self) -> nn.Module:
-		return self.scorer
+	def get_scorer(self, index: int = 0) -> nn.Module:
+		"""Return the primary scorer (``index=0``) or another component scorer."""
+
+		return self.scorers[index]
+
+	def get_scorers(self) -> nn.ModuleList:
+		return self.scorers
 
 	def embed_h(self, indices: torch.Tensor) -> torch.Tensor:
 		return self._embed(self.ent_embedder, indices)
@@ -798,8 +813,8 @@ class KGEModel(KGEBase):
 	def _lp_entity_vectors(self, entity_emb: torch.Tensor) -> torch.Tensor:
 		"""Map entity embeddings into the LP vector space used by cosine / Lp-distance scoring."""
 
-		if self._uses_alternate_lp_entity_space() and hasattr(self.scorer, 'au_entity_embeddings'):
-			return self.scorer.au_entity_embeddings(entity_emb)
+		if self._uses_alternate_lp_entity_space() and hasattr(self.get_scorer(), 'au_entity_embeddings'):
+			return self.get_scorer().au_entity_embeddings(entity_emb)
 		return entity_emb
 
 	def _normalize_au_vector(self, vectors: torch.Tensor) -> torch.Tensor:
@@ -829,14 +844,10 @@ class KGEModel(KGEBase):
 		return -torch.cdist(query_vectors, candidate_vectors, p=p)
 
 	def _tail_query_vectors(self, h: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
-		return self.scorer.build_query(
-			self.embed_h(h),
-			self.embed_r(r),
-			**self._scorer_kwargs(r),
-		)
+		return self.query_encoder(h, r)
 
 	def _head_query_vectors(self, r: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-		return self.scorer.build_inv_query(self.embed_r(r), self.embed_t(t))
+		return self.inverse_query_encoder(r, t)
 
 	def score_hrt(
 		self,
@@ -851,9 +862,9 @@ class KGEModel(KGEBase):
 			distance_degree = float(getattr(self, 'lp_distance_degree', 2.0) or 2.0)
 			return -torch.linalg.vector_norm(query - tail, ord=distance_degree, dim=-1)
 		if self._uses_cosine_lp_scores():
-			if hasattr(self.scorer, 'normalized_score_hr'):
+			if hasattr(self.get_scorer(), 'normalized_score_hr'):
 				scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
-				return self.scorer.normalized_score_hr(
+				return self.get_scorer().normalized_score_hr(
 					self.embed_h(h),
 					self.embed_r(r),
 					self.embed_t(t),
@@ -863,12 +874,13 @@ class KGEModel(KGEBase):
 			tail = self._lp_entity_vectors(self.embed_t(t))
 			return self._cosine_similarity_scores(query, tail).diag()
 		scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
-		return self.scorer.score_hrt(
+		return self.get_scorer().score_emb(
 			self.embed_h(h),
 			self.embed_r(r),
 			self.embed_t(t),
+			'hrt',
 			**scorer_kwargs,
-		)
+		).view(-1)
 
 	def score_hr_(
 		self,
@@ -881,13 +893,13 @@ class KGEModel(KGEBase):
 			all_t_embs = self.embed_all_entities()
 		lp_entity_embs = self._lp_entity_vectors(all_t_embs)
 		if self._uses_distance_lp_scores():
-			if hasattr(self.scorer, 'distance_score_hr_'):
+			if hasattr(self.get_scorer(), 'distance_score_hr_'):
 				scorer_kwargs = {
 					**self._scorer_kwargs(r),
 					**kwargs,
 					'lp_distance_degree': float(getattr(self, 'lp_distance_degree', 2.0) or 2.0),
 				}
-				return self.scorer.distance_score_hr_(
+				return self.get_scorer().distance_score_hr_(
 					self.embed_h(h),
 					self.embed_r(r),
 					lp_entity_embs,
@@ -895,9 +907,9 @@ class KGEModel(KGEBase):
 				)
 			return self._distance_scores(self._tail_query_vectors(h, r), lp_entity_embs)
 		if self._uses_cosine_lp_scores():
-			if hasattr(self.scorer, 'normalized_score_hr_'):
+			if hasattr(self.get_scorer(), 'normalized_score_hr_'):
 				scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
-				return self.scorer.normalized_score_hr_(
+				return self.get_scorer().normalized_score_hr_(
 					self.embed_h(h),
 					self.embed_r(r),
 					lp_entity_embs,
@@ -905,10 +917,11 @@ class KGEModel(KGEBase):
 				)
 			return self._cosine_similarity_scores(self._tail_query_vectors(h, r), lp_entity_embs)
 		scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
-		return self.scorer.score_hr_(
+		return self.get_scorer().score_emb(
 			self.embed_h(h),
 			self.embed_r(r),
 			all_t_embs,
+			'hr_',
 			**scorer_kwargs,
 		)
 
@@ -922,10 +935,11 @@ class KGEModel(KGEBase):
 		if t is None:
 			return self.score_hr_(h, r, **kwargs)
 		scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
-		return self.scorer.score_hr_(
+		return self.get_scorer().score_emb(
 			self.embed_h(h),
 			self.embed_r(r),
 			self._embed(self.ent_embedder, t),
+			'hr_',
 			**scorer_kwargs,
 		)
 
@@ -936,19 +950,17 @@ class KGEModel(KGEBase):
 		all_h_embs: torch.Tensor | None = None,
 		**kwargs: Any,
 	) -> torch.Tensor:
-		if not hasattr(self.scorer, 'score_rt_'):
-			raise NotImplementedError(f'{type(self.scorer).__name__} does not implement score_rt_')
 		if all_h_embs is None:
 			all_h_embs = self.embed_all_entities()
 		lp_entity_embs = self._lp_entity_vectors(all_h_embs)
 		if self._uses_distance_lp_scores():
-			if hasattr(self.scorer, 'distance_score_rt_'):
+			if hasattr(self.get_scorer(), 'distance_score_rt_'):
 				scorer_kwargs = {
 					**self._scorer_kwargs(r),
 					**kwargs,
 					'lp_distance_degree': float(getattr(self, 'lp_distance_degree', 2.0) or 2.0),
 				}
-				return self.scorer.distance_score_rt_(
+				return self.get_scorer().distance_score_rt_(
 					lp_entity_embs,
 					self.embed_r(r),
 					self.embed_t(t),
@@ -956,9 +968,9 @@ class KGEModel(KGEBase):
 				)
 			return self._distance_scores(self._head_query_vectors(r, t), lp_entity_embs)
 		if self._uses_cosine_lp_scores():
-			if hasattr(self.scorer, 'normalized_score_rt_'):
+			if hasattr(self.get_scorer(), 'normalized_score_rt_'):
 				scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
-				return self.scorer.normalized_score_rt_(
+				return self.get_scorer().normalized_score_rt_(
 					lp_entity_embs,
 					self.embed_r(r),
 					self.embed_t(t),
@@ -966,10 +978,11 @@ class KGEModel(KGEBase):
 				)
 			return self._cosine_similarity_scores(self._head_query_vectors(r, t), lp_entity_embs)
 		scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
-		return self.scorer.score_rt_(
+		return self.get_scorer().score_emb(
 			all_h_embs,
 			self.embed_r(r),
 			self.embed_t(t),
+			'_rt',
 			**scorer_kwargs,
 		)
 
@@ -982,23 +995,22 @@ class KGEModel(KGEBase):
 	) -> torch.Tensor:
 		if h is None:
 			return self.score_rt_(r, t, **kwargs)
-		if self.normalize_lp_scores and hasattr(self.scorer, 'normalized_score_rt'):
+		if self.normalize_lp_scores and hasattr(self.get_scorer(), 'normalized_score_rt'):
 			scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
-			return self.scorer.normalized_score_rt(
+			return self.get_scorer().normalized_score_rt(
 				self._embed(self.ent_embedder, h),
 				self.embed_r(r),
 				self.embed_t(t),
 				**scorer_kwargs,
 			)
-		if hasattr(self.scorer, 'score_rt'):
-			scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
-			return self.scorer.score_rt(
-				self._embed(self.ent_embedder, h),
-				self.embed_r(r),
-				self.embed_t(t),
-				**scorer_kwargs,
-			)
-		raise NotImplementedError(f'{type(self.scorer).__name__} does not implement score_rt')
+		scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
+		return self.get_scorer().score_emb(
+			self._embed(self.ent_embedder, h),
+			self.embed_r(r),
+			self.embed_t(t),
+			'hrt',
+			**scorer_kwargs,
+		).view(-1)
 
 	def query_all_entities_scores(self, h: torch.Tensor, r: torch.Tensor, **kwargs: Any) -> torch.Tensor:
 		return self.score_hr_(h, r, **kwargs)
@@ -1025,8 +1037,8 @@ class KGEModel(KGEBase):
 		return vectors.to(device) if device is not None else vectors
 
 	def au_entity_embeddings(self, device: torch.device | None = None, **kwargs: Any) -> torch.Tensor:
-		if hasattr(self.scorer, 'au_entity_embeddings'):
-			vectors = self.scorer.au_entity_embeddings(self.embed_all_entities())
+		if hasattr(self.get_scorer(), 'au_entity_embeddings'):
+			vectors = self.get_scorer().au_entity_embeddings(self.embed_all_entities())
 			return vectors.to(device) if device is not None else vectors
 		return self.entity_embeddings(device=device, **kwargs)
 
@@ -1038,18 +1050,68 @@ class KGEModel(KGEBase):
 		*,
 		predict_head: bool = False,
 	):
-		"""AU (query, align_target, head_entity) vectors - delegated to the scorer."""
+		"""AU (query, align_target, head_entity) vectors via model encoders."""
 
-		h_emb = self.embed_h(h)
-		r_emb = self.embed_r(r)
-		t_emb = self.embed_t(t)
-		scorer_kwargs = {**self._scorer_kwargs(r), 'predict_head': predict_head}
-		query, tail, head = self.scorer.au_representations(h_emb, r_emb, t_emb, **scorer_kwargs)
+		if predict_head:
+			query = self.inverse_query_encoder(r, t)
+		else:
+			query = self.query_encoder(h, r)
+		target = self.target_encoder(h, r, t, predict_head=predict_head)
+		head = self.uniformity_head_encoder(h, r)
 		if self.normalize_au_vectors:
 			query = self._normalize_au_vector(query)
-			tail = self._normalize_au_vector(tail)
+			target = self._normalize_au_vector(target)
 			head = self._normalize_au_vector(head)
-		return query, tail, head
+		return query, target, head
+
+	def query_encoder(self, h: torch.Tensor, r: torch.Tensor, **kwargs: Any) -> torch.Tensor:
+		"""Encode the tail-prediction query from head and relation indices.
+
+		Default (DistMult-style): ``embed(h) * embed(r)``. Subclasses override.
+		"""
+
+		del kwargs
+		return self.embed_h(h) * self.embed_r(r)
+
+	def inverse_query_encoder(self, r: torch.Tensor, t: torch.Tensor, **kwargs: Any) -> torch.Tensor:
+		"""Encode the head-prediction query from relation and tail indices.
+
+		Default (DistMult-style): ``embed(t) * embed(r)``. Subclasses override.
+		"""
+
+		del kwargs
+		return self.embed_t(t) * self.embed_r(r)
+
+	def target_encoder(
+		self,
+		h: torch.Tensor,
+		r: torch.Tensor,
+		t: torch.Tensor,
+		*,
+		predict_head: bool = False,
+		**kwargs: Any,
+	) -> torch.Tensor:
+		"""Encode the AU alignment target for the current prediction mode.
+
+		Default (most bilinear models): raw entity embedding — tail when predicting
+		tails, head when predicting heads.  Subclasses whose score function aligns
+		against a relation-conditioned target (DaBR, TransERR, …) should override
+		this and set ``target_uses_relation = True``.
+		"""
+
+		del r, kwargs  # unused in the entity-only default
+		if predict_head:
+			return self.embed_h(h)
+		return self.embed_t(t)
+
+	#: When True, ``target_encoder`` consumes the relation (and possibly aux) embeddings.
+	target_uses_relation: bool = False
+
+	def uniformity_head_encoder(self, h: torch.Tensor, r: torch.Tensor, **kwargs: Any) -> torch.Tensor:
+		"""Head entity vector for AU head/entity uniformity terms."""
+
+		del r, kwargs
+		return self.embed_h(h)
 
 	def score_batch(self, head_ids, relations, tail_entity_ids) -> torch.Tensor:
 		entity_dict = get_entity_dict()
@@ -1073,15 +1135,15 @@ class TextKGEModel(KGEModel):
 		self,
 		ent_embedder: nn.Module,
 		query_embedder: nn.Module,
-		scorer: nn.Module,
+		scorers: Sequence[nn.Module] | nn.Module,
 		args: Any | None = None,
 		contrastive_state: nn.Module | None = None,
 	):
-		super().__init__(ent_embedder, query_embedder, scorer, args)
+		super().__init__(ent_embedder, query_embedder, scorers, args)
 		if contrastive_state is not None:
 			self.contrastive_state = contrastive_state
 		elif args is not None:
-			from models.scorers.simkgc_scorer import build_contrastive_state
+			from models.simkgc import build_contrastive_state
 
 			hidden_size = int(getattr(getattr(ent_embedder, 'config', None), 'hidden_size', getattr(args, 'dim', 768)))
 			self.contrastive_state = build_contrastive_state(args, hidden_size)
@@ -1141,7 +1203,9 @@ class TextKGEModel(KGEModel):
 			return -torch.linalg.vector_norm(query - tail, ord=distance_degree, dim=-1)
 		if self._uses_cosine_lp_scores():
 			return self._cosine_similarity_scores(query, tail).diag()
-		return self.scorer.score_hrt(query, r, tail, **{**self._scorer_kwargs(r), **kwargs})
+		return self.get_scorer().score_emb(
+			query, r, tail, 'hrt', **{**self._scorer_kwargs(r), **kwargs}
+		).view(-1)
 
 	def score_hr_(
 		self,
@@ -1159,7 +1223,7 @@ class TextKGEModel(KGEModel):
 		if self._uses_cosine_lp_scores():
 			return self._cosine_similarity_scores(query, lp_entity_embs)
 		scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
-		return self.scorer.score_hr_(query, r, all_t_embs, **scorer_kwargs)
+		return self.get_scorer().score_emb(query, r, all_t_embs, 'hr_', **scorer_kwargs)
 
 	def get_queries_targets(self, h: torch.Tensor, r: torch.Tensor, t: torch.Tensor):
 		from data.dataloader import collate

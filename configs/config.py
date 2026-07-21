@@ -50,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--model-embedder-path', default=None, type=str,
                         help='path to embedder module, e.g. models/embedders/lookup_embedder.py')
     parser.add_argument('--model-scorer-path', default=None, type=str,
-                        help='path to scorer module, e.g. models/scorers/distmult_scorer.py')
+                        help='path to scorer module, e.g. models/distmult.py')
     parser.add_argument('--model-encoder-path', default=None, type=str,
                         help='(legacy) alias for model_scorer_path when embedder/scorer are not split')
     parser.add_argument('--model-loss-path', default=None, type=str,
@@ -1102,29 +1102,29 @@ if not args.model_strategy_path:
 
 if not args.model_encoder_path:
     if _model_name == 'distmult':
-        args.model_encoder_path = 'models/scorers/distmult_scorer.py'
+        args.model_encoder_path = 'models/distmult.py'
     elif _model_name == 'distmult-au':
-        args.model_encoder_path = 'models/scorers/distmult_scorer.py'
+        args.model_encoder_path = 'models/distmult.py'
     elif _model_name == 'complex':
-        args.model_encoder_path = 'models/scorers/complex_scorer.py'
+        args.model_encoder_path = 'models/complex.py'
     elif _model_name == 'complex-au':
-        args.model_encoder_path = 'models/scorers/complex_scorer.py'
+        args.model_encoder_path = 'models/complex.py'
     elif _model_name == 'dabr':
-        args.model_encoder_path = 'models/scorers/dabr_scorer.py'
+        args.model_encoder_path = 'models/dabr.py'
     elif _model_name == 'dabr-au':
-        args.model_encoder_path = 'models/scorers/dabr_scorer.py'
+        args.model_encoder_path = 'models/dabr.py'
     elif _model_name == 'rotate':
-        args.model_encoder_path = 'models/scorers/rotate_scorer.py'
+        args.model_encoder_path = 'models/rotate.py'
     elif _model_name == 'rotate-au':
-        args.model_encoder_path = 'models/scorers/rotate_scorer.py'
+        args.model_encoder_path = 'models/rotate.py'
     elif _model_name in {'protate', 'protate-au'}:
-        args.model_encoder_path = 'models/scorers/protate_scorer.py'
+        args.model_encoder_path = 'models/protate.py'
     elif _model_name in {'transe', 'transe-au'}:
-        args.model_encoder_path = 'models/scorers/transe_scorer.py'
+        args.model_encoder_path = 'models/transe.py'
     elif _model_name in {'transerr', 'transerr-au'}:
-        args.model_encoder_path = 'models/scorers/transerr_scorer.py'
+        args.model_encoder_path = 'models/transerr.py'
     else:
-        args.model_encoder_path = 'models/scorers/simkgc_scorer.py'
+        args.model_encoder_path = 'models/simkgc.py'
 
 if not args.model_scorer_path:
     args.model_scorer_path = args.model_encoder_path

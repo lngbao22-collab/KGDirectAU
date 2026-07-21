@@ -1,10 +1,10 @@
-"""Pure RotatE scorer operating on raw tensors only."""
+"""RotatE scorer and model (``score_emb``)."""
 
 import math
 
 import torch
 
-from base.model import KGEScorer
+from base.model import KGEScorer, KGEModel
 
 
 def build_scorer(args) -> 'RotatEScorer':
@@ -37,7 +37,10 @@ def normalize_rotate_phases(model) -> None:
 
 
 class RotatEScorer(KGEScorer):
-	"""RotatE score function with explicit 1-to-1 and 1-vs-All tensor paths."""
+	"""RotatE score function via a single ``score_emb``.
+
+	``combine`` modes: ``hrt``, ``hr_``, ``_rt``, ``hr_c``, ``_rt_c``.
+	"""
 
 	bidirectional_score_batch = True
 
@@ -53,6 +56,9 @@ class RotatEScorer(KGEScorer):
 			self.margin = float(6.0 if margin_value is None else margin_value)
 			epsilon = float(getattr(args, 'epsilon', 2.0))
 			self.embedding_range = float((self.margin + epsilon) / max(self.dim, 1))
+
+	def supports_candidate_scoring(self) -> bool:
+		return True
 
 	def _phase(self, relation_emb: torch.Tensor) -> torch.Tensor:
 		"""Map raw relation tensors to the RotatE phase space."""
@@ -183,70 +189,6 @@ class RotatEScorer(KGEScorer):
 			return self._hadamard_complex(r_re, r_im, h_re, h_im)
 		return self._hadamard_complex(h_re, h_im, r_re, r_im)
 
-	def score_hrt(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-		"""Return standard RotatE tail scores for matching batches of triples."""
-
-		return self._distance_score(h_emb, r_emb, t_emb, predict_head=False)
-
-	def score_rt(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-		"""Return standard RotatE head scores for matching batches of triples."""
-
-		return self._distance_score(h_emb, r_emb, t_emb, predict_head=True)
-
-	def score_hrt_candidates(
-		self,
-		h_emb: torch.Tensor,
-		r_emb: torch.Tensor,
-		t_emb: torch.Tensor,
-	) -> torch.Tensor:
-		"""Score many tail candidates per row: ``h_emb,r_emb`` are [B, D], ``t_emb`` is [B, C, D]."""
-
-		return self._candidate_distance_score(h_emb, r_emb, t_emb, predict_head=False)
-
-	def score_rt_candidates(
-		self,
-		h_emb: torch.Tensor,
-		r_emb: torch.Tensor,
-		t_emb: torch.Tensor,
-	) -> torch.Tensor:
-		"""Score many head candidates per row: ``h_emb`` is [B, C, D], ``r_emb,t_emb`` are [B, D]."""
-
-		return self._candidate_distance_score(h_emb, r_emb, t_emb, predict_head=True)
-
-	def score_hr_(self, h_emb: torch.Tensor, r_emb: torch.Tensor, all_t_embs: torch.Tensor) -> torch.Tensor:
-		"""Return 1-vs-all RotatE tail scores using LibKGE-style hr_ broadcasting."""
-
-		h_re, h_im = self._split_complex(h_emb)
-		t_re, t_im = self._split_complex(all_t_embs)
-		q_re, q_im = self._rotate_query(h_re, h_im, r_emb, inverse=False)
-		if self._libkge:
-			return self._libkge_distance_1vsall(q_re, q_im, t_re, t_im)
-		return self._margin_distance_1vsall(q_re, q_im, t_re, t_im)
-
-	def score_rt_(self, all_h_embs: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-		"""Return 1-vs-all RotatE head scores (LibKGE ``_rt`` combine)."""
-
-		h_re, h_im = self._split_complex(all_h_embs)
-		t_re, t_im = self._split_complex(t_emb)
-		q_re, q_im = self._rotate_query(t_re, t_im, r_emb, inverse=True)
-		if self._libkge:
-			return self._libkge_distance_1vsall(q_re, q_im, h_re, h_im)
-		return self._margin_distance_1vsall(q_re, q_im, h_re, h_im)
-
-	def build_query(self, h_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
-		"""Tail-prediction query vectors for cosine link prediction (``h * r`` in complex space)."""
-
-		h_re, h_im = self._split_complex(h_emb)
-		q_re, q_im = self._rotate_query(h_re, h_im, r_emb, inverse=False)
-		return torch.cat([q_re, q_im], dim=-1)
-
-	def build_inv_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-		"""Head-prediction query vectors for cosine link prediction."""
-
-		t_re, t_im = self._split_complex(t_emb)
-		q_re, q_im = self._rotate_query(t_re, t_im, r_emb, inverse=True)
-		return torch.cat([q_re, q_im], dim=-1)
-
 	def _distance_score(
 		self,
 		h_emb: torch.Tensor,
@@ -338,15 +280,75 @@ class RotatEScorer(KGEScorer):
 		diff_abs = self._abs_complex(re_score, im_score)
 		return self.margin - diff_abs.sum(dim=-1)
 
-	def au_representations(
+	def score_emb(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
 		t_emb: torch.Tensor,
-		*,
-		predict_head: bool = False,
+		combine: str,
 		**kwargs,
-	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-		if predict_head:
-			return self.build_inv_query(r_emb, t_emb), h_emb, h_emb
-		return self.build_query(h_emb, r_emb), t_emb, h_emb
+	) -> torch.Tensor:
+		del kwargs
+		n = r_emb.size(0)
+
+		if combine == 'hrt':
+			return self._distance_score(h_emb, r_emb, t_emb, predict_head=False).view(n, -1)
+		if combine == 'hr_':
+			h_re, h_im = self._split_complex(h_emb)
+			t_re, t_im = self._split_complex(t_emb)
+			q_re, q_im = self._rotate_query(h_re, h_im, r_emb, inverse=False)
+			if self._libkge:
+				return self._libkge_distance_1vsall(q_re, q_im, t_re, t_im)
+			return self._margin_distance_1vsall(q_re, q_im, t_re, t_im)
+		if combine == '_rt':
+			h_re, h_im = self._split_complex(h_emb)
+			t_re, t_im = self._split_complex(t_emb)
+			q_re, q_im = self._rotate_query(t_re, t_im, r_emb, inverse=True)
+			if self._libkge:
+				return self._libkge_distance_1vsall(q_re, q_im, h_re, h_im)
+			return self._margin_distance_1vsall(q_re, q_im, h_re, h_im)
+		if combine == 'hr_c':
+			return self._candidate_distance_score(h_emb, r_emb, t_emb, predict_head=False)
+		if combine == '_rt_c':
+			return self._candidate_distance_score(h_emb, r_emb, t_emb, predict_head=True)
+		raise ValueError(f'cannot handle combine="{combine}"')
+
+
+class RotatEModel(KGEModel):
+	"""Bind lookup embedders to ``RotatEScorer`` (``scorers`` length 1 by default)."""
+
+	def __init__(
+		self,
+		ent_embedder,
+		rel_embedder,
+		scorers=None,
+		args=None,
+		aux_embedders=None,
+	):
+		if scorers is None:
+			scorers = [RotatEScorer(args)]
+		super().__init__(
+			ent_embedder,
+			rel_embedder,
+			scorers=scorers,
+			args=args,
+			aux_embedders=aux_embedders,
+		)
+
+	def query_encoder(self, h: torch.Tensor, r: torch.Tensor, **kwargs) -> torch.Tensor:
+		"""Tail-prediction query: rotate ``h`` by ``r`` in complex space."""
+
+		del kwargs
+		scorer = self.get_scorer()
+		h_re, h_im = scorer._split_complex(self.embed_h(h))
+		q_re, q_im = scorer._rotate_query(h_re, h_im, self.embed_r(r), inverse=False)
+		return torch.cat([q_re, q_im], dim=-1)
+
+	def inverse_query_encoder(self, r: torch.Tensor, t: torch.Tensor, **kwargs) -> torch.Tensor:
+		"""Head-prediction query: rotate ``t`` by ``r⁻¹``."""
+
+		del kwargs
+		scorer = self.get_scorer()
+		t_re, t_im = scorer._split_complex(self.embed_t(t))
+		q_re, q_im = scorer._rotate_query(t_re, t_im, self.embed_r(r), inverse=True)
+		return torch.cat([q_re, q_im], dim=-1)

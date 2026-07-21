@@ -1,10 +1,10 @@
-"""Pure DaBR scorer operating on raw tensors only."""
+"""DaBR scorer and model (``score_emb``)."""
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from base.model import KGEScorer
+from base.model import KGEScorer, KGEModel
 
 
 def build_scorer(args) -> 'DaBRScorer':
@@ -12,11 +12,14 @@ def build_scorer(args) -> 'DaBRScorer':
 
 
 class DaBRScorer(KGEScorer):
-	"""DaBR score function with explicit 1-to-1 and 1-vs-All tensor paths.
+	"""DaBR score function via a single ``score_emb``.
 
 	Quaternion feature ops use the last dimension (``dim=-1`` / ``size(-1)``) so the
 	same kernels work for rank-2 ``[B, D]`` batches and rank-3 ``[B, C, D]`` broadcasts.
 	That is equivalent to the original DaBR ``dim=1`` / ``size(1)`` convention on 2D tensors.
+
+	``combine`` modes: ``hrt``, ``hr_``, ``_rt``, ``hr_c``, ``_rt_c``.
+	Pass ``dr_emb`` / ``para`` via ``**kwargs``.
 	"""
 
 	bidirectional_score_batch = True
@@ -164,25 +167,104 @@ class DaBRScorer(KGEScorer):
 			return para
 		return float(para)
 
-	def score_hrt(
+	def supports_candidate_scoring(self) -> bool:
+		return True
+
+	def score_emb(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
 		t_emb: torch.Tensor,
+		combine: str,
 		dr_emb: torch.Tensor | None = None,
 		para: float | torch.Tensor | None = None,
+		**kwargs,
 	) -> torch.Tensor:
-		"""1-to-1 DaBR score ``⟨h⊗r, t⊗r⁻¹⟩ + λ‖(h+dr−t)_Σ‖``.
+		"""DaBR score ``⟨h⊗r, t⊗r⁻¹⟩ + λ‖(h+dr−t)_Σ‖`` under ``combine``."""
 
-		Sign is flipped relative to DaBR ``_calc`` (framework: higher is better).
-		"""
-
-		if dr_emb is None:
-			dr_emb = torch.zeros_like(h_emb)
-		score_s = self._semantic_score(h_emb, r_emb, t_emb)
-		score_d = self._distance_score(h_emb, dr_emb, t_emb, self.distance_norm)
+		del kwargs
+		n = r_emb.size(0)
 		para_value = self._coalesce_para(para, self.para)
-		return score_s + para_value * score_d
+
+		if combine == 'hrt':
+			if dr_emb is None:
+				dr_emb = torch.zeros_like(h_emb)
+			score_s = self._semantic_score(h_emb, r_emb, t_emb)
+			score_d = self._distance_score(h_emb, dr_emb, t_emb, self.distance_norm)
+			return (score_s + para_value * score_d).view(n, -1)
+
+		if combine == 'hr_c':
+			# t_emb is [B, C, D]
+			if dr_emb is None:
+				dr_emb = torch.zeros_like(h_emb)
+			hr = self._vec_vec_wise_multiplication(h_emb, r_emb).unsqueeze(1)
+			tr = self._vec_vec_wise_multiplication(
+				t_emb,
+				self._quat_inv(r_emb).unsqueeze(1),
+			)
+			score_s = torch.sum(hr * tr, dim=-1)
+			score_d = self._distance_score(
+				h_emb.unsqueeze(1),
+				dr_emb.unsqueeze(1),
+				t_emb,
+				self.distance_norm,
+			)
+			return score_s + para_value * score_d
+
+		if combine == '_rt_c':
+			# h_emb is [B, C, D]
+			if dr_emb is None:
+				dr_emb = torch.zeros_like(t_emb)
+			num_heads = h_emb.size(1)
+			hr = self._vec_vec_wise_multiplication(h_emb, r_emb.unsqueeze(1))
+			tr = self._vec_vec_wise_multiplication(
+				t_emb.unsqueeze(1),
+				self._quat_inv(r_emb).unsqueeze(1),
+			)
+			score_s = torch.sum(hr * tr, dim=-1)
+			score_d = self._distance_score(
+				h_emb,
+				dr_emb.unsqueeze(1).expand(-1, num_heads, -1),
+				t_emb.unsqueeze(1).expand(-1, num_heads, -1),
+				self.distance_norm,
+			)
+			return score_s + para_value * score_d
+
+		if combine == 'hr_':
+			if dr_emb is None:
+				dr_emb = torch.zeros_like(h_emb)
+			num_candidates = t_emb.size(0)
+			batch_size = h_emb.size(0)
+			embed_dim = t_emb.size(-1)
+			chunk_size = self._entity_chunk_size(batch_size, embed_dim)
+			if num_candidates <= chunk_size:
+				return self._score_hr_candidate_chunk(h_emb, r_emb, t_emb, dr_emb, para_value)
+			scores = h_emb.new_empty(batch_size, num_candidates)
+			for start in range(0, num_candidates, chunk_size):
+				end = min(start + chunk_size, num_candidates)
+				scores[:, start:end] = self._score_hr_candidate_chunk(
+					h_emb, r_emb, t_emb[start:end], dr_emb, para_value,
+				)
+			return scores
+
+		if combine == '_rt':
+			if dr_emb is None:
+				dr_emb = torch.zeros_like(t_emb)
+			num_heads = h_emb.size(0)
+			batch_size = r_emb.size(0)
+			embed_dim = h_emb.size(-1)
+			chunk_size = self._entity_chunk_size(batch_size, embed_dim)
+			if num_heads <= chunk_size:
+				return self._score_rt_candidate_chunk(h_emb, r_emb, t_emb, dr_emb, para_value)
+			scores = r_emb.new_empty(batch_size, num_heads)
+			for start in range(0, num_heads, chunk_size):
+				end = min(start + chunk_size, num_heads)
+				scores[:, start:end] = self._score_rt_candidate_chunk(
+					h_emb[start:end], r_emb, t_emb, dr_emb, para_value,
+				)
+			return scores
+
+		raise ValueError(f'cannot handle combine="{combine}"')
 
 	# ------------------------------------------------------------------
 	# AU / DirectAU block vectors
@@ -221,49 +303,7 @@ class DaBRScorer(KGEScorer):
 		t_mult = self._vec_vec_wise_multiplication(t_emb, self._quat_inv(r_emb))
 		return torch.cat([t_mult, t_emb], dim=-1)
 
-	def build_query(
-		self,
-		h_emb: torch.Tensor,
-		r_emb: torch.Tensor,
-		dr_emb: torch.Tensor | None = None,
-	) -> torch.Tensor:
-		"""Tail-prediction query: ``cat(h⊗r, h+dr)``."""
 
-		return self._au_head_vector(h_emb, r_emb, dr_emb)
-
-	def build_inv_query(
-		self,
-		r_emb: torch.Tensor,
-		t_emb: torch.Tensor,
-	) -> torch.Tensor:
-		"""Head-prediction query: ``cat(t⊗r⁻¹, t)``."""
-
-		return self._au_tail_vector(t_emb, r_emb)
-
-	def au_representations(
-		self,
-		h_emb: torch.Tensor,
-		r_emb: torch.Tensor,
-		t_emb: torch.Tensor,
-		dr_emb: torch.Tensor | None = None,
-		*,
-		predict_head: bool = False,
-		**kwargs,
-	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-		"""Return ``(anchor, positive, entity_for_uniformity)`` AU triples."""
-
-		dr_emb = self._coalesce_dr(h_emb, dr_emb)
-		if predict_head:
-			return (
-				self.build_inv_query(r_emb, t_emb),
-				self._au_head_vector(h_emb, r_emb, dr_emb),
-				h_emb
-			)
-		return (
-			self.build_query(h_emb, r_emb, dr_emb=dr_emb),
-			self._au_tail_vector(t_emb, r_emb),
-			h_emb
-		)
 
 	def au_entity_embeddings(self, entity_emb: torch.Tensor) -> torch.Tensor:
 		"""Widen raw entities to two-block AU width via ``cat(e, e)``.
@@ -344,66 +384,6 @@ class DaBRScorer(KGEScorer):
 		)
 		return score_s + para_value * score_d
 
-	def score_hr_(
-		self,
-		h_emb: torch.Tensor,
-		r_emb: torch.Tensor,
-		all_t_embs: torch.Tensor,
-		dr_emb: torch.Tensor | None = None,
-		para: float | torch.Tensor | None = None,
-	) -> torch.Tensor:
-		"""1-vs-all tail prediction scores ``[B, |E|]``."""
-
-		if dr_emb is None:
-			dr_emb = torch.zeros_like(h_emb)
-
-		para_value = self._coalesce_para(para, self.para)
-		num_candidates = all_t_embs.size(0)
-		batch_size = h_emb.size(0)
-		embed_dim = all_t_embs.size(-1)
-		chunk_size = self._entity_chunk_size(batch_size, embed_dim)
-
-		if num_candidates <= chunk_size:
-			return self._score_hr_candidate_chunk(h_emb, r_emb, all_t_embs, dr_emb, para_value)
-
-		scores = h_emb.new_empty(batch_size, num_candidates)
-		for start in range(0, num_candidates, chunk_size):
-			end = min(start + chunk_size, num_candidates)
-			scores[:, start:end] = self._score_hr_candidate_chunk(
-				h_emb, r_emb, all_t_embs[start:end], dr_emb, para_value,
-			)
-		return scores
-
-	def score_rt_(
-		self,
-		all_h_embs: torch.Tensor,
-		r_emb: torch.Tensor,
-		t_emb: torch.Tensor,
-		dr_emb: torch.Tensor | None = None,
-		para: float | torch.Tensor | None = None,
-	) -> torch.Tensor:
-		"""1-vs-all head prediction scores ``[B, |E|]``."""
-
-		if dr_emb is None:
-			dr_emb = torch.zeros_like(t_emb)
-
-		para_value = self._coalesce_para(para, self.para)
-		num_heads = all_h_embs.size(0)
-		batch_size = r_emb.size(0)
-		embed_dim = all_h_embs.size(-1)
-		chunk_size = self._entity_chunk_size(batch_size, embed_dim)
-
-		if num_heads <= chunk_size:
-			return self._score_rt_candidate_chunk(all_h_embs, r_emb, t_emb, dr_emb, para_value)
-
-		scores = r_emb.new_empty(batch_size, num_heads)
-		for start in range(0, num_heads, chunk_size):
-			end = min(start + chunk_size, num_heads)
-			scores[:, start:end] = self._score_rt_candidate_chunk(
-				all_h_embs[start:end], r_emb, t_emb, dr_emb, para_value,
-			)
-		return scores
-
 	# ------------------------------------------------------------------
 	# Normalized (cosine) and distance LP over AU blocks
 	# ------------------------------------------------------------------
@@ -443,7 +423,7 @@ class DaBRScorer(KGEScorer):
 
 		dr_emb = self._coalesce_dr(h_emb, dr_emb)
 		return self._normalized_block_pair_score(
-			self.build_query(h_emb, r_emb, dr_emb=dr_emb),
+			self._au_head_vector(h_emb, r_emb, dr_emb),
 			self._au_tail_vector(t_emb, r_emb),
 		)
 
@@ -460,7 +440,7 @@ class DaBRScorer(KGEScorer):
 		dr_emb = self._coalesce_dr(h_emb, dr_emb)
 		return self._normalized_block_pair_score(
 			self._au_head_vector(h_emb, r_emb, dr_emb),
-			self.build_inv_query(r_emb, t_emb),
+			self._au_tail_vector(t_emb, r_emb),
 		)
 
 	@staticmethod
@@ -611,7 +591,7 @@ class DaBRScorer(KGEScorer):
 		scores = h_emb.new_empty(batch_size, num_candidates)
 		for row_indices, r_row, (h_sub, dr_sub) in self._group_batch_by_relation(r_emb, h_emb, dr_emb):
 			r_sub = r_row.expand(h_sub.size(0), -1)
-			query = self.build_query(h_sub, r_sub, dr_emb=dr_sub)
+			query = self._au_head_vector(h_sub, r_sub, dr_sub)
 			group_scores = self._au_hr_scores_chunked(
 				query, all_t_embs, r_row, predict_head=False,
 			)
@@ -636,7 +616,7 @@ class DaBRScorer(KGEScorer):
 		scores = t_emb.new_empty(batch_size, num_candidates)
 		for row_indices, r_row, (t_sub, dr_sub) in self._group_batch_by_relation(r_emb, t_emb, dr_emb):
 			r_sub = r_row.expand(t_sub.size(0), -1)
-			query = self.build_inv_query(r_sub, t_sub)
+			query = self._au_tail_vector(t_sub, r_sub)
 			group_scores = self._au_hr_scores_chunked(
 				query,
 				all_h_embs,
@@ -674,7 +654,7 @@ class DaBRScorer(KGEScorer):
 		scores = h_emb.new_empty(batch_size, num_candidates)
 		for row_indices, r_row, (h_sub, dr_sub) in self._group_batch_by_relation(r_emb, h_emb, dr_emb):
 			r_sub = r_row.expand(h_sub.size(0), -1)
-			query = self.build_query(h_sub, r_sub, dr_emb=dr_sub)
+			query = self._au_head_vector(h_sub, r_sub, dr_sub)
 			group_scores = self._au_hr_scores_chunked(
 				query,
 				all_t_embs,
@@ -705,7 +685,7 @@ class DaBRScorer(KGEScorer):
 		scores = t_emb.new_empty(batch_size, num_candidates)
 		for row_indices, r_row, (t_sub, dr_sub) in self._group_batch_by_relation(r_emb, t_emb, dr_emb):
 			r_sub = r_row.expand(t_sub.size(0), -1)
-			query = self.build_inv_query(r_sub, t_sub)
+			query = self._au_tail_vector(t_sub, r_sub)
 			group_scores = self._au_hr_scores_chunked(
 				query,
 				all_h_embs,
@@ -717,3 +697,144 @@ class DaBRScorer(KGEScorer):
 			)
 			scores.index_copy_(0, row_indices, group_scores)
 		return scores
+
+
+class DaBRSemanticScorer(KGEScorer):
+	"""Semantic matching component ``⟨h⊗r, t⊗r⁻¹⟩`` (hybrid DaBR building block)."""
+
+	bidirectional_score_batch = True
+
+	def __init__(self, args=None):
+		super().__init__()
+		self.args = args
+
+	def supports_candidate_scoring(self) -> bool:
+		return False
+
+	def score_emb(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+		combine: str,
+		**kwargs,
+	) -> torch.Tensor:
+		del kwargs
+		if combine != 'hrt':
+			raise ValueError(f'DaBRSemanticScorer only supports combine="hrt", got "{combine}"')
+		return DaBRScorer._semantic_score(h_emb, r_emb, t_emb).view(r_emb.size(0), -1)
+
+
+class DaBRDistanceScorer(KGEScorer):
+	"""Geometric distance component (hybrid DaBR building block; needs ``dr_emb``)."""
+
+	bidirectional_score_batch = True
+
+	def __init__(self, args=None):
+		super().__init__()
+		self.args = args
+		norm_p = int(getattr(args, 'dabr_distance_norm', 1) or 1) if args is not None else 1
+		if norm_p not in (1, 2):
+			raise ValueError(f'dabr_distance_norm must be 1 or 2, got {norm_p}')
+		self.distance_norm = norm_p
+
+	def supports_candidate_scoring(self) -> bool:
+		return False
+
+	def score_emb(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+		combine: str,
+		dr_emb: torch.Tensor | None = None,
+		**kwargs,
+	) -> torch.Tensor:
+		del r_emb, kwargs  # distance term uses relation drift ``dr``, not ``r``
+		if combine != 'hrt':
+			raise ValueError(f'DaBRDistanceScorer only supports combine="hrt", got "{combine}"')
+		if dr_emb is None:
+			raise ValueError('DaBRDistanceScorer.score_emb requires dr_emb')
+		return DaBRScorer._distance_score(h_emb, dr_emb, t_emb, self.distance_norm).view(
+			h_emb.size(0), -1
+		)
+
+
+class DaBRModel(KGEModel):
+	"""Hybrid DaBR binder: primary ``DaBRScorer`` plus semantic/distance components.
+
+	``scorers[0]`` is the full combining scorer used by default LP/AU paths.
+	``scorers[1]`` / ``scorers[2]`` expose the semantic and distance terms for
+	hybrid inspection or custom training loops.
+	"""
+
+	def __init__(
+		self,
+		ent_embedder,
+		rel_embedder,
+		scorers=None,
+		args=None,
+		aux_embedders=None,
+	):
+		if scorers is None:
+			scorers = [
+				DaBRScorer(args),
+				DaBRSemanticScorer(args),
+				DaBRDistanceScorer(args),
+			]
+		super().__init__(
+			ent_embedder,
+			rel_embedder,
+			scorers=scorers,
+			args=args,
+			aux_embedders=aux_embedders,
+		)
+
+	target_uses_relation = True
+
+	def query_encoder(self, h: torch.Tensor, r: torch.Tensor, **kwargs) -> torch.Tensor:
+		"""Tail-prediction query: ``cat(h⊗r, h+dr)``."""
+
+		scorer = self.get_scorer()
+		scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
+		return scorer._au_head_vector(
+			self.embed_h(h),
+			self.embed_r(r),
+			scorer_kwargs.get('dr_emb'),
+		)
+
+	def inverse_query_encoder(self, r: torch.Tensor, t: torch.Tensor, **kwargs) -> torch.Tensor:
+		"""Head-prediction query: ``cat(t⊗r⁻¹, t)``."""
+
+		del kwargs
+		return self.get_scorer()._au_tail_vector(self.embed_t(t), self.embed_r(r))
+
+	def target_encoder(
+		self,
+		h: torch.Tensor,
+		r: torch.Tensor,
+		t: torch.Tensor,
+		*,
+		predict_head: bool = False,
+		**kwargs,
+	) -> torch.Tensor:
+		scorer = self.get_scorer()
+		r_emb = self.embed_r(r)
+		scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
+		if predict_head:
+			return scorer._au_head_vector(self.embed_h(h), r_emb, scorer_kwargs.get('dr_emb'))
+		return scorer._au_tail_vector(self.embed_t(t), r_emb)
+
+	def uniformity_head_encoder(self, h: torch.Tensor, r: torch.Tensor, **kwargs) -> torch.Tensor:
+		del r, kwargs
+		return self.embed_h(h)
+
+
+def build_scorers(args) -> list:
+	"""Return hybrid DaBR scorers: primary + semantic + distance components."""
+
+	return [
+		DaBRScorer(args),
+		DaBRSemanticScorer(args),
+		DaBRDistanceScorer(args),
+	]

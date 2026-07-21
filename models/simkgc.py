@@ -1,11 +1,11 @@
-"""Pure cosine scorer and contrastive training state for SimKGC."""
+"""SimKGC cosine scorer and contrastive training state (``score_emb``)."""
 
 from typing import Any
 
 import torch
 import torch.nn as nn
 
-from base.model import KGEScorer
+from base.model import KGEScorer, TextKGEModel
 
 
 class ContrastiveTrainingState(nn.Module):
@@ -44,7 +44,10 @@ def build_contrastive_state(args, hidden_size: int) -> ContrastiveTrainingState:
 
 
 class SimKGCScorer(KGEScorer):
-	"""Cosine similarity scorer on L2-normalized query and entity vectors."""
+	"""Cosine similarity via ``score_emb`` on L2-normalized query / entity vectors.
+
+	``combine`` modes: ``hrt``, ``hr_`` (no head 1-vs-all or candidate paths).
+	"""
 
 	kgau_alignment_mode = 'cosine'
 
@@ -52,45 +55,58 @@ class SimKGCScorer(KGEScorer):
 		super().__init__()
 		self.args = args
 
-	def score_hrt(
+	def supports_candidate_scoring(self) -> bool:
+		return False
+
+	def score_emb(
 		self,
-		q_emb: torch.Tensor,
-		_r_emb: torch.Tensor,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
 		t_emb: torch.Tensor,
-	) -> torch.Tensor:
-		return torch.sum(q_emb * t_emb, dim=-1)
-
-	def score_hr_(
-		self,
-		q_emb: torch.Tensor,
-		_r_emb: torch.Tensor,
-		all_t_embs: torch.Tensor,
-	) -> torch.Tensor:
-		return torch.mm(q_emb, all_t_embs.t())
-
-	def build_query(self, q_emb: torch.Tensor, _r_emb: torch.Tensor) -> torch.Tensor:
-		return q_emb
-
-	def au_representations(
-		self,
-		q_emb: torch.Tensor,
-		_r_emb: torch.Tensor,
-		t_emb: torch.Tensor,
-		head_emb: torch.Tensor | None = None,
+		combine: str,
 		**kwargs,
-	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-		if head_emb is None:
-			head_emb = t_emb
-		return q_emb, t_emb, head_emb
+	) -> torch.Tensor:
+		"""``h_emb`` is the query vector; ``r_emb`` is unused."""
+
+		del r_emb, kwargs
+		n = h_emb.size(0)
+		if combine == 'hrt':
+			return torch.sum(h_emb * t_emb, dim=-1).view(n, -1)
+		if combine == 'hr_':
+			return torch.mm(h_emb, t_emb.t())
+		raise ValueError(f'cannot handle combine="{combine}"')
 
 
 def build_scorer(args) -> 'SimKGCScorer':
 	return SimKGCScorer(args)
 
 
-def build_model(args):
-	"""Backward-compatible factory delegating to the unified builder."""
+class SimKGCModel(TextKGEModel):
+	"""Bind text embedders to ``SimKGCScorer`` (``scorers`` length 1 by default)."""
 
-	from models.builder import build_model as assemble_model
+	def __init__(
+		self,
+		ent_embedder,
+		query_embedder,
+		scorers=None,
+		args=None,
+		contrastive_state=None,
+	):
+		if scorers is None:
+			scorers = [SimKGCScorer(args)]
+		super().__init__(
+			ent_embedder,
+			query_embedder,
+			scorers=scorers,
+			args=args,
+			contrastive_state=contrastive_state,
+		)
 
-	return assemble_model(args)
+	def query_encoder(self, h: torch.Tensor, r: torch.Tensor, **kwargs) -> torch.Tensor:
+		"""Joint text query from the HR encoder."""
+
+		del kwargs
+		return self.query_embedder.embed_hr(h, r)
+
+	def inverse_query_encoder(self, r: torch.Tensor, t: torch.Tensor, **kwargs) -> torch.Tensor:
+		raise NotImplementedError('SimKGC does not define an inverse query encoder')
