@@ -68,5 +68,8 @@
 
   "normalize_lp_scores": true,
   "lp_distance_degree": 2,
-  "valid_metric": "cosine"
+  "valid_metric": "cosine",
+  "rank_weight": 1.0,
+  "rank_margin": 0.2,
+  "filter_false_negatives": true
 }

@@ -462,6 +462,8 @@ class KGAUStrategy(Evaluator):
 			)
 		if assume_unit_norm:
 			logger.info('KGAU assume_unit_norm: loss skips redundant L2 normalize (vectors normalized in model)')
+		rank_weight = _config_float(args, 'rank_weight', 0.0)
+		rank_margin = _config_float(args, 'rank_margin', 0.0)
 		self.criterion = KGAULoss(
 			gamma_q=_config_float(args, 'gamma_q', 1.0),
 			gamma_t=_config_float(args, 'gamma_t', 1.0),
@@ -476,6 +478,9 @@ class KGAUStrategy(Evaluator):
 			tuni_as_alpha=tuni_as_alpha,
 			max_uniformity_samples=int(_config_float(args, 'max_uniformity_samples', 1024)),
 			additive_margin=_config_float(args, 'additive_margin', 0.0),
+			rank_weight=rank_weight,
+			rank_margin=rank_margin,
+			filter_false_negatives=config_bool(args, 'filter_false_negatives', True),
 			alignment_mode=alignment_mode,
 			normalize_uniformity=bool(normalize_uniformity),
 			assume_unit_norm=assume_unit_norm,
@@ -483,6 +488,11 @@ class KGAUStrategy(Evaluator):
 			uniformity_full_pdist=config_bool(args, 'uniformity_full_pdist', False),
 			uniformity_pdist_gb=getattr(args, 'uniformity_pdist_gb', None),
 		).to(self.device)
+		if rank_weight > 0.0:
+			logger.info(
+				'KGAU margin-hinge ranking: weight=%.4f margin=%.4f filter_false_negatives=%s',
+				rank_weight, rank_margin, config_bool(args, 'filter_false_negatives', True),
+			)
 		if config_bool(args, 'average_uniformity_terms', False):
 			logger.info('KGAU average_uniformity_terms: enabled (sum active terms / count)')
 		if config_bool(args, 'uniformity_full_pdist', False):
@@ -855,17 +865,17 @@ class KGAUStrategy(Evaluator):
 		h_keys: torch.Tensor,
 		*,
 		batch_triples: torch.Tensor | None = None,
-	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int, int, float]:
+	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int, int, float]:
 		"""KGAU loss with deduplicated uniformity inputs (by entity/relation id keys)."""
 
 		q_uni, t_uni, h_uni, n_unique_q, n_unique_t = self._distinct_uniformity_inputs(
 			q_raw, t_raw, h_raw, q_keys, t_keys, h_keys)
 		cross_uni = self._cross_uniformity_vectors(q_raw, t_raw, q_keys, t_keys)
-		au_loss, l_align, l_unif, margin_active_frac = self.criterion(
+		au_loss, l_align, l_unif, margin_active_frac, l_rank = self.criterion(
 			q_raw, t_raw, h_raw, ent_raw, q_uni=q_uni, t_uni=t_uni, h_uni=h_uni,
-			cross_uni=cross_uni, return_stats=True)
+			cross_uni=cross_uni, q_keys=q_keys, t_keys=t_keys, return_stats=True)
 		loss, l_reg = self._apply_embedding_regularization(au_loss, batch_triples=batch_triples)
-		return loss, l_align, l_unif, l_reg, n_unique_q, n_unique_t, margin_active_frac
+		return loss, l_align, l_unif, l_rank, l_reg, n_unique_q, n_unique_t, margin_active_frac
 
 	def _batch_entity_uniformity_vectors(
 		self,
@@ -1070,7 +1080,7 @@ class KGAUStrategy(Evaluator):
 		use_amp: bool,
 		*,
 		predict_head: bool = False,
-	) -> tuple[float, float, float, float, float, int, int, float, int]:
+	) -> tuple[float, float, float, float, float, float, int, int, float, int]:
 		"""Run one optimizer step on a head/relation/tail batch.
 
 		Non-DaBR encoders use a single forward/backward over the full batch (unchanged).
@@ -1261,7 +1271,7 @@ class KGAUStrategy(Evaluator):
 		total: int,
 		*,
 		predict_head: bool = False,
-	) -> tuple[float, float, float, float, float, int, int, float, int]:
+	) -> tuple[float, float, float, float, float, float, int, int, float, int]:
 		"""Full-batch training step (DistMult-AU, ComplEx-AU, RotatE-AU, etc.)."""
 
 		self.optimizer.zero_grad()
@@ -1274,7 +1284,7 @@ class KGAUStrategy(Evaluator):
 				ent_raw = self._entity_uniformity_vectors_for_loss(
 					model, h_raw, t_raw, h_keys, t_keys,
 					q_raw=q_raw, head_indices=ss, tail_indices=ts, predict_head=predict_head)
-				au_loss, l_align, l_unif, l_reg, _, _, margin_active = self._au_loss_with_distinct_keys(
+				au_loss, l_align, l_unif, l_rank, l_reg, _, _, margin_active = self._au_loss_with_distinct_keys(
 					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 				kge_parts = None
 				if self.au_hybrid_adversarial_bce:
@@ -1293,7 +1303,7 @@ class KGAUStrategy(Evaluator):
 			ent_raw = self._entity_uniformity_vectors_for_loss(
 				model, h_raw, t_raw, h_keys, t_keys,
 				q_raw=q_raw, head_indices=ss, tail_indices=ts, predict_head=predict_head)
-			au_loss, l_align, l_unif, l_reg, _, _, margin_active = self._au_loss_with_distinct_keys(
+			au_loss, l_align, l_unif, l_rank, l_reg, _, _, margin_active = self._au_loss_with_distinct_keys(
 				q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 			if self.au_hybrid_adversarial_bce:
 				kge_parts = self._hybrid_adversarial_bce_loss_parts(
@@ -1310,7 +1320,7 @@ class KGAUStrategy(Evaluator):
 			else au_loss.item()
 		)
 		return (
-			total_loss, l_align.item(), l_unif.item(), l_reg.item(), l_kge,
+			total_loss, l_align.item(), l_unif.item(), l_rank.item(), l_reg.item(), l_kge,
 			n_uq_log, n_ut_log, margin_active, total,
 		)
 
@@ -1327,12 +1337,13 @@ class KGAUStrategy(Evaluator):
 		micro_batch: int,
 		*,
 		predict_head: bool = False,
-	) -> tuple[float, float, float, float, float, int, int, float, int]:
+	) -> tuple[float, float, float, float, float, float, int, int, float, int]:
 		"""Gradient accumulation over micro-batches to avoid OOM on high-dim AU runs."""
 
 		loss_sum = 0.0
 		align_sum = 0.0
 		unif_sum = 0.0
+		rank_sum = 0.0
 		reg_sum = 0.0
 		margin_acc = 0.0
 		margin_batches = 0
@@ -1353,7 +1364,7 @@ class KGAUStrategy(Evaluator):
 						model, h_raw, t_raw, h_keys, t_keys,
 						q_raw=q_raw, head_indices=ss[start:end], tail_indices=ts[start:end],
 						predict_head=predict_head)
-					loss, l_align, l_unif, l_reg, _, _, margin_active = self._au_loss_with_distinct_keys(
+					loss, l_align, l_unif, l_rank, l_reg, _, _, margin_active = self._au_loss_with_distinct_keys(
 						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 				self._backward_au_loss(loss, fraction, use_amp=True)
 			else:
@@ -1364,13 +1375,14 @@ class KGAUStrategy(Evaluator):
 					model, h_raw, t_raw, h_keys, t_keys,
 					q_raw=q_raw, head_indices=ss[start:end], tail_indices=ts[start:end],
 					predict_head=predict_head)
-				loss, l_align, l_unif, l_reg, _, _, margin_active = self._au_loss_with_distinct_keys(
+				loss, l_align, l_unif, l_rank, l_reg, _, _, margin_active = self._au_loss_with_distinct_keys(
 					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 				self._backward_au_loss(loss, fraction, use_amp=False)
 			chunk = end - start
 			loss_sum += loss.item() * chunk
 			align_sum += l_align.item() * chunk
 			unif_sum += l_unif.item() * chunk
+			rank_sum += l_rank.item() * chunk
 			reg_sum += l_reg.item() * chunk
 			margin_acc += margin_active
 			margin_batches += 1
@@ -1379,7 +1391,8 @@ class KGAUStrategy(Evaluator):
 
 		avg_margin = (margin_acc / margin_batches) if margin_batches > 0 else 0.0
 		return (
-			loss_sum / total, align_sum / total, unif_sum / total, reg_sum / total, 0.0,
+			loss_sum / total, align_sum / total, unif_sum / total, rank_sum / total,
+			reg_sum / total, 0.0,
 			n_uq_log, n_ut_log, avg_margin, total,
 		)
 
@@ -1444,6 +1457,7 @@ class KGAUStrategy(Evaluator):
 		epoch_loss = 0.0
 		epoch_align_loss = 0.0
 		epoch_unif_loss = 0.0
+		epoch_rank_loss = 0.0
 		epoch_reg_loss = 0.0
 		epoch_kge_loss = 0.0
 		epoch_unique_q = 0.0
@@ -1471,7 +1485,7 @@ class KGAUStrategy(Evaluator):
 						h_raw = outputs['head_vector']
 						ent_raw = self._entity_uniformity_vectors_for_loss(
 							model, h_raw, t_raw, h_keys, t_keys)
-						loss, l_align, l_unif, l_reg, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
+						loss, l_align, l_unif, l_rank, l_reg, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
 							q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					self.scaler.scale(loss).backward()
 					self._optimizer_step(use_amp)
@@ -1482,7 +1496,7 @@ class KGAUStrategy(Evaluator):
 					h_raw = outputs['head_vector']
 					ent_raw = self._entity_uniformity_vectors_for_loss(
 						model, h_raw, t_raw, h_keys, t_keys)
-					loss, l_align, l_unif, l_reg, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
+					loss, l_align, l_unif, l_rank, l_reg, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
 						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
 					loss.backward()
 					self._optimizer_step(use_amp)
@@ -1490,6 +1504,7 @@ class KGAUStrategy(Evaluator):
 				losses.update(loss.item(), batch_examples)
 				epoch_align_loss += l_align.item() * batch_examples
 				epoch_unif_loss += l_unif.item() * batch_examples
+				epoch_rank_loss += l_rank.item() * batch_examples
 				epoch_reg_loss += l_reg.item() * batch_examples
 				epoch_loss += loss.item() * batch_examples
 				epoch_unique_q += n_uq
@@ -1504,11 +1519,12 @@ class KGAUStrategy(Evaluator):
 				for batch_idx, (ss, rs, ts) in enumerate(
 					self._iter_batches(self.train_src, self.train_rel, self.train_dst, batch_size, shuffle=True),
 				):
-					loss, l_align, l_unif, l_reg, l_kge, n_uq, n_ut, margin_active, n_examples = self._train_au_tensor_batch(
+					loss, l_align, l_unif, l_rank, l_reg, l_kge, n_uq, n_ut, margin_active, n_examples = self._train_au_tensor_batch(
 						model, ss, rs, ts, use_amp, predict_head=predict_head,
 					)
 					epoch_align_loss += l_align * n_examples
 					epoch_unif_loss += l_unif * n_examples
+					epoch_rank_loss += l_rank * n_examples
 					epoch_reg_loss += l_reg * n_examples
 					epoch_kge_loss += l_kge * n_examples
 					epoch_loss += loss * n_examples
@@ -1521,9 +1537,10 @@ class KGAUStrategy(Evaluator):
 		avg_loss = epoch_loss / avg_count
 		avg_align_loss = epoch_align_loss / avg_count
 		avg_unif_loss = epoch_unif_loss / avg_count
+		avg_rank_loss = epoch_rank_loss / avg_count
 		avg_reg_loss = epoch_reg_loss / avg_count
 		avg_kge_loss = epoch_kge_loss / avg_count
-		avg_au_loss = avg_align_loss + avg_unif_loss
+		avg_au_loss = avg_align_loss + avg_unif_loss + avg_rank_loss
 		display_epoch = epoch + 1
 		if epoch_batches > 0:
 			avg_margin_active = epoch_margin_active / epoch_batches
@@ -1539,24 +1556,29 @@ class KGAUStrategy(Evaluator):
 			self._should_log_gammas() or self._should_log_alpha()
 		) else ''
 		micro_suffix = self._micro_batch_epoch_suffix(batch_size)
+		rank_suffix = ''
+		if float(self.criterion.rank_weight) > 0.0:
+			rank_suffix = f' | rank: {avg_rank_loss:.6f}'
 		if float(self.criterion.additive_margin) > 0.0:
 			logger.info(
 				'[EPOCH %s] train loss: %.6f | au: %.6f | align: %.6f | uniformity: %.6f | reg: %.6f | '
-				'kge: %.6f | unique q/t per batch: %.0f/%.0f (of %d) | margin-buffer pairs: %.2f%%%s%s',
+				'kge: %.6f | unique q/t per batch: %.0f/%.0f (of %d) | margin-buffer pairs: %.2f%%%s%s%s',
 				display_epoch, avg_loss, avg_au_loss, avg_align_loss, avg_unif_loss, avg_reg_loss,
 				avg_kge_loss,
 				avg_unique_q, avg_unique_t, batch_size,
 				100.0 * avg_margin_active,
+				rank_suffix,
 				tuni_suffix + gamma_suffix,
 				micro_suffix,
 			)
 		else:
 			logger.info(
 				'[EPOCH %s] train loss: %.6f | au: %.6f | align: %.6f | uniformity: %.6f | reg: %.6f | '
-				'kge: %.6f | unique q/t per batch: %.0f/%.0f (of %d)%s%s',
+				'kge: %.6f | unique q/t per batch: %.0f/%.0f (of %d)%s%s%s',
 				display_epoch, avg_loss, avg_au_loss, avg_align_loss, avg_unif_loss, avg_reg_loss,
 				avg_kge_loss,
 				avg_unique_q, avg_unique_t, batch_size,
+				rank_suffix,
 				tuni_suffix + gamma_suffix,
 				micro_suffix,
 			)
@@ -1565,6 +1587,7 @@ class KGAUStrategy(Evaluator):
 			'au': avg_au_loss,
 			'align': avg_align_loss,
 			'uniformity': avg_unif_loss,
+			'rank': avg_rank_loss,
 			'reg': avg_reg_loss,
 			'kge': avg_kge_loss,
 			'num_examples': avg_count,

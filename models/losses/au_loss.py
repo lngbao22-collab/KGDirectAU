@@ -60,6 +60,9 @@ class KGAULoss(nn.Module):
 		tuni_as_alpha: bool = False,
 		max_uniformity_samples: int = 1024,
 		additive_margin: float = 0.0,
+		rank_weight: float = 0.0,
+		rank_margin: float = 0.0,
+		filter_false_negatives: bool = True,
 		alignment_mode: str = 'cosine',
 		normalize_uniformity: bool = True,
 		assume_unit_norm: bool = False,
@@ -74,6 +77,10 @@ class KGAULoss(nn.Module):
 		self.tuni_as_alpha = bool(tuni_as_alpha)
 		self.learnable_au_alpha = bool(learnable_au_alpha)
 		self.learnable_au_gammas = bool(learnable_au_gammas)
+		# In-batch ranking: mean ReLU(d_pos - d_neg + m); 0 weight disables.
+		self.rank_weight = _coalesce_float(rank_weight, 0.0)
+		self.rank_margin = _coalesce_float(rank_margin, 0.0)
+		self.filter_false_negatives = bool(filter_false_negatives)
 		alpha_init = _coalesce_float(alpha, 1.0)
 		self.register_buffer('alpha_init', torch.tensor(alpha_init))
 		if not self.learnable_au_alpha:
@@ -442,6 +449,100 @@ class KGAULoss(nn.Module):
 			)
 		return self.alignment_loss(q, t)
 
+	def _pairwise_align_distance(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+		"""Pairwise alignment distances ``d[i, j] = dist(q_i, t_j)`` in the active geometry."""
+
+		if self.alignment_mode == 'sin_phase':
+			residual = q.unsqueeze(1) - t.unsqueeze(0)
+			return torch.abs(torch.sin(residual)).sum(dim=-1)
+		if self.alignment_mode == 'phase_residual':
+			return (q.unsqueeze(1) - t.unsqueeze(0)).pow(2).sum(dim=-1)
+		if self.alignment_mode == 'dabr_blocks':
+			mid = q.size(-1) // 2
+			if mid > 0 and mid * 2 == q.size(-1):
+				q1 = F.normalize(q[..., :mid], p=2, dim=-1)
+				t1 = F.normalize(t[..., :mid], p=2, dim=-1)
+				q2 = F.normalize(q[..., mid:], p=2, dim=-1)
+				t2 = F.normalize(t[..., mid:], p=2, dim=-1)
+				return (
+					(q1.unsqueeze(1) - t1.unsqueeze(0)).pow(2).sum(dim=-1)
+					+ (q2.unsqueeze(1) - t2.unsqueeze(0)).pow(2).sum(dim=-1)
+				)
+		q_n = self._l2_normalize_if_needed(q)
+		t_n = self._l2_normalize_if_needed(t)
+		return (q_n.unsqueeze(1) - t_n.unsqueeze(0)).pow(2).sum(dim=-1)
+
+	@staticmethod
+	def _keys_equal_matrix(keys: torch.Tensor) -> torch.Tensor:
+		"""Boolean matrix ``same[i, j]`` when ``keys[i]`` equals ``keys[j]``."""
+
+		if keys.dim() == 1:
+			return keys.unsqueeze(0) == keys.unsqueeze(1)
+		return (keys.unsqueeze(0) == keys.unsqueeze(1)).all(dim=-1)
+
+	def _ranking_negative_mask(
+		self,
+		batch_size: int,
+		device: torch.device,
+		q_keys: torch.Tensor | None = None,
+		t_keys: torch.Tensor | None = None,
+		negative_mask: torch.Tensor | None = None,
+	) -> torch.Tensor:
+		"""True where ``(i, j)`` is an in-batch negative for query ``i``.
+
+		Always drops the diagonal. When ``filter_false_negatives`` is set and keys are
+		provided, also drops same-query duplicates and same-target-entity columns.
+		``negative_mask`` (if given) overrides key-based filtering; diagonal is still dropped.
+		"""
+
+		if negative_mask is not None:
+			mask = negative_mask.to(device=device, dtype=torch.bool)
+			if mask.shape != (batch_size, batch_size):
+				raise ValueError(
+					f'negative_mask shape {tuple(mask.shape)} != ({batch_size}, {batch_size})'
+				)
+			return mask & ~torch.eye(batch_size, dtype=torch.bool, device=device)
+
+		mask = ~torch.eye(batch_size, dtype=torch.bool, device=device)
+		if not self.filter_false_negatives:
+			return mask
+		if q_keys is not None:
+			mask = mask & ~self._keys_equal_matrix(q_keys.to(device=device))
+		if t_keys is not None:
+			t_flat = t_keys.to(device=device).reshape(batch_size, -1)
+			if t_flat.size(-1) == 1:
+				t_flat = t_flat.squeeze(-1)
+				mask = mask & ~self._keys_equal_matrix(t_flat)
+			else:
+				mask = mask & ~self._keys_equal_matrix(t_flat)
+		return mask
+
+	def margin_hinge_ranking_loss(
+		self,
+		q: torch.Tensor,
+		t: torch.Tensor,
+		q_keys: torch.Tensor | None = None,
+		t_keys: torch.Tensor | None = None,
+		negative_mask: torch.Tensor | None = None,
+	) -> torch.Tensor:
+		"""In-batch margin hinge ranking.
+
+		``mean_{j in Neg(i)} ReLU(d(q_i, t_i) - d(q_i, t_j) + m)``, which matches
+		``(1/B) sum_i (1/|Neg(i)|) sum_{j in Neg(i)} ...`` when every row has the
+		same number of negatives (full off-diagonal mask).
+		"""
+
+		if q.size(0) < 2:
+			return q.new_zeros(())
+		dist = self._pairwise_align_distance(q, t)
+		d_pos = dist.diag()
+		violation = d_pos.unsqueeze(1) - dist + self.rank_margin
+		mask = self._ranking_negative_mask(
+			q.size(0), q.device, q_keys=q_keys, t_keys=t_keys, negative_mask=negative_mask)
+		if not bool(mask.any()):
+			return q.new_zeros(())
+		return F.relu(violation.masked_select(mask)).mean()
+
 	def forward(
 		self,
 		q: torch.Tensor,
@@ -453,13 +554,20 @@ class KGAULoss(nn.Module):
 		h_uni: torch.Tensor | None = None,
 		cross_uni: torch.Tensor | None = None,
 		external_align: torch.Tensor | None = None,
+		q_keys: torch.Tensor | None = None,
+		t_keys: torch.Tensor | None = None,
+		rank_negative_mask: torch.Tensor | None = None,
 		return_stats: bool = False,
 	):
 		"""Return the total AU loss together with alignment and uniformity terms.
 
 		Each uniformity term is computed exactly once. When ``return_stats`` is
 		True, also return the gamma-weighted fraction of query/target pairs that
-		fall inside the margin buffer (only meaningful when ``additive_margin`` > 0).
+		fall inside the margin buffer (only meaningful when ``additive_margin`` > 0)
+		and the weighted ranking term.
+
+		When ``rank_weight`` > 0, adds in-batch margin-hinge ranking on ``(q, t)``;
+		``q_keys`` / ``t_keys`` / ``rank_negative_mask`` only affect that term.
 		"""
 
 		l_align = self._effective_alpha() * self._raw_alignment_loss(q, t, external_align=external_align)
@@ -507,15 +615,20 @@ class KGAULoss(nn.Module):
 		if self.average_uniformity_terms and uniform_count > 0:
 			l_unif = l_unif / uniform_count
 
+		l_rank = q.new_zeros(())
+		if float(self.rank_weight) > 0.0:
+			l_rank = self.rank_weight * self.margin_hinge_ranking_loss(
+				q, t, q_keys=q_keys, t_keys=t_keys, negative_mask=rank_negative_mask)
+
 		if float(self.additive_margin) > 0.0 and active_weight > 0:
 			margin_active_frac = active_sum / active_weight
 		else:
 			margin_active_frac = 0.0
 
-		total_loss = l_align + l_unif
+		total_loss = l_align + l_unif + l_rank
 		if return_stats:
-			return total_loss, l_align, l_unif, margin_active_frac
-		return total_loss, l_align, l_unif
+			return total_loss, l_align, l_unif, margin_active_frac, l_rank
+		return total_loss, l_align, l_unif, l_rank
 
 
 def compute_loss(args):

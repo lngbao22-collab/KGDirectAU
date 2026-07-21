@@ -91,6 +91,18 @@ def build_parser() -> argparse.ArgumentParser:
     # Hyperparameters and settings.
     parser.add_argument('--additive-margin', default=None, type=float,
                         help='additive margin for contrastive loss and AU loss')
+    parser.add_argument('--rank-weight', '--rank_weight', default=None, type=float,
+                        dest='rank_weight',
+                        help='KGAU in-batch margin-hinge ranking weight (0 disables)')
+    parser.add_argument('--rank-margin', '--rank_margin', default=None, type=float,
+                        dest='rank_margin',
+                        help='margin m in ReLU(d_pos - d_neg + m) for KGAU ranking')
+    parser.add_argument('--filter-false-negatives', '--filter_false_negatives',
+                        dest='filter_false_negatives', action='store_true', default=None,
+                        help='drop same-query / same-target in-batch pairs from ranking')
+    parser.add_argument('--no-filter-false-negatives', '--no_filter_false_negatives',
+                        dest='filter_false_negatives', action='store_false',
+                        help='use all off-diagonal in-batch pairs as ranking negatives')
     parser.add_argument('-b', '--batch-size', default=None, type=int,
                         help='mini-batch size')
     parser.add_argument('--dim', default=None, type=int,
