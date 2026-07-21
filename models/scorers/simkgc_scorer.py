@@ -5,7 +5,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from base.kge_scorer import KGEScorer
+from base.model import KGEScorer
 
 
 class ContrastiveTrainingState(nn.Module):
@@ -52,7 +52,7 @@ class SimKGCScorer(KGEScorer):
 		super().__init__()
 		self.args = args
 
-	def score_spo(
+	def score_hrt(
 		self,
 		q_emb: torch.Tensor,
 		_r_emb: torch.Tensor,
@@ -60,7 +60,7 @@ class SimKGCScorer(KGEScorer):
 	) -> torch.Tensor:
 		return torch.sum(q_emb * t_emb, dim=-1)
 
-	def score_sp_(
+	def score_hr_(
 		self,
 		q_emb: torch.Tensor,
 		_r_emb: torch.Tensor,

@@ -20,7 +20,7 @@ from metrics.ranking import ranking_metrics_from_ranks, ranks_from_score_matrix
 from metrics.classification import classification_metrics, find_global_threshold
 from models.losses.bce_loss import bce_logit_offset
 
-from base.embeddings import (
+from base.model import (
 	build_forward_to_inverse_index_tensor,
 	resolve_head_eval_mode,
 	uses_forward_examples_for_backward_eval,
@@ -190,7 +190,7 @@ def _supports_kge_1vsall_eval(model) -> bool:
 	model_obj = get_model_obj(model)
 	if getattr(model_obj, 'training_input_mode', 'indices') == 'tokens':
 		return False
-	return hasattr(model_obj, 'predict_tail_sp_') or isinstance(model_obj, KGEModel)
+	return hasattr(model_obj, 'predict_tail_hr_') or isinstance(model_obj, KGEModel)
 
 
 def _supports_simkgc_link_eval(model) -> bool:
@@ -236,7 +236,7 @@ def _build_filter_index_maps(all_triplet_dict, entity_dict, relation_lookup) -> 
 	"""Build filtered-evaluation maps over integer (h, r) and (r, t) keys."""
 
 	entity_to_idx = entity_dict.entity2idx
-	sp_to_tails: dict[tuple[int, int], list[int]] = {}
+	hr_to_tails: dict[tuple[int, int], list[int]] = {}
 	for (head_id, relation), tail_ids in all_triplet_dict.hr2tails.items():
 		try:
 			h_idx = entity_to_idx[head_id]
@@ -245,9 +245,9 @@ def _build_filter_index_maps(all_triplet_dict, entity_dict, relation_lookup) -> 
 			continue
 		tails = [entity_to_idx[tail_id] for tail_id in tail_ids if tail_id in entity_to_idx]
 		if tails:
-			sp_to_tails[(h_idx, r_idx)] = tails
+			hr_to_tails[(h_idx, r_idx)] = tails
 
-	po_to_heads: dict[tuple[int, int], list[int]] = {}
+	rt_to_heads: dict[tuple[int, int], list[int]] = {}
 	for (relation, tail_id), head_ids in all_triplet_dict.rt2heads.items():
 		try:
 			r_idx = relation_lookup(relation)
@@ -256,8 +256,8 @@ def _build_filter_index_maps(all_triplet_dict, entity_dict, relation_lookup) -> 
 			continue
 		heads = [entity_to_idx[head_id] for head_id in head_ids if head_id in entity_to_idx]
 		if heads:
-			po_to_heads[(r_idx, t_idx)] = heads
-	return sp_to_tails, po_to_heads
+			rt_to_heads[(r_idx, t_idx)] = heads
+	return hr_to_tails, rt_to_heads
 
 
 def _apply_filter_mask(
@@ -310,15 +310,15 @@ def _evaluate_kge_1vsall_batch(
 	h_idx: torch.Tensor,
 	r_idx: torch.Tensor,
 	t_idx: torch.Tensor,
-	sp_filter: dict[tuple[int, int], list[int]],
-	po_filter: dict[tuple[int, int], list[int]],
+	hr_filter: dict[tuple[int, int], list[int]],
+	rt_filter: dict[tuple[int, int], list[int]],
 	*,
 	head_eval_mode: str,
 	filter_known: bool,
 	all_entity_embs: torch.Tensor | None = None,
 	inverse_map: torch.Tensor | None = None,
 ) -> list[int]:
-	"""Score and rank one batch with full-matrix ``sp_`` or ``_po`` broadcasting."""
+	"""Score and rank one batch with full-matrix ``hr_`` or ``_rt`` broadcasting."""
 
 	device = next(model.parameters()).device
 	h_idx = h_idx.to(device)
@@ -326,26 +326,26 @@ def _evaluate_kge_1vsall_batch(
 	t_idx = t_idx.to(device)
 
 	if head_eval_mode == 'tail':
-		scores = model.predict_tail_sp_(h_idx, r_idx, all_o_embs=all_entity_embs)
+		scores = model.predict_tail_hr_(h_idx, r_idx, all_t_embs=all_entity_embs)
 		if filter_known:
-			scores = _apply_filter_mask(scores, h_idx, r_idx, t_idx, sp_filter, predict_head=False)
+			scores = _apply_filter_mask(scores, h_idx, r_idx, t_idx, hr_filter, predict_head=False)
 		target_indices = t_idx
-	elif head_eval_mode == 'po_forward':
-		scores = model.predict_head_po_(r_idx, t_idx, all_s_embs=all_entity_embs)
+	elif head_eval_mode == 'rt_forward':
+		scores = model.predict_head_rt_(r_idx, t_idx, all_h_embs=all_entity_embs)
 		if filter_known:
-			scores = _apply_filter_mask(scores, h_idx, r_idx, t_idx, po_filter, predict_head=True)
+			scores = _apply_filter_mask(scores, h_idx, r_idx, t_idx, rt_filter, predict_head=True)
 		target_indices = h_idx
-	elif head_eval_mode == 'po_inverse':
+	elif head_eval_mode == 'rt_inverse':
 		r_inv = _map_forward_relations_to_inverse(r_idx, inverse_map, device)
-		scores = model.predict_head_po_(r_inv, t_idx, all_s_embs=all_entity_embs)
+		scores = model.predict_head_rt_(r_inv, t_idx, all_h_embs=all_entity_embs)
 		if filter_known:
-			scores = _apply_filter_mask(scores, h_idx, r_idx, t_idx, po_filter, predict_head=True)
+			scores = _apply_filter_mask(scores, h_idx, r_idx, t_idx, rt_filter, predict_head=True)
 		target_indices = h_idx
-	elif head_eval_mode == 'sp_inverse':
+	elif head_eval_mode == 'hr_inverse':
 		r_inv = _map_forward_relations_to_inverse(r_idx, inverse_map, device)
-		scores = model.predict_tail_sp_(t_idx, r_inv, all_o_embs=all_entity_embs)
+		scores = model.predict_tail_hr_(t_idx, r_inv, all_t_embs=all_entity_embs)
 		if filter_known:
-			scores = _apply_filter_mask(scores, h_idx, r_idx, t_idx, po_filter, predict_head=True)
+			scores = _apply_filter_mask(scores, h_idx, r_idx, t_idx, rt_filter, predict_head=True)
 		target_indices = h_idx
 	else:
 		raise ValueError(f'Unsupported head_eval_mode: {head_eval_mode}')
@@ -496,10 +496,10 @@ def _evaluate_kge_link_prediction(
 	eval_args = args if args is not None else global_args
 	head_eval_mode = resolve_head_eval_mode(eval_args, eval_forward=eval_forward)
 	relation_lookup = _relation_lookup(model)
-	sp_filter, po_filter = _build_filter_index_maps(get_all_triplet_dict(), entity_dict, relation_lookup)
+	hr_filter, rt_filter = _build_filter_index_maps(get_all_triplet_dict(), entity_dict, relation_lookup)
 	scoring_examples = (
 		_coerce_forward_examples(examples)
-		if head_eval_mode in {'po_forward', 'po_inverse', 'sp_inverse'}
+		if head_eval_mode in {'rt_forward', 'rt_inverse', 'hr_inverse'}
 		else list(examples)
 	)
 	h_all, r_all, t_all = _examples_to_query_index_tensors(scoring_examples, entity_dict, model)
@@ -507,7 +507,7 @@ def _evaluate_kge_link_prediction(
 		logger.info('[EVAL] Encoding %d entities for link prediction (%s)...', len(entity_dict.entity_exs), head_eval_mode)
 		all_entity_embs = model.embed_all_entities()
 	inverse_map = None
-	if head_eval_mode in {'po_inverse', 'sp_inverse'}:
+	if head_eval_mode in {'rt_inverse', 'hr_inverse'}:
 		rel_to_idx = getattr(model, 'rel_to_idx', None) or {}
 		inverse_map = build_forward_to_inverse_index_tensor(rel_to_idx)
 
@@ -520,8 +520,8 @@ def _evaluate_kge_link_prediction(
 			h_all[start:end],
 			r_all[start:end],
 			t_all[start:end],
-			sp_filter,
-			po_filter,
+			hr_filter,
+			rt_filter,
 			head_eval_mode=head_eval_mode,
 			filter_known=filter_known,
 			all_entity_embs=all_entity_embs,
@@ -754,17 +754,17 @@ def _score_triple_classification_batch(
 			[ex.relation for ex in batch],
 			[ex.tail_id for ex in batch],
 		)
-	elif hasattr(model_obj, 'score_spo'):
+	elif hasattr(model_obj, 'score_hrt'):
 		h_idx, r_idx, t_idx = _examples_to_query_index_tensors(batch, entity_dict, model_obj)
 		device = next(model_obj.parameters()).device
-		scores = model_obj.score_spo(
+		scores = model_obj.score_hrt(
 			h_idx.to(device),
 			r_idx.to(device),
 			t_idx.to(device),
 		)
 	else:
 		raise ModelInterfaceError(
-			'Model must expose score_batch or score_spo for index-based triple classification.'
+			'Model must expose score_batch or score_hrt for index-based triple classification.'
 		)
 
 	if not isinstance(scores, torch.Tensor):
@@ -792,7 +792,7 @@ def _should_use_index_triple_classification(model, args) -> bool:
 	return (
 		isinstance(model_obj, KGEModel)
 		or hasattr(model_obj, 'score_batch')
-		or hasattr(model_obj, 'score_spo')
+		or hasattr(model_obj, 'score_hrt')
 	)
 
 
@@ -1036,7 +1036,7 @@ class Evaluator:
         elif not _bert_encoder_configured(tc_args):
             raise ModelInterfaceError(
                 f'Model {getattr(tc_args, "model", "?")} cannot run text triple classification: '
-                'bert_encoder is empty and the loaded model has no score_spo/score_batch.'
+                'bert_encoder is empty and the loaded model has no score_hrt/score_batch.'
             )
         else:
             with torch.no_grad():
@@ -1368,7 +1368,7 @@ class Evaluator:
         elif not _bert_encoder_configured(tc_args):
             raise ModelInterfaceError(
                 f'Model {getattr(tc_args, "model", "?")} cannot run text triple classification: '
-                'bert_encoder is empty and the loaded model has no score_spo/score_batch.'
+                'bert_encoder is empty and the loaded model has no score_hrt/score_batch.'
             )
         else:
             for i in range(0, len(test_exs), batch_size):
@@ -1396,7 +1396,7 @@ class Evaluator:
                 elif not _bert_encoder_configured(tc_args):
                     raise ModelInterfaceError(
                         f'Model {getattr(tc_args, "model", "?")} cannot run text triple classification: '
-                        'bert_encoder is empty and the loaded model has no score_spo/score_batch.'
+                        'bert_encoder is empty and the loaded model has no score_hrt/score_batch.'
                     )
                 else:
                     valid_y_prob = []

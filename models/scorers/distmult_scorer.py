@@ -2,7 +2,7 @@
 
 import torch
 
-from base.kge_scorer import KGEScorer
+from base.model import KGEScorer
 
 
 def build_scorer(args) -> 'DistMultScorer':
@@ -18,17 +18,17 @@ class DistMultScorer(KGEScorer):
 		super().__init__()
 		self.args = args
 
-	def score_spo(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def score_hrt(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Return standard DistMult scores for matching batches of triples."""
 
 		return torch.sum(h_emb * r_emb * t_emb, dim=-1)
 
-	def score_po(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def score_rt(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Return DistMult scores for head candidates with fixed (relation, tail)."""
 
-		return self.score_spo(h_emb, r_emb, t_emb)
+		return self.score_hrt(h_emb, r_emb, t_emb)
 
-	def score_spo_candidates(
+	def score_hrt_candidates(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -39,7 +39,7 @@ class DistMultScorer(KGEScorer):
 		query = h_emb * r_emb
 		return torch.bmm(query.unsqueeze(1), t_emb.transpose(1, 2)).squeeze(1)
 
-	def score_po_candidates(
+	def score_rt_candidates(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -50,12 +50,12 @@ class DistMultScorer(KGEScorer):
 		query = t_emb * r_emb
 		return torch.bmm(query.unsqueeze(1), h_emb.transpose(1, 2)).squeeze(1)
 
-	def score_sp_(self, h_emb: torch.Tensor, r_emb: torch.Tensor, all_t_embs: torch.Tensor) -> torch.Tensor:
-		"""Return 1-vs-all DistMult scores using LibKGE-style sp_ broadcasting."""
+	def score_hr_(self, h_emb: torch.Tensor, r_emb: torch.Tensor, all_t_embs: torch.Tensor) -> torch.Tensor:
+		"""Return 1-vs-all DistMult scores using LibKGE-style hr_ broadcasting."""
 
 		return torch.mm(h_emb * r_emb, all_t_embs.t())
 
-	def score_po_(self, all_h_embs: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def score_rt_(self, all_h_embs: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Return 1-vs-all DistMult head scores for each (relation, tail) query."""
 
 		return torch.mm(t_emb * r_emb, all_h_embs.t())

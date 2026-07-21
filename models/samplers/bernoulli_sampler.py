@@ -83,7 +83,7 @@ def _resolve_nrelation(args, model) -> int:
 			return int(rel_emb.embedding.num_embeddings)
 		if hasattr(rel_emb, 'rel_re'):
 			return int(rel_emb.rel_re.num_items)
-	from base.embeddings import load_relation_to_idx
+	from base.model import load_relation_to_idx
 	return max(len(load_relation_to_idx(args)), 1)
 
 

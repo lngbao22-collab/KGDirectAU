@@ -2,7 +2,7 @@
 
 import torch
 
-from base.kge_scorer import KGEScorer
+from base.model import KGEScorer
 
 
 def build_scorer(args) -> 'ComplExScorer':
@@ -24,7 +24,7 @@ class ComplExScorer(KGEScorer):
 
 		return torch.chunk(embeddings, 2, dim=-1)
 
-	def score_spo(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def score_hrt(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Return standard ComplEx scores for matching batches of triples."""
 
 		h_re, h_im = self._split_complex(h_emb)
@@ -34,12 +34,12 @@ class ComplExScorer(KGEScorer):
 		query_im = h_re * r_im + h_im * r_re
 		return torch.sum(query_re * t_re + query_im * t_im, dim=-1)
 
-	def score_po(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def score_rt(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Return ComplEx scores for head candidates with fixed (relation, tail)."""
 
-		return self.score_spo(h_emb, r_emb, t_emb)
+		return self.score_hrt(h_emb, r_emb, t_emb)
 
-	def score_spo_candidates(
+	def score_hrt_candidates(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -57,7 +57,7 @@ class ComplExScorer(KGEScorer):
 			+ torch.bmm(query_im.unsqueeze(1), t_im.transpose(1, 2)).squeeze(1)
 		)
 
-	def score_po_candidates(
+	def score_rt_candidates(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -75,8 +75,8 @@ class ComplExScorer(KGEScorer):
 			+ torch.bmm(query_im.unsqueeze(1), h_im.transpose(1, 2)).squeeze(1)
 		)
 
-	def score_sp_(self, h_emb: torch.Tensor, r_emb: torch.Tensor, all_t_embs: torch.Tensor) -> torch.Tensor:
-		"""Return ComplEx scores using LibKGE-style sp_ broadcasting."""
+	def score_hr_(self, h_emb: torch.Tensor, r_emb: torch.Tensor, all_t_embs: torch.Tensor) -> torch.Tensor:
+		"""Return ComplEx scores using LibKGE-style hr_ broadcasting."""
 
 		h_re, h_im = self._split_complex(h_emb)
 		r_re, r_im = self._split_complex(r_emb)
@@ -85,7 +85,7 @@ class ComplExScorer(KGEScorer):
 		query_im = h_re * r_im + h_im * r_re
 		return torch.mm(query_re, t_re.t()) + torch.mm(query_im, t_im.t())
 
-	def score_po_(self, all_h_embs: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def score_rt_(self, all_h_embs: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Return ComplEx head scores for each (relation, tail) query."""
 
 		h_re, h_im = self._split_complex(all_h_embs)

@@ -369,7 +369,7 @@ def compute_margin_broadcast_loss(
 ) -> torch.Tensor:
     """Compute margin ranking over positive-vs-negative entity pairs for broadcast scores.
 
-    :param scores: ``[batch_size, num_entities]`` logits from ``score_sp_()`` / ``score_po_()``
+    :param scores: ``[batch_size, num_entities]`` logits from ``score_hr_()`` / ``score_rt_()``
     :param targets: ``[batch_size]`` entity indices (1vsAll) or ``[batch_size, num_entities]`` multi-hot labels (KvsAll)
     :param margin: Margin hyperparameter (LibKGE ``train.loss_arg`` for margin_ranking)
     :param reduction: ``mean`` (1vsAll default) or ``sum`` (KvsAll default; strategy divides by batch size)

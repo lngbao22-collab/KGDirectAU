@@ -6,14 +6,14 @@
   "model_strategy_path": "models/strategies/kgau_strategy.py",
   "model_sampler_path": "",
 
-  "head_eval_mode": "sp_inverse",
+  "head_eval_mode": "hr_inverse",
 
   "kgau_bidirectional": false,
   "uniformity_full_pdist": false,
   "max_uniformity_samples": 0,
   "normalize_au_vectors": true,
-  "gamma_q": 0.0,
-  "gamma_t": 0.0,
+  "gamma_q": 1.0,
+  "gamma_t": 1.0,
   "gamma_h": 0.0,
   "gamma_ent": 1.0,
   "gamma_cross": 0.0,

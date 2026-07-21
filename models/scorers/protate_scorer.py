@@ -5,7 +5,7 @@ import math
 import torch
 import torch.nn as nn
 
-from base.kge_scorer import KGEScorer
+from base.model import KGEScorer
 
 
 def build_scorer(args) -> 'pRotatEScorer':
@@ -81,19 +81,19 @@ class pRotatEScorer(KGEScorer):
 		# squeeze: KGE stores modulus as [[m]]; keep broadcast-safe for [B] and [B, N].
 		return self.margin - torch.abs(torch.sin(phase)).sum(dim=-1) * self.modulus.squeeze()
 
-	def score_spo(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def score_hrt(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Return standard pRotatE tail scores for matching batches of triples."""
 
 		phase = self._phase(h_emb) + self._phase(r_emb) - self._phase(t_emb)
 		return self._score_phase(phase)
 
-	def score_po(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def score_rt(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Return standard pRotatE head scores for matching batches of triples."""
 
 		phase = self._phase(h_emb) + (self._phase(r_emb) - self._phase(t_emb))
 		return self._score_phase(phase)
 
-	def score_spo_candidates(
+	def score_hrt_candidates(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -108,7 +108,7 @@ class pRotatEScorer(KGEScorer):
 		)
 		return self._score_phase(phase)
 
-	def score_po_candidates(
+	def score_rt_candidates(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -121,7 +121,7 @@ class pRotatEScorer(KGEScorer):
 		)
 		return self._score_phase(phase)
 
-	def score_sp_(self, h_emb: torch.Tensor, r_emb: torch.Tensor, all_t_embs: torch.Tensor) -> torch.Tensor:
+	def score_hr_(self, h_emb: torch.Tensor, r_emb: torch.Tensor, all_t_embs: torch.Tensor) -> torch.Tensor:
 		"""Return 1-vs-all pRotatE tail scores using raw tensor broadcasting."""
 
 		phase = (
@@ -131,8 +131,8 @@ class pRotatEScorer(KGEScorer):
 		)
 		return self._score_phase(phase)
 
-	def score_po_(self, all_h_embs: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-		"""Return 1-vs-all pRotatE head scores (LibKGE ``_po`` combine)."""
+	def score_rt_(self, all_h_embs: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+		"""Return 1-vs-all pRotatE head scores (LibKGE ``_rt`` combine)."""
 
 		phase = (
 			self._phase(all_h_embs).unsqueeze(0)

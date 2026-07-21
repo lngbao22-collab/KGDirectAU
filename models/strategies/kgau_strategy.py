@@ -10,14 +10,14 @@ import torch
 from torch import optim
 from torch.optim import Adam
 
-from base.embeddings import use_reciprocal_relations
+from base.model import use_reciprocal_relations
 from contextlib import nullcontext
 
 from base.evaluator import Evaluator, log_bidirectional_link_metrics, lp_score_mode_context
 from data.dataloader import collate
 from data.dataset import Dataset, load_data
 from data.dict_hub import get_entity_dict, get_relation_id_map
-from base.embeddings import compute_kge_regularization, embedding_l3_penalty
+from base.model import compute_kge_regularization, embedding_l3_penalty
 from models.builder import (
 	_kge_metric_value,
 	_kge_resolve_monitor_metric,
@@ -96,7 +96,7 @@ def _is_dabr_encoder(args) -> bool:
 def _build_relation_to_idx() -> dict[str, int]:
 	"""Build the relation->index map with distinct IDs for inverse relations."""
 
-	from base.embeddings import add_inverse_relations
+	from base.model import add_inverse_relations
 
 	base = {str(key): int(value) for key, value in get_relation_id_map().items()}
 	return add_inverse_relations(base)
@@ -388,7 +388,7 @@ class KGAUStrategy(Evaluator):
 			config_bool(args, 'kgau_bidirectional', False) and not self.uses_text_inputs
 		)
 		# GB-Magic-style head/tail batches use forward relation at eval; reciprocal triplets
-		# are only needed for sp_inverse training (legacy KGAU path).
+		# are only needed for hr_inverse training (legacy KGAU path).
 		add_backward_triplet = self.uses_text_inputs or (
 			use_reciprocal_relations(args) and not self.kgau_bidirectional
 		)
@@ -585,7 +585,7 @@ class KGAUStrategy(Evaluator):
 		if self.kgau_bidirectional:
 			logger.info(
 				'KGAU kgau_bidirectional: tail-batch + head-batch per epoch (GB-Magic); '
-				'head eval uses po_forward',
+				'head eval uses rt_forward',
 			)
 		if self.criterion.gamma_active('ent') and self.uses_text_inputs:
 			ent_mode = 'deduplicated' if self.au_deduplicate else 'all batch'
@@ -947,8 +947,8 @@ class KGAUStrategy(Evaluator):
 				# table (pRotatE-AU). Relation-composed encoders (DaBR-AU, TransERR-AU)
 				# must reuse batch q/t AU vectors so uniformity matches alignment space.
 				if scorer is not None and hasattr(scorer, 'au_entity_embeddings'):
-					h_ent = model_obj.embed_s(head_indices)
-					t_ent = model_obj.embed_o(tail_indices)
+					h_ent = model_obj.embed_h(head_indices)
+					t_ent = model_obj.embed_t(tail_indices)
 					h_ent = scorer.au_entity_embeddings(h_ent)
 					t_ent = scorer.au_entity_embeddings(t_ent)
 					if hasattr(model_obj, '_normalize_au_vector'):
@@ -1120,8 +1120,8 @@ class KGAUStrategy(Evaluator):
 		scorer = getattr(model_obj, 'scorer', None)
 		uses_batched = (
 			scorer is not None
-			and hasattr(scorer, 'score_spo_candidates')
-			and hasattr(scorer, 'score_po_candidates')
+			and hasattr(scorer, 'score_hrt_candidates')
+			and hasattr(scorer, 'score_rt_candidates')
 		)
 		if raw is None:
 			return None if uses_batched else 128
@@ -1139,10 +1139,10 @@ class KGAUStrategy(Evaluator):
 	):
 		model_obj = get_model_obj(self.model)
 		scorer = model_obj.scorer
-		h_emb = model_obj.embed_s(h)
-		r_emb = model_obj.embed_p(r)
-		t_emb = model_obj.embed_o(t)
-		pos_scores = scorer.score_spo(h_emb, r_emb, t_emb)
+		h_emb = model_obj.embed_h(h)
+		r_emb = model_obj.embed_r(r)
+		t_emb = model_obj.embed_t(t)
+		pos_scores = scorer.score_hrt(h_emb, r_emb, t_emb)
 		return {
 			'mode': mode,
 			'h_emb': h_emb,
@@ -1170,23 +1170,23 @@ class KGAUStrategy(Evaluator):
 			scorer = model_obj.scorer
 			batch_size = h.size(0)
 			if mode == 'tail-batch':
-				t_emb = model_obj.embed_o(neg_slice.reshape(-1)).view(batch_size, chunk_neg, -1)
-				return scorer.score_spo_candidates(context['h_emb'], context['r_emb'], t_emb)
+				t_emb = model_obj.embed_t(neg_slice.reshape(-1)).view(batch_size, chunk_neg, -1)
+				return scorer.score_hrt_candidates(context['h_emb'], context['r_emb'], t_emb)
 			if mode == 'head-batch':
-				h_emb = model_obj.embed_s(neg_slice.reshape(-1)).view(batch_size, chunk_neg, -1)
-				return scorer.score_po_candidates(h_emb, context['r_emb'], context['t_emb'])
+				h_emb = model_obj.embed_h(neg_slice.reshape(-1)).view(batch_size, chunk_neg, -1)
+				return scorer.score_rt_candidates(h_emb, context['r_emb'], context['t_emb'])
 			raise ValueError(f'Unsupported hybrid negative-sampling mode: {mode}')
 
 		if mode == 'tail-batch':
 			h_exp = h.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
 			r_exp = r.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
 			t_neg = neg_slice.reshape(-1)
-			return self.model.score_spo(h_exp, r_exp, t_neg).view(h.size(0), chunk_neg)
+			return self.model.score_hrt(h_exp, r_exp, t_neg).view(h.size(0), chunk_neg)
 		if mode == 'head-batch':
 			h_neg = neg_slice.reshape(-1)
 			r_exp = r.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
 			t_exp = t.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
-			return self.model.score_po(r_exp, t_exp, s=h_neg).view(h.size(0), chunk_neg)
+			return self.model.score_rt(r_exp, t_exp, h=h_neg).view(h.size(0), chunk_neg)
 		raise ValueError(f'Unsupported hybrid negative-sampling mode: {mode}')
 
 	def _hybrid_adversarial_bce_loss_parts(

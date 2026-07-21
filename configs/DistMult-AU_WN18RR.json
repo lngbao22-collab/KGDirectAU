@@ -6,7 +6,7 @@
   "model_strategy_path": "models/strategies/kgau_strategy.py",
   "model_sampler_path": "",
 
-  "head_eval_mode": "po_forward",
+  "head_eval_mode": "rt_forward",
 
   "kgau_bidirectional": true,
   "uniformity_full_pdist": true,

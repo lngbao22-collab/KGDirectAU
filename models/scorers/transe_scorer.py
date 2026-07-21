@@ -2,7 +2,7 @@
 
 import torch
 
-from base.kge_scorer import KGEScorer
+from base.model import KGEScorer
 
 
 def build_scorer(args) -> 'TransEScorer':
@@ -46,17 +46,17 @@ class TransEScorer(KGEScorer):
 	def _score_distance(self, diff: torch.Tensor) -> torch.Tensor:
 		return self.gamma - torch.norm(diff, p=self.norm_p, dim=-1)
 
-	def score_spo(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def score_hrt(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Return standard TransE tail scores for matching batches of triples."""
 
 		return self._score_distance((h_emb + r_emb) - t_emb)
 
-	def score_po(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def score_rt(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Return standard TransE head scores for matching batches of triples."""
 
 		return self._score_distance(h_emb + (r_emb - t_emb))
 
-	def score_spo_candidates(
+	def score_hrt_candidates(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -67,7 +67,7 @@ class TransEScorer(KGEScorer):
 		diff = (h_emb.unsqueeze(1) + r_emb.unsqueeze(1)) - t_emb
 		return self._score_distance(diff)
 
-	def score_po_candidates(
+	def score_rt_candidates(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -93,12 +93,12 @@ class TransEScorer(KGEScorer):
 			scores[:, start:end] = self._score_distance(diff)
 		return scores
 
-	def score_sp_(self, h_emb: torch.Tensor, r_emb: torch.Tensor, all_t_embs: torch.Tensor) -> torch.Tensor:
-		"""Return 1-vs-all TransE tail scores using LibKGE-style sp_ broadcasting."""
+	def score_hr_(self, h_emb: torch.Tensor, r_emb: torch.Tensor, all_t_embs: torch.Tensor) -> torch.Tensor:
+		"""Return 1-vs-all TransE tail scores using LibKGE-style hr_ broadcasting."""
 
 		return self._score_1vsall(h_emb + r_emb, all_t_embs)
 
-	def score_po_(self, all_h_embs: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def score_rt_(self, all_h_embs: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Return 1-vs-all TransE head scores for each (relation, tail) query."""
 
 		return self._score_1vsall(-(r_emb - t_emb), all_h_embs)

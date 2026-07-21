@@ -1,14 +1,687 @@
-"""Abstract and unified model interfaces for KGDirectAU."""
+"""LibKGE-style model bases and shared embedding utilities for KGDirectAU.
 
+Class hierarchy (aligned with libkge ``kge.model.kge_model``):
+
+* ``KGEBase`` — shared base for models, scorers, and embedders
+* ``KGEScorer`` — pure-tensor relational score functions (libkge ``RelationalScorer``)
+* ``KGEEmbedder`` — embedders for a fixed vocabulary of objects
+* ``KGEModel`` — binder that ties entity/relation embedders to a scorer
+"""
+
+from __future__ import annotations
+
+import json
+import os
 from abc import ABC, abstractmethod
-from typing import Any, Mapping
+from typing import Any, List, Mapping
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import Tensor
 
-from base.embeddings import load_relation_to_idx
+from data.dataset import load_data
 from data.dict_hub import get_entity_dict
+
+
+# ---------------------------------------------------------------------------
+# Relation / embedding utilities (formerly base/embeddings.py)
+# ---------------------------------------------------------------------------
+
+
+def _relation_path_candidates(args) -> list[str]:
+	paths = []
+	for source_path in [getattr(args, 'train_path', ''), getattr(args, 'valid_path', ''), getattr(args, 'test_path', '')]:
+		if not source_path:
+			continue
+		paths.append(os.path.join(os.path.dirname(source_path), 'relation2id.json'))
+		paths.append(os.path.join(os.path.dirname(source_path), 'relations.json'))
+		paths.append(os.path.join(os.path.dirname(source_path), 'relation2idx.json'))
+	paths.append(os.path.join('data', getattr(args, 'dataset', ''), 'relation2id.json'))
+	paths.append(os.path.join('data', getattr(args, 'dataset', ''), 'preprocessed', 'relation2id.json'))
+	return paths
+
+
+def use_reciprocal_relations(args: Any | None) -> bool:
+	return bool(getattr(args, 'add_reciprocal_relations', False)) or use_kbc_reciprocal_relations(args)
+
+
+def use_kbc_reciprocal_relations(args: Any | None) -> bool:
+	return bool(getattr(args, 'kbc_reciprocal_relations', False))
+
+
+def kbc_forward_relation_count(relation_to_idx: dict[str, int]) -> int:
+	"""Number of forward relation slots (kbc ``n_predicates // 2`` after doubling)."""
+
+	forward_values = [
+		int(value)
+		for key, value in relation_to_idx.items()
+		if not str(key).startswith('inverse ')
+	]
+	if not forward_values:
+		return 0
+	return max(forward_values) + 1
+
+
+def add_kbc_inverse_relations(relation_to_idx: dict[str, int]) -> dict[str, int]:
+	"""Assign inverse relation id = forward_id + n_forward (kbc reciprocal layout)."""
+
+	updated = dict(relation_to_idx)
+	n_forward = kbc_forward_relation_count(updated)
+	for relation, idx in list(updated.items()):
+		if str(relation).startswith('inverse '):
+			continue
+		inverse_relation = f'inverse {relation}'
+		if inverse_relation not in updated:
+			updated[inverse_relation] = int(idx) + n_forward
+	return updated
+
+
+def add_inverse_relations(relation_to_idx: dict[str, int]) -> dict[str, int]:
+	"""Assign each forward relation a distinct inverse-relation ID (LibKGE reciprocal_relations_model)."""
+
+	updated = dict(relation_to_idx)
+	next_idx = max(updated.values(), default=-1) + 1
+	for relation in list(updated.keys()):
+		if relation.startswith('inverse '):
+			continue
+		inverse_relation = f'inverse {relation}'
+		if inverse_relation not in updated:
+			updated[inverse_relation] = next_idx
+			next_idx += 1
+	return updated
+
+
+def build_forward_to_inverse_index_tensor(relation_to_idx: dict[str, int]) -> torch.Tensor | None:
+	"""Map forward relation indices to inverse indices (KvsAll ``_rt`` / kbc CE head eval)."""
+
+	if not relation_to_idx:
+		return None
+	max_idx = max(int(value) for value in relation_to_idx.values())
+	mapping = torch.full((max_idx + 1,), -1, dtype=torch.long)
+	for relation, fwd_idx in relation_to_idx.items():
+		if str(relation).startswith('inverse '):
+			continue
+		inv_idx = relation_to_idx.get(f'inverse {relation}')
+		if inv_idx is not None:
+			mapping[int(fwd_idx)] = int(inv_idx)
+	n_forward = kbc_forward_relation_count(relation_to_idx)
+	if n_forward > 0:
+		for fwd_idx in range(n_forward):
+			if int(mapping[fwd_idx]) < 0:
+				inv_idx = int(fwd_idx) + n_forward
+				if inv_idx <= max_idx:
+					mapping[fwd_idx] = inv_idx
+	if int(mapping.ge(0).sum()) == 0:
+		return None
+	return mapping
+
+
+HEAD_EVAL_MODES = frozenset({'rt_forward', 'rt_inverse', 'hr_inverse'})
+
+
+def resolve_head_eval_mode(args: Any | None, *, eval_forward: bool) -> str:
+	"""Choose backward link-prediction scoring to match the training recipe.
+
+	Returns one of ``tail``, ``rt_forward``, ``rt_inverse``, or ``hr_inverse``.
+
+	When ``args.head_eval_mode`` is set in JSON/CLI, it overrides strategy-based
+	inference for the backward (head) pass. Use ``rt_forward`` for adversarial
+	BCE / direct head prediction with the forward relation (no inverse relation).
+	KGAU with reciprocal relations trains inverse triplets ``(t, r^{-1}, h)`` as
+	tail prediction, so backward eval defaults to ``hr_inverse``.
+	"""
+
+	if eval_forward:
+		return 'tail'
+	if args is None:
+		return 'rt_forward'
+
+	explicit = getattr(args, 'head_eval_mode', None)
+	if explicit is not None:
+		mode = str(explicit).strip().lower()
+		if mode in {'auto', 'infer', 'default', ''}:
+			pass
+		elif mode in HEAD_EVAL_MODES:
+			return mode
+		else:
+			raise ValueError(
+				f'Unsupported head_eval_mode={explicit!r}; '
+				f'expected one of {sorted(HEAD_EVAL_MODES)} or auto'
+			)
+
+	strategy = (getattr(args, 'model_strategy_path', '') or '').replace('\\', '/').lower()
+	loss_path = (getattr(args, 'model_loss_path', '') or '').replace('\\', '/').lower()
+
+	if 'negsamp' in strategy or 'adversarial_bce' in loss_path:
+		return 'rt_forward'
+
+	if 'kvsall' in strategy:
+		from models.strategies.kvsall_strategy import kvsall_uses_rt_training
+
+		if kvsall_uses_rt_training(args) and use_reciprocal_relations(args):
+			return 'rt_inverse'
+		return 'rt_forward'
+
+	if '1vsall' in strategy:
+		if use_kbc_reciprocal_relations(args) and not bool(getattr(args, 'bidirectional_1vsall', True)):
+			return 'hr_inverse'
+		return 'rt_forward'
+
+	if 'kgau' in strategy:
+		if bool(getattr(args, 'kgau_bidirectional', False)):
+			return 'rt_forward'
+		if use_reciprocal_relations(args):
+			return 'hr_inverse'
+		return 'rt_forward'
+
+	return 'rt_forward'
+
+
+def uses_forward_examples_for_backward_eval(args: Any | None) -> bool:
+	"""Backward eval always starts from forward (h, r, t) test triples for index KGE."""
+
+	return resolve_head_eval_mode(args, eval_forward=False) != 'tail'
+
+
+def _apply_relation_display_aliases(relation_to_idx: dict[str, int], args) -> dict[str, int]:
+	"""Add human-readable relation aliases (FB15k-237 path IDs -> display strings)."""
+
+	dataset = str(getattr(args, 'dataset', '') or '').lower()
+	if dataset != 'fb15k237':
+		return relation_to_idx
+
+	from data.preprocess import _normalize_fb15k237_relation
+
+	updated = dict(relation_to_idx)
+	for relation, idx in relation_to_idx.items():
+		relation_str = str(relation)
+		if relation_str.startswith('inverse '):
+			base_id = relation_str[len('inverse '):]
+			if not base_id.startswith('/'):
+				continue
+			display = _normalize_fb15k237_relation(base_id)
+			updated[f'inverse {display}'] = idx
+			continue
+		if not relation_str.startswith('/'):
+			continue
+		display = _normalize_fb15k237_relation(relation_str)
+		updated[display] = idx
+		normalized = ' '.join(display.split())
+		if normalized != display:
+			updated[normalized] = idx
+	return updated
+
+
+def load_relation_to_idx(args) -> dict[str, int]:
+	for path in _relation_path_candidates(args):
+		if not path or not os.path.exists(path):
+			continue
+		with open(path, 'r', encoding='utf-8') as handle:
+			mapping = json.load(handle)
+		if isinstance(mapping, dict):
+			relation_to_idx = {str(key): int(value) for key, value in mapping.items()}
+			if use_kbc_reciprocal_relations(args):
+				relation_to_idx = add_kbc_inverse_relations(relation_to_idx)
+			elif use_reciprocal_relations(args):
+				relation_to_idx = add_inverse_relations(relation_to_idx)
+			return _apply_relation_display_aliases(relation_to_idx, args)
+
+	relations: list[str] = []
+	seen: set[str] = set()
+	for example in load_data(getattr(args, 'train_path', ''), add_forward_triplet=False, add_backward_triplet=False):
+		if example.relation not in seen:
+			seen.add(example.relation)
+			relations.append(example.relation)
+	relation_to_idx = {relation: idx for idx, relation in enumerate(relations)}
+	if use_kbc_reciprocal_relations(args):
+		relation_to_idx = add_kbc_inverse_relations(relation_to_idx)
+	elif use_reciprocal_relations(args):
+		relation_to_idx = add_inverse_relations(relation_to_idx)
+	return _apply_relation_display_aliases(relation_to_idx, args)
+
+
+def _scaled_init(module: nn.Module, dim: int, sigma: float = 0.2) -> None:
+	scale = (dim / sigma ** 2) ** (1 / 6)
+	for param in module.parameters():
+		param.data.div_(scale)
+
+
+def init_lookup_embedding(module: nn.Module, args: Any | None, dim: int, role: str = 'entity') -> None:
+	"""Initialize a lookup embedding table (LibKGE ``lookup_embedder.initialize``)."""
+
+	init_method = str(getattr(args, 'init_method', '') or '').lower()
+	if not init_method:
+		model_name = str(getattr(args, 'model', '') or '').lower()
+		if any(name in model_name for name in ('rotate', 'protate', 'transe')):
+			margin_raw = getattr(args, 'margin', None)
+			margin = 6.0 if margin_raw is None else float(margin_raw)
+			epsilon_raw = getattr(args, 'epsilon', None)
+			epsilon = 2.0 if epsilon_raw is None else float(epsilon_raw)
+			bound = (margin + epsilon) / max(1, dim)
+			nn.init.uniform_(module.embedding.weight, a=-bound, b=bound)
+			return
+		if model_name in {'distmult', 'distmult-au', 'complex', 'complex-au'}:
+			_scaled_init(module, dim)
+			return
+		nn.init.xavier_uniform_(module.embedding.weight)
+		return
+
+	weight = module.embedding.weight
+	if init_method == 'uniform_':
+		low = float(getattr(args, 'init_uniform_a', -0.05))
+		high = getattr(args, 'init_uniform_b', None)
+		high = float(-low if high is None else high)
+		if low > high:
+			low, high = high, low
+		nn.init.uniform_(weight, a=low, b=high)
+	elif init_method in {'xavier_uniform_', 'xavier_uniform'}:
+		gain = float(getattr(args, 'init_xavier_gain', 1.0))
+		nn.init.xavier_uniform_(weight, gain=gain)
+	elif init_method in {'xavier_normal_', 'xavier_normal'}:
+		gain = float(getattr(args, 'init_xavier_gain', 1.0))
+		nn.init.xavier_normal_(weight, gain=gain)
+	elif init_method == 'normal_':
+		mean = float(getattr(args, 'init_normal_mean', 0.0))
+		std = float(getattr(args, 'init_normal_std', 1.0))
+		nn.init.normal_(weight, mean=mean, std=std)
+	elif init_method == 'scaled':
+		_scaled_init(module, dim)
+	elif init_method == 'kbc':
+		scale = float(getattr(args, 'init_scale', 1e-3))
+		weight.data.mul_(scale)
+	else:
+		nn.init.xavier_uniform_(weight)
+
+
+def _lookup_dropout_rate(args: Any | None, role: str) -> float:
+	if role == 'entity':
+		raw = getattr(args, 'entity_dropout', None)
+		if raw is None:
+			raw = getattr(args, 'dropout', 0.0)
+	else:
+		raw = getattr(args, 'relation_dropout', None)
+		if raw is None:
+			raw = getattr(args, 'dropout', 0.0)
+	return float(raw or 0.0)
+
+
+def _regularize_p(args: Any | None) -> int:
+	raw = getattr(args, 'regularize_p', None)
+	if raw is not None:
+		return int(raw)
+	return 3
+
+
+def _regularize_weighted(args: Any | None, role: str) -> bool:
+	if role == 'entity':
+		raw = getattr(args, 'entity_regularize_weighted', None)
+	else:
+		raw = getattr(args, 'relation_regularize_weighted', None)
+	if raw is None:
+		return True
+	return bool(raw)
+
+
+def _lookup_embedding_rows(embedder: nn.Module, indexes: torch.Tensor) -> torch.Tensor | None:
+	if hasattr(embedder, 'embedding'):
+		return embedder.embedding(indexes.long())
+	if hasattr(embedder, 'ent_re') and hasattr(embedder, 'ent_im'):
+		return torch.cat([embedder.ent_re.embedding(indexes.long()), embedder.ent_im.embedding(indexes.long())], dim=-1)
+	if hasattr(embedder, 'rel_re') and hasattr(embedder, 'rel_im'):
+		return torch.cat([embedder.rel_re.embedding(indexes.long()), embedder.rel_im.embedding(indexes.long())], dim=-1)
+	if hasattr(embedder, 'weight'):
+		return embedder.weight.index_select(0, indexes.long())
+	return None
+
+
+def _embedding_table_l3(embedder: nn.Module, p: int = 3) -> torch.Tensor | None:
+	if hasattr(embedder, 'embedding'):
+		return embedder.embedding.weight.norm(p=p) ** p
+	if hasattr(embedder, 'ent_re') and hasattr(embedder, 'ent_im'):
+		return embedder.ent_re.embedding.weight.norm(p=p) ** p + embedder.ent_im.embedding.weight.norm(p=p) ** p
+	if hasattr(embedder, 'rel_re') and hasattr(embedder, 'rel_im'):
+		return embedder.rel_re.embedding.weight.norm(p=p) ** p + embedder.rel_im.embedding.weight.norm(p=p) ** p
+	if hasattr(embedder, 'weight'):
+		return embedder.weight.norm(p=p) ** p
+	return None
+
+
+def _weighted_lp_penalty(
+	embedder: nn.Module,
+	indexes: torch.Tensor,
+	*,
+	weight: float,
+	p: int,
+	num_indexes: int,
+) -> torch.Tensor | None:
+	if weight == 0.0 or indexes.numel() == 0:
+		return None
+	flat_indexes = indexes.reshape(-1).long()
+	unique_indexes, counts = torch.unique(flat_indexes, return_counts=True)
+	parameters = _lookup_embedding_rows(embedder, unique_indexes)
+	if parameters is None:
+		return None
+	if (p % 2 == 1):
+		parameters = torch.abs(parameters)
+	return (
+		weight
+		/ p
+		* (parameters ** p * counts.float().view(-1, 1)).sum()
+		/ max(int(num_indexes), 1)
+	)
+
+
+def _complex_batch_factor_norms(
+	ent_embedder: nn.Module,
+	rel_embedder: nn.Module,
+	h_idx: torch.Tensor,
+	r_idx: torch.Tensor,
+	t_idx: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None:
+	"""Return kbc ComplEx N3 factors: L2 norms of complex components per rank."""
+
+	if not (hasattr(ent_embedder, 'ent_re') and hasattr(ent_embedder, 'ent_im')):
+		return None
+	if not (hasattr(rel_embedder, 'rel_re') and hasattr(rel_embedder, 'rel_im')):
+		return None
+
+	def _entity_norms(indexes: torch.Tensor) -> torch.Tensor:
+		re = ent_embedder.ent_re.embedding(indexes.long())
+		im = ent_embedder.ent_im.embedding(indexes.long())
+		return torch.sqrt(re ** 2 + im ** 2)
+
+	def _relation_norms(indexes: torch.Tensor) -> torch.Tensor:
+		re = rel_embedder.rel_re.embedding(indexes.long())
+		im = rel_embedder.rel_im.embedding(indexes.long())
+		return torch.sqrt(re ** 2 + im ** 2)
+
+	return _entity_norms(h_idx), _relation_norms(r_idx), _entity_norms(t_idx)
+
+
+def compute_kbc_n3_regularization(
+	model: nn.Module,
+	args: Any | None,
+	*,
+	batch_triples: torch.Tensor,
+) -> torch.Tensor | None:
+	"""kbc-style N3 on batch ComplEx factors: sum_i w |f_i|^3 / batch_size."""
+
+	weight = float(getattr(args, 'regularize_weight', None) or 0.0)
+	if weight == 0.0:
+		weight = float(getattr(args, 'entity_regularize_weight', 0.0) or 0.0)
+	if weight == 0.0:
+		return None
+
+	ent_embedder = getattr(model, 'ent_embedder', None)
+	rel_embedder = getattr(model, 'rel_embedder', None)
+	if ent_embedder is None or rel_embedder is None:
+		return None
+
+	h_idx = batch_triples[:, 0]
+	r_idx = batch_triples[:, 1]
+	t_idx = batch_triples[:, 2]
+	factors = _complex_batch_factor_norms(ent_embedder, rel_embedder, h_idx, r_idx, t_idx)
+	if factors is None:
+		return None
+
+	batch_size = max(int(factors[0].shape[0]), 1)
+	norm = torch.zeros((), device=factors[0].device, dtype=factors[0].dtype)
+	for factor in factors:
+		norm = norm + weight * torch.sum(torch.abs(factor) ** 3)
+	return norm / batch_size
+
+
+def _uses_kbc_n3_regularization(args: Any | None) -> bool:
+	regularizer = str(getattr(args, 'regularizer', '') or '').lower()
+	return regularizer in {'n3_kbc', 'kbc_n3'}
+
+
+def compute_kge_regularization(
+	model: nn.Module,
+	args: Any | None,
+	*,
+	batch_triples: torch.Tensor | None = None,
+) -> torch.Tensor | None:
+	"""Dispatch LibKGE Lp or kbc N3 regularization based on ``args.regularizer``."""
+
+	if _uses_kbc_n3_regularization(args):
+		if batch_triples is None:
+			return None
+		return compute_kbc_n3_regularization(model, args, batch_triples=batch_triples)
+	return compute_kge_l3_regularization(model, args, batch_triples=batch_triples)
+
+
+def compute_kge_l3_regularization(
+	model: nn.Module,
+	args: Any | None,
+	*,
+	batch_triples: torch.Tensor | None = None,
+) -> torch.Tensor | None:
+	"""LibKGE-style Lp embedding regularization with optional batch weighting."""
+
+	ent_weight = float(getattr(args, 'entity_regularize_weight', 0.0) or 0.0)
+	rel_weight = float(getattr(args, 'relation_regularize_weight', 0.0) or 0.0)
+	if ent_weight == 0.0 and rel_weight == 0.0:
+		return None
+
+	p = _regularize_p(args)
+	terms: list[torch.Tensor] = []
+	ent_embedder = getattr(model, 'ent_embedder', None)
+	rel_embedder = getattr(model, 'rel_embedder', None)
+
+	if ent_weight > 0.0 and ent_embedder is not None:
+		if batch_triples is not None and _regularize_weighted(args, 'entity'):
+			entity_indexes = torch.cat((batch_triples[:, 0], batch_triples[:, 2]))
+			ent_term = _weighted_lp_penalty(
+				ent_embedder,
+				entity_indexes,
+				weight=ent_weight,
+				p=p,
+				num_indexes=batch_triples.size(0),
+			)
+		else:
+			ent_term = _embedding_table_l3(ent_embedder, p=p)
+			if ent_term is not None:
+				ent_term = ent_weight * ent_term / p
+		if ent_term is not None:
+			terms.append(ent_term)
+
+	if rel_weight > 0.0 and rel_embedder is not None:
+		if batch_triples is not None and _regularize_weighted(args, 'relation'):
+			rel_term = _weighted_lp_penalty(
+				rel_embedder,
+				batch_triples[:, 1],
+				weight=rel_weight,
+				p=p,
+				num_indexes=batch_triples.size(0),
+			)
+		else:
+			rel_term = _embedding_table_l3(rel_embedder, p=p)
+			if rel_term is not None:
+				rel_term = rel_weight * rel_term / p
+		if rel_term is not None:
+			terms.append(rel_term)
+
+	if not terms:
+		return None
+	return sum(terms)
+
+
+def embedding_l3_penalty(model: nn.Module, p: int = 3) -> torch.Tensor | None:
+	"""Unweighted Lp penalty over entity and relation embedding tables."""
+
+	terms: list[torch.Tensor] = []
+	for embedder in (getattr(model, 'ent_embedder', None), getattr(model, 'rel_embedder', None)):
+		if embedder is None:
+			continue
+		term = _embedding_table_l3(embedder, p=p)
+		if term is not None:
+			terms.append(term)
+	if not terms:
+		return None
+	return sum(terms)
+
+
+def _concat_complex_table_weight(embedder: nn.Module) -> torch.Tensor | None:
+	"""Return one weight matrix for ComplEx re/im tables (RotatE ``-de`` / ``-dr`` layout)."""
+
+	if hasattr(embedder, 'ent_re') and hasattr(embedder, 'ent_im'):
+		return torch.cat([embedder.ent_re.embedding.weight, embedder.ent_im.embedding.weight], dim=1)
+	if hasattr(embedder, 'rel_re') and hasattr(embedder, 'rel_im'):
+		return torch.cat([embedder.rel_re.embedding.weight, embedder.rel_im.embedding.weight], dim=1)
+	return None
+
+
+def _complex_table_l3_penalty(embedder: nn.Module, p: int = 3) -> torch.Tensor | None:
+	"""Sum |w|^p over ComplEx re/im tables without concatenating weights."""
+
+	if hasattr(embedder, 'ent_re') and hasattr(embedder, 'ent_im'):
+		return (
+			embedder.ent_re.embedding.weight.abs().pow(p).sum()
+			+ embedder.ent_im.embedding.weight.abs().pow(p).sum()
+		)
+	if hasattr(embedder, 'rel_re') and hasattr(embedder, 'rel_im'):
+		return (
+			embedder.rel_re.embedding.weight.abs().pow(p).sum()
+			+ embedder.rel_im.embedding.weight.abs().pow(p).sum()
+		)
+	return None
+
+
+def rotate_style_embedding_l3_penalty(model: nn.Module, p: int = 3) -> torch.Tensor | None:
+	"""RotatE global L3: ``||E||_p^p + ||R||_p^p`` over full entity/relation weight matrices."""
+
+	terms: list[torch.Tensor] = []
+	for embedder in (getattr(model, 'ent_embedder', None), getattr(model, 'rel_embedder', None)):
+		if embedder is None:
+			continue
+		term = _complex_table_l3_penalty(embedder, p=p)
+		if term is None and hasattr(embedder, 'embedding'):
+			term = embedder.embedding.weight.abs().pow(p).sum()
+		elif term is None and hasattr(embedder, 'weight'):
+			term = embedder.weight.abs().pow(p).sum()
+		if term is not None:
+			terms.append(term)
+	if not terms:
+		return None
+	return sum(terms)
+
+
+# ---------------------------------------------------------------------------
+# LibKGE-style class hierarchy
+# ---------------------------------------------------------------------------
+
+
+class KGEBase(nn.Module):
+	r"""Base class for all KGE models, scorers, and embedders."""
+
+	def __init__(self, args: Any | None = None):
+		super().__init__()
+		self.args = args
+		self.meta: dict[str, Any] = {}
+
+	@staticmethod
+	def _initialize(what: Tensor, initialize: str, initialize_args: dict | None = None) -> None:
+		initialize_args = dict(initialize_args or {})
+		try:
+			getattr(torch.nn.init, initialize)(what, **initialize_args)
+		except Exception as exc:
+			raise ValueError(
+				f'invalid initialization options: {initialize} with args {initialize_args}'
+			) from exc
+
+	def penalty(self, **kwargs) -> List[Tensor]:
+		r"""Optional extra penalty terms added to the training loss."""
+
+		return []
+
+
+
+class KGEScorer(KGEBase):
+	"""Pure tensor KGE logic — no embedding index lookups.
+
+	Subclasses implement ``score_hrt`` / ``score_hr_`` / ``score_rt_`` for link
+	prediction.  Optional hooks:
+
+	* ``build_query`` — tail-prediction query vectors (cosine LP when enabled).
+	* ``au_representations`` — (query, tail, head) vectors for KGAU training.
+	* ``au_entity_embeddings`` — optional full-table entity vectors for uniformity.
+	"""
+
+	bidirectional_score_batch: bool = False
+	kgau_alignment_mode: str | None = None
+
+	def build_query(self, h_emb: torch.Tensor, r_emb: torch.Tensor) -> torch.Tensor:
+		"""Build tail-prediction query vectors (DistMult default: ``h * r``)."""
+
+		return h_emb * r_emb
+
+	def build_inv_query(self, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+		"""Build head-prediction query vectors (DistMult default: ``t * r``)."""
+
+		return t_emb * r_emb
+
+	def au_representations(
+		self,
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+		*,
+		predict_head: bool = False,
+		**kwargs,
+	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+		"""Return (query, align_target, head_entity) for alignment / uniformity losses.
+
+		Tail prediction (default): align ``build_query(h, r)`` with the tail entity.
+		Head prediction: align ``build_inv_query(r, t)`` with the head entity (GB-Magic head-batch).
+		"""
+
+		if predict_head:
+			return self.build_inv_query(r_emb, t_emb), h_emb, h_emb
+		return self.build_query(h_emb, r_emb), t_emb, h_emb
+
+
+class KGEEmbedder(KGEBase):
+	r"""Base class for embedders of a fixed number of objects (entities, relations, ...)."""
+
+	def __init__(self, args: Any | None = None, *, dim: int | None = None):
+		super().__init__(args)
+		self.dim = dim
+
+	def forward(self, indexes: Tensor) -> Tensor:
+		return self.embed(indexes)
+
+	def embed(self, indexes: Tensor) -> Tensor:
+		"""Compute embeddings for the given indexes."""
+
+		raise NotImplementedError
+
+	def embed_all(self) -> Tensor:
+		"""Return embeddings for all objects in the vocabulary."""
+
+		raise NotImplementedError
+
+
+class ParameterEmbedder(KGEEmbedder):
+	"""Wrap a shared ``nn.Parameter`` matrix as a LibKGE-style embedder."""
+
+	def __init__(self, weight: nn.Parameter):
+		dim = int(weight.size(-1)) if weight.dim() >= 1 else None
+		super().__init__(dim=dim)
+		self.register_parameter('weight', weight)
+
+	def forward(self, indices: torch.Tensor) -> torch.Tensor:
+		return self.weight.index_select(0, indices.long())
+
+	def embed(self, indices: torch.Tensor) -> torch.Tensor:
+		return self.forward(indices)
+
+	def get_all(self) -> torch.Tensor:
+		return self.weight
+
+	def embed_all(self) -> torch.Tensor:
+		return self.weight
 
 
 class BaseModel(nn.Module, ABC):
@@ -23,7 +696,7 @@ class BaseModel(nn.Module, ABC):
 		"""Convert model outputs into logits/labels for the training objective."""
 
 
-class KGEModel(nn.Module):
+class KGEModel(KGEBase):
 	"""LibKGE-style binder that ties entity/relation embedders to a pure relational scorer.
 
 	The scorer owns all tensor math (scoring, ``build_query``, ``au_representations``).
@@ -39,11 +712,10 @@ class KGEModel(nn.Module):
 		args: Any | None = None,
 		aux_embedders: Mapping[str, nn.Module] | None = None,
 	):
-		super().__init__()
+		super().__init__(args)
 		self.ent_embedder = ent_embedder
 		self.rel_embedder = rel_embedder
 		self.scorer = scorer
-		self.args = args
 		self.aux_embedders = nn.ModuleDict(dict(aux_embedders or {}))
 		self.rel_to_idx = load_relation_to_idx(args) if args is not None else {}
 		self.normalize_lp_scores = _normalize_lp_flag(args) if args is not None else False
@@ -59,25 +731,25 @@ class KGEModel(nn.Module):
 	def kgau_alignment_mode(self) -> str | None:
 		return getattr(self.scorer, 'kgau_alignment_mode', None)
 
-	def get_s_embedder(self) -> nn.Module:
+	def get_h_embedder(self) -> nn.Module:
 		return self.ent_embedder
 
-	def get_o_embedder(self) -> nn.Module:
+	def get_t_embedder(self) -> nn.Module:
 		return self.ent_embedder
 
-	def get_p_embedder(self) -> nn.Module:
+	def get_r_embedder(self) -> nn.Module:
 		return self.rel_embedder
 
 	def get_scorer(self) -> nn.Module:
 		return self.scorer
 
-	def embed_s(self, indices: torch.Tensor) -> torch.Tensor:
+	def embed_h(self, indices: torch.Tensor) -> torch.Tensor:
 		return self._embed(self.ent_embedder, indices)
 
-	def embed_p(self, indices: torch.Tensor) -> torch.Tensor:
+	def embed_r(self, indices: torch.Tensor) -> torch.Tensor:
 		return self._embed(self.rel_embedder, indices)
 
-	def embed_o(self, indices: torch.Tensor) -> torch.Tensor:
+	def embed_t(self, indices: torch.Tensor) -> torch.Tensor:
 		return self._embed(self.ent_embedder, indices)
 
 	def embed_all_entities(self) -> torch.Tensor:
@@ -97,13 +769,13 @@ class KGEModel(nn.Module):
 			return embedder.get_all()
 		raise AttributeError(f'{type(embedder).__name__} has no embed_all/get_all method')
 
-	def _scorer_kwargs(self, p: torch.Tensor | None = None, **extra: Any) -> dict[str, Any]:
+	def _scorer_kwargs(self, r: torch.Tensor | None = None, **extra: Any) -> dict[str, Any]:
 		"""Forward auxiliary relation embeddings and caller overrides to the scorer."""
 
 		kwargs = dict(extra)
-		if p is not None:
+		if r is not None:
 			for key, embedder in self.aux_embedders.items():
-				kwargs[f'{key}_emb'] = self._embed(embedder, p)
+				kwargs[f'{key}_emb'] = self._embed(embedder, r)
 		return kwargs
 
 	def _normalize_lp_vector(self, vectors: torch.Tensor) -> torch.Tensor:
@@ -156,186 +828,186 @@ class KGEModel(nn.Module):
 		p = float(getattr(self, 'lp_distance_degree', 2.0) or 2.0)
 		return -torch.cdist(query_vectors, candidate_vectors, p=p)
 
-	def _tail_query_vectors(self, s: torch.Tensor, p: torch.Tensor) -> torch.Tensor:
+	def _tail_query_vectors(self, h: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
 		return self.scorer.build_query(
-			self.embed_s(s),
-			self.embed_p(p),
-			**self._scorer_kwargs(p),
+			self.embed_h(h),
+			self.embed_r(r),
+			**self._scorer_kwargs(r),
 		)
 
-	def _head_query_vectors(self, p: torch.Tensor, o: torch.Tensor) -> torch.Tensor:
-		return self.scorer.build_inv_query(self.embed_p(p), self.embed_o(o))
+	def _head_query_vectors(self, r: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+		return self.scorer.build_inv_query(self.embed_r(r), self.embed_t(t))
 
-	def score_spo(
+	def score_hrt(
 		self,
-		s: torch.Tensor,
-		p: torch.Tensor,
-		o: torch.Tensor,
+		h: torch.Tensor,
+		r: torch.Tensor,
+		t: torch.Tensor,
 		**kwargs: Any,
 	) -> torch.Tensor:
 		if self._uses_distance_lp_scores():
-			query = self._tail_query_vectors(s, p)
-			tail = self._lp_entity_vectors(self.embed_o(o))
+			query = self._tail_query_vectors(h, r)
+			tail = self._lp_entity_vectors(self.embed_t(t))
 			distance_degree = float(getattr(self, 'lp_distance_degree', 2.0) or 2.0)
 			return -torch.linalg.vector_norm(query - tail, ord=distance_degree, dim=-1)
 		if self._uses_cosine_lp_scores():
-			if hasattr(self.scorer, 'normalized_score_sp'):
-				scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
-				return self.scorer.normalized_score_sp(
-					self.embed_s(s),
-					self.embed_p(p),
-					self.embed_o(o),
+			if hasattr(self.scorer, 'normalized_score_hr'):
+				scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
+				return self.scorer.normalized_score_hr(
+					self.embed_h(h),
+					self.embed_r(r),
+					self.embed_t(t),
 					**scorer_kwargs,
 				)
-			query = self._tail_query_vectors(s, p)
-			tail = self._lp_entity_vectors(self.embed_o(o))
+			query = self._tail_query_vectors(h, r)
+			tail = self._lp_entity_vectors(self.embed_t(t))
 			return self._cosine_similarity_scores(query, tail).diag()
-		scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
-		return self.scorer.score_spo(
-			self.embed_s(s),
-			self.embed_p(p),
-			self.embed_o(o),
+		scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
+		return self.scorer.score_hrt(
+			self.embed_h(h),
+			self.embed_r(r),
+			self.embed_t(t),
 			**scorer_kwargs,
 		)
 
-	def score_sp_(
+	def score_hr_(
 		self,
-		s: torch.Tensor,
-		p: torch.Tensor,
-		all_o_embs: torch.Tensor | None = None,
+		h: torch.Tensor,
+		r: torch.Tensor,
+		all_t_embs: torch.Tensor | None = None,
 		**kwargs: Any,
 	) -> torch.Tensor:
-		if all_o_embs is None:
-			all_o_embs = self.embed_all_entities()
-		lp_entity_embs = self._lp_entity_vectors(all_o_embs)
+		if all_t_embs is None:
+			all_t_embs = self.embed_all_entities()
+		lp_entity_embs = self._lp_entity_vectors(all_t_embs)
 		if self._uses_distance_lp_scores():
-			if hasattr(self.scorer, 'distance_score_sp_'):
+			if hasattr(self.scorer, 'distance_score_hr_'):
 				scorer_kwargs = {
-					**self._scorer_kwargs(p),
+					**self._scorer_kwargs(r),
 					**kwargs,
 					'lp_distance_degree': float(getattr(self, 'lp_distance_degree', 2.0) or 2.0),
 				}
-				return self.scorer.distance_score_sp_(
-					self.embed_s(s),
-					self.embed_p(p),
+				return self.scorer.distance_score_hr_(
+					self.embed_h(h),
+					self.embed_r(r),
 					lp_entity_embs,
 					**scorer_kwargs,
 				)
-			return self._distance_scores(self._tail_query_vectors(s, p), lp_entity_embs)
+			return self._distance_scores(self._tail_query_vectors(h, r), lp_entity_embs)
 		if self._uses_cosine_lp_scores():
-			if hasattr(self.scorer, 'normalized_score_sp_'):
-				scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
-				return self.scorer.normalized_score_sp_(
-					self.embed_s(s),
-					self.embed_p(p),
+			if hasattr(self.scorer, 'normalized_score_hr_'):
+				scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
+				return self.scorer.normalized_score_hr_(
+					self.embed_h(h),
+					self.embed_r(r),
 					lp_entity_embs,
 					**scorer_kwargs,
 				)
-			return self._cosine_similarity_scores(self._tail_query_vectors(s, p), lp_entity_embs)
-		scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
-		return self.scorer.score_sp_(
-			self.embed_s(s),
-			self.embed_p(p),
-			all_o_embs,
+			return self._cosine_similarity_scores(self._tail_query_vectors(h, r), lp_entity_embs)
+		scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
+		return self.scorer.score_hr_(
+			self.embed_h(h),
+			self.embed_r(r),
+			all_t_embs,
 			**scorer_kwargs,
 		)
 
-	def score_sp(
+	def score_hr(
 		self,
-		s: torch.Tensor,
-		p: torch.Tensor,
-		o: torch.Tensor | None = None,
+		h: torch.Tensor,
+		r: torch.Tensor,
+		t: torch.Tensor | None = None,
 		**kwargs: Any,
 	) -> torch.Tensor:
-		if o is None:
-			return self.score_sp_(s, p, **kwargs)
-		scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
-		return self.scorer.score_sp_(
-			self.embed_s(s),
-			self.embed_p(p),
-			self._embed(self.ent_embedder, o),
+		if t is None:
+			return self.score_hr_(h, r, **kwargs)
+		scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
+		return self.scorer.score_hr_(
+			self.embed_h(h),
+			self.embed_r(r),
+			self._embed(self.ent_embedder, t),
 			**scorer_kwargs,
 		)
 
-	def score_po_(
+	def score_rt_(
 		self,
-		p: torch.Tensor,
-		o: torch.Tensor,
-		all_s_embs: torch.Tensor | None = None,
+		r: torch.Tensor,
+		t: torch.Tensor,
+		all_h_embs: torch.Tensor | None = None,
 		**kwargs: Any,
 	) -> torch.Tensor:
-		if not hasattr(self.scorer, 'score_po_'):
-			raise NotImplementedError(f'{type(self.scorer).__name__} does not implement score_po_')
-		if all_s_embs is None:
-			all_s_embs = self.embed_all_entities()
-		lp_entity_embs = self._lp_entity_vectors(all_s_embs)
+		if not hasattr(self.scorer, 'score_rt_'):
+			raise NotImplementedError(f'{type(self.scorer).__name__} does not implement score_rt_')
+		if all_h_embs is None:
+			all_h_embs = self.embed_all_entities()
+		lp_entity_embs = self._lp_entity_vectors(all_h_embs)
 		if self._uses_distance_lp_scores():
-			if hasattr(self.scorer, 'distance_score_po_'):
+			if hasattr(self.scorer, 'distance_score_rt_'):
 				scorer_kwargs = {
-					**self._scorer_kwargs(p),
+					**self._scorer_kwargs(r),
 					**kwargs,
 					'lp_distance_degree': float(getattr(self, 'lp_distance_degree', 2.0) or 2.0),
 				}
-				return self.scorer.distance_score_po_(
+				return self.scorer.distance_score_rt_(
 					lp_entity_embs,
-					self.embed_p(p),
-					self.embed_o(o),
+					self.embed_r(r),
+					self.embed_t(t),
 					**scorer_kwargs,
 				)
-			return self._distance_scores(self._head_query_vectors(p, o), lp_entity_embs)
+			return self._distance_scores(self._head_query_vectors(r, t), lp_entity_embs)
 		if self._uses_cosine_lp_scores():
-			if hasattr(self.scorer, 'normalized_score_po_'):
-				scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
-				return self.scorer.normalized_score_po_(
+			if hasattr(self.scorer, 'normalized_score_rt_'):
+				scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
+				return self.scorer.normalized_score_rt_(
 					lp_entity_embs,
-					self.embed_p(p),
-					self.embed_o(o),
+					self.embed_r(r),
+					self.embed_t(t),
 					**scorer_kwargs,
 				)
-			return self._cosine_similarity_scores(self._head_query_vectors(p, o), lp_entity_embs)
-		scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
-		return self.scorer.score_po_(
-			all_s_embs,
-			self.embed_p(p),
-			self.embed_o(o),
+			return self._cosine_similarity_scores(self._head_query_vectors(r, t), lp_entity_embs)
+		scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
+		return self.scorer.score_rt_(
+			all_h_embs,
+			self.embed_r(r),
+			self.embed_t(t),
 			**scorer_kwargs,
 		)
 
-	def score_po(
+	def score_rt(
 		self,
-		p: torch.Tensor,
-		o: torch.Tensor,
-		s: torch.Tensor | None = None,
+		r: torch.Tensor,
+		t: torch.Tensor,
+		h: torch.Tensor | None = None,
 		**kwargs: Any,
 	) -> torch.Tensor:
-		if s is None:
-			return self.score_po_(p, o, **kwargs)
-		if self.normalize_lp_scores and hasattr(self.scorer, 'normalized_score_po'):
-			scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
-			return self.scorer.normalized_score_po(
-				self._embed(self.ent_embedder, s),
-				self.embed_p(p),
-				self.embed_o(o),
+		if h is None:
+			return self.score_rt_(r, t, **kwargs)
+		if self.normalize_lp_scores and hasattr(self.scorer, 'normalized_score_rt'):
+			scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
+			return self.scorer.normalized_score_rt(
+				self._embed(self.ent_embedder, h),
+				self.embed_r(r),
+				self.embed_t(t),
 				**scorer_kwargs,
 			)
-		if hasattr(self.scorer, 'score_po'):
-			scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
-			return self.scorer.score_po(
-				self._embed(self.ent_embedder, s),
-				self.embed_p(p),
-				self.embed_o(o),
+		if hasattr(self.scorer, 'score_rt'):
+			scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
+			return self.scorer.score_rt(
+				self._embed(self.ent_embedder, h),
+				self.embed_r(r),
+				self.embed_t(t),
 				**scorer_kwargs,
 			)
-		raise NotImplementedError(f'{type(self.scorer).__name__} does not implement score_po')
+		raise NotImplementedError(f'{type(self.scorer).__name__} does not implement score_rt')
 
-	def query_all_entities_scores(self, s: torch.Tensor, p: torch.Tensor, **kwargs: Any) -> torch.Tensor:
-		return self.score_sp_(s, p, **kwargs)
+	def query_all_entities_scores(self, h: torch.Tensor, r: torch.Tensor, **kwargs: Any) -> torch.Tensor:
+		return self.score_hr_(h, r, **kwargs)
 
-	def predict_tail_sp_(self, h_idx: torch.Tensor, r_idx: torch.Tensor, **kwargs: Any) -> torch.Tensor:
-		return self.score_sp_(h_idx, r_idx, **kwargs)
+	def predict_tail_hr_(self, h_idx: torch.Tensor, r_idx: torch.Tensor, **kwargs: Any) -> torch.Tensor:
+		return self.score_hr_(h_idx, r_idx, **kwargs)
 
-	def predict_head_po_(self, r_idx: torch.Tensor, t_idx: torch.Tensor, **kwargs: Any) -> torch.Tensor:
-		return self.score_po_(r_idx, t_idx, **kwargs)
+	def predict_head_rt_(self, r_idx: torch.Tensor, t_idx: torch.Tensor, **kwargs: Any) -> torch.Tensor:
+		return self.score_rt_(r_idx, t_idx, **kwargs)
 
 	@property
 	def device(self) -> torch.device:
@@ -360,19 +1032,19 @@ class KGEModel(nn.Module):
 
 	def get_queries_targets(
 		self,
-		s: torch.Tensor,
-		p: torch.Tensor,
-		o: torch.Tensor,
+		h: torch.Tensor,
+		r: torch.Tensor,
+		t: torch.Tensor,
 		*,
 		predict_head: bool = False,
 	):
-		"""AU (query, align_target, head_entity) vectors — delegated to the scorer."""
+		"""AU (query, align_target, head_entity) vectors - delegated to the scorer."""
 
-		h = self.embed_s(s)
-		r = self.embed_p(p)
-		t = self.embed_o(o)
-		scorer_kwargs = {**self._scorer_kwargs(p), 'predict_head': predict_head}
-		query, tail, head = self.scorer.au_representations(h, r, t, **scorer_kwargs)
+		h_emb = self.embed_h(h)
+		r_emb = self.embed_r(r)
+		t_emb = self.embed_t(t)
+		scorer_kwargs = {**self._scorer_kwargs(r), 'predict_head': predict_head}
+		query, tail, head = self.scorer.au_representations(h_emb, r_emb, t_emb, **scorer_kwargs)
 		if self.normalize_au_vectors:
 			query = self._normalize_au_vector(query)
 			tail = self._normalize_au_vector(tail)
@@ -386,10 +1058,10 @@ class KGEModel(nn.Module):
 		head_indices = as_index_tensor(head_ids, entity_dict.entity_to_idx, device)
 		relation_indices = as_index_tensor(relations, rel_lookup, device)
 		tail_indices = as_index_tensor(tail_entity_ids, entity_dict.entity_to_idx, device)
-		return self.score_spo(head_indices, relation_indices, tail_indices)
+		return self.score_hrt(head_indices, relation_indices, tail_indices)
 
 	def forward(self, src: torch.Tensor, rel: torch.Tensor, dst: torch.Tensor) -> torch.Tensor:
-		return self.score_spo(src, rel, dst)
+		return self.score_hrt(src, rel, dst)
 
 
 class TextKGEModel(KGEModel):
@@ -452,44 +1124,44 @@ class TextKGEModel(KGEModel):
 	def offset(self, value: int) -> None:
 		self.contrastive_state.offset = value
 
-	def _tail_query_vectors(self, s: torch.Tensor, p: torch.Tensor) -> torch.Tensor:
-		return self.query_embedder.embed_sp(s, p)
+	def _tail_query_vectors(self, h: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
+		return self.query_embedder.embed_hr(h, r)
 
-	def score_spo(
+	def score_hrt(
 		self,
-		s: torch.Tensor,
-		p: torch.Tensor,
-		o: torch.Tensor,
+		h: torch.Tensor,
+		r: torch.Tensor,
+		t: torch.Tensor,
 		**kwargs: Any,
 	) -> torch.Tensor:
-		query = self._tail_query_vectors(s, p)
-		tail = self._lp_entity_vectors(self.embed_o(o))
+		query = self._tail_query_vectors(h, r)
+		tail = self._lp_entity_vectors(self.embed_t(t))
 		if self._uses_distance_lp_scores():
 			distance_degree = float(getattr(self, 'lp_distance_degree', 2.0) or 2.0)
 			return -torch.linalg.vector_norm(query - tail, ord=distance_degree, dim=-1)
 		if self._uses_cosine_lp_scores():
 			return self._cosine_similarity_scores(query, tail).diag()
-		return self.scorer.score_spo(query, p, tail, **{**self._scorer_kwargs(p), **kwargs})
+		return self.scorer.score_hrt(query, r, tail, **{**self._scorer_kwargs(r), **kwargs})
 
-	def score_sp_(
+	def score_hr_(
 		self,
-		s: torch.Tensor,
-		p: torch.Tensor,
-		all_o_embs: torch.Tensor | None = None,
+		h: torch.Tensor,
+		r: torch.Tensor,
+		all_t_embs: torch.Tensor | None = None,
 		**kwargs: Any,
 	) -> torch.Tensor:
-		if all_o_embs is None:
-			all_o_embs = self.embed_all_entities()
-		query = self._tail_query_vectors(s, p)
-		lp_entity_embs = self._lp_entity_vectors(all_o_embs)
+		if all_t_embs is None:
+			all_t_embs = self.embed_all_entities()
+		query = self._tail_query_vectors(h, r)
+		lp_entity_embs = self._lp_entity_vectors(all_t_embs)
 		if self._uses_distance_lp_scores():
 			return self._distance_scores(query, lp_entity_embs)
 		if self._uses_cosine_lp_scores():
 			return self._cosine_similarity_scores(query, lp_entity_embs)
-		scorer_kwargs = {**self._scorer_kwargs(p), **kwargs}
-		return self.scorer.score_sp_(query, p, all_o_embs, **scorer_kwargs)
+		scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
+		return self.scorer.score_hr_(query, r, all_t_embs, **scorer_kwargs)
 
-	def get_queries_targets(self, s: torch.Tensor, p: torch.Tensor, o: torch.Tensor):
+	def get_queries_targets(self, h: torch.Tensor, r: torch.Tensor, t: torch.Tensor):
 		from data.dataloader import collate
 		from data.dataset import Example
 		from data.dict_hub import get_relation_id_map
@@ -500,7 +1172,7 @@ class TextKGEModel(KGEModel):
 		idx_to_relation = {int(value): key for key, value in relation_id_map.items()}
 
 		examples = []
-		for head_idx, relation_idx, tail_idx in zip(s.tolist(), p.tolist(), o.tolist()):
+		for head_idx, relation_idx, tail_idx in zip(h.tolist(), r.tolist(), t.tolist()):
 			head_entity = entity_dict.get_entity_by_idx(int(head_idx))
 			tail_entity = entity_dict.get_entity_by_idx(int(tail_idx))
 			relation = idx_to_relation.get(int(relation_idx), str(int(relation_idx)))
@@ -547,7 +1219,7 @@ class TextKGEModel(KGEModel):
 		**kwargs,
 	):
 		if src is not None and rel is not None and dst is not None:
-			return self.score_spo(src, rel, dst)
+			return self.score_hrt(src, rel, dst)
 
 		if only_ent_embedding:
 			return self.predict_ent_embedding(
@@ -683,7 +1355,7 @@ class TextKGEModel(KGEModel):
 		return vectors.to(device) if device is not None else vectors
 
 	def predict_by_examples(self, examples, batch_size=None, num_workers: int = 1):
-		"""Deprecated: use ``score_sp_`` / index-based LP eval."""
+		"""Deprecated: use ``score_hr_`` / index-based LP eval."""
 
 		from data.dataset import Dataset
 		from utils.device import move_to_cuda

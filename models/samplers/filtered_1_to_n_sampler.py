@@ -7,10 +7,10 @@ import torch
 class FilteredSubsampler:
     """Filtered 1-N negative sampler for RotatE-style training."""
 
-    def __init__(self, triples, nentity: int, num_negatives: int, num_negatives_s: int | None = None):
+    def __init__(self, triples, nentity: int, num_negatives: int, num_negatives_h: int | None = None):
         self.nentity = int(nentity)
         self.num_negatives_tail = int(num_negatives)
-        self.num_negatives_head = int(num_negatives if num_negatives_s is None else num_negatives_s)
+        self.num_negatives_head = int(num_negatives if num_negatives_h is None else num_negatives_h)
         self.count = self._count_frequency(triples)
         self.true_head, self.true_tail = self._build_filter_dicts(triples)
 
@@ -172,12 +172,12 @@ def build_sampler(args, train_triples, model):
     from models.builder import _resolve_nentity
 
     nentity = _resolve_nentity(args, model)
-    n_sample_o = getattr(args, 'n_sample_o', None)
-    n_sample_s = getattr(args, 'n_sample_s', None)
+    n_sample_t = getattr(args, 'n_sample_t', None)
+    n_sample_h = getattr(args, 'n_sample_h', None)
     n_sample = getattr(args, 'n_sample', None)
-    if n_sample_o is not None or n_sample_s is not None:
-        num_neg_o = int(n_sample_o if n_sample_o is not None else (n_sample or 1))
-        num_neg_s = int(n_sample_s if n_sample_s is not None else (n_sample or 1))
-        return FilteredSubsampler(train_triples, int(nentity), num_neg_o, num_negatives_s=num_neg_s)
+    if n_sample_t is not None or n_sample_h is not None:
+        num_neg_t = int(n_sample_t if n_sample_t is not None else (n_sample or 1))
+        num_neg_h = int(n_sample_h if n_sample_h is not None else (n_sample or 1))
+        return FilteredSubsampler(train_triples, int(nentity), num_neg_t, num_negatives_h=num_neg_h)
     num_neg = int(n_sample or 1)
     return FilteredSubsampler(train_triples, int(nentity), num_neg)

@@ -3,7 +3,7 @@
 import torch
 import torch.nn.functional as F
 
-from base.kge_scorer import KGEScorer
+from base.model import KGEScorer
 
 
 def build_scorer(args) -> 'TransERRScorer':
@@ -184,13 +184,13 @@ class TransERRScorer(KGEScorer):
 		memory_limit = max(1, bytes_budget // per_candidate)
 		return max(1, min(configured, memory_limit))
 
-	def score_spo(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def score_hrt(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		return self._score_tensor(h_emb, r_emb, t_emb)
 
-	def score_po(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def score_rt(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		return self._score_tensor(h_emb, r_emb, t_emb)
 
-	def score_spo_candidates(
+	def score_hrt_candidates(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -198,7 +198,7 @@ class TransERRScorer(KGEScorer):
 	) -> torch.Tensor:
 		return self._score_tensor(h_emb, r_emb, t_emb)
 
-	def score_po_candidates(
+	def score_rt_candidates(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -206,7 +206,7 @@ class TransERRScorer(KGEScorer):
 	) -> torch.Tensor:
 		return self._score_tensor(h_emb, r_emb, t_emb)
 
-	def score_sp_(
+	def score_hr_(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -221,7 +221,7 @@ class TransERRScorer(KGEScorer):
 			scores[:, start:end] = self._score_tensor(h_emb, r_emb, all_t_embs[start:end])
 		return scores
 
-	def score_po_(
+	def score_rt_(
 		self,
 		all_h_embs: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -263,7 +263,7 @@ class TransERRScorer(KGEScorer):
 			return self.build_inv_query(r_emb, t_emb), h_target, h_target
 		return self.build_query(h_emb, r_emb), t_target, h_target
 
-	def normalized_score_sp(
+	def normalized_score_hr(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -271,7 +271,7 @@ class TransERRScorer(KGEScorer):
 	) -> torch.Tensor:
 		return self._normalized_pair_score(self.build_query(h_emb, r_emb), self._tail_space(t_emb, r_emb))
 
-	def normalized_score_po(
+	def normalized_score_rt(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -279,7 +279,7 @@ class TransERRScorer(KGEScorer):
 	) -> torch.Tensor:
 		return self._normalized_pair_score(self._head_space(h_emb, r_emb), self.build_inv_query(r_emb, t_emb))
 
-	def normalized_score_sp_(
+	def normalized_score_hr_(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -297,7 +297,7 @@ class TransERRScorer(KGEScorer):
 			scores[:, start:end] = self._normalized_1vsall_score(query, target)
 		return scores
 
-	def normalized_score_po_(
+	def normalized_score_rt_(
 		self,
 		all_h_embs: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -315,7 +315,7 @@ class TransERRScorer(KGEScorer):
 			scores[:, start:end] = self._normalized_1vsall_score(query, target)
 		return scores
 
-	def distance_score_sp_(
+	def distance_score_hr_(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -342,7 +342,7 @@ class TransERRScorer(KGEScorer):
 			)
 		return scores
 
-	def distance_score_po_(
+	def distance_score_rt_(
 		self,
 		all_h_embs: torch.Tensor,
 		r_emb: torch.Tensor,

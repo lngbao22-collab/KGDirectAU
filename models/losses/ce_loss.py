@@ -8,7 +8,7 @@ from models.losses.loss_utilities import compute_softmax_loss
 def compute_ce_loss(scores: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
 	"""Compute cross entropy for 1vsAll tail prediction.
 
-	:param scores: ``[batch_size, num_entities]`` logits from ``score_sp_()``
+	:param scores: ``[batch_size, num_entities]`` logits from ``score_hr_()``
 	:param targets: ``[batch_size]`` true entity indices
 	"""
 

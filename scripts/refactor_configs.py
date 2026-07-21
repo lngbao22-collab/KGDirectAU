@@ -16,7 +16,7 @@ KEY_ORDER = [
     'head_eval_mode', 'kvsall_query_types',
     'dim', 'batch_size', 'epochs', 'optim', 'lr', 'weight_decay',
     'adversarial_training', 'adversarial_temperature', 'margin',
-    'n_sample', 'n_sample_o', 'n_sample_s',
+    'n_sample', 'n_sample_t', 'n_sample_h',
     'neg_score_chunk_size', 'neg_weight_chunk_size', 'sample_freq', 'loss_arg',
     'lam', 'lmbda', 'lmbda_two',
     'regularizer', 'regularize_weight', 'regularization',

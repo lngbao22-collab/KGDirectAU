@@ -17,7 +17,7 @@ from models.builder import (
 	load_sampler,
 	run_index_kge_train_loop,
 )
-from base.embeddings import rotate_style_embedding_l3_penalty
+from base.model import rotate_style_embedding_l3_penalty
 from models.losses.bce_loss import bce_logit_offset, uses_bce_logit_offset
 from models.losses.loss_utilities import (
 	compute_adversarial_negsamp_losses_chunked,
@@ -31,7 +31,7 @@ from utils.training_cadence import init_step_cadence_state, maybe_decay_lr_at_st
 
 
 class NegSampStrategy:
-	"""Train with a sampler + 1-to-1 ``score_spo`` scoring and an injected loss."""
+	"""Train with a sampler + 1-to-1 ``score_hrt`` scoring and an injected loss."""
 
 	def __init__(
 		self,
@@ -91,7 +91,7 @@ class NegSampStrategy:
 
 	def _supports_batched_candidate_scoring(self, model_obj) -> bool:
 		scorer = getattr(model_obj, 'scorer', None)
-		return scorer is not None and hasattr(scorer, 'score_spo_candidates') and hasattr(scorer, 'score_po_candidates')
+		return scorer is not None and hasattr(scorer, 'score_hrt_candidates') and hasattr(scorer, 'score_rt_candidates')
 
 	def _positive_scores(
 		self,
@@ -109,17 +109,17 @@ class NegSampStrategy:
 
 		model_obj = model_obj or get_model_obj(self.model)
 		if h_emb is None:
-			h_emb = model_obj.embed_s(h)
+			h_emb = model_obj.embed_h(h)
 		if r_emb is None:
-			r_emb = model_obj.embed_p(r)
+			r_emb = model_obj.embed_r(r)
 		if t_emb is None:
-			t_emb = model_obj.embed_o(t)
+			t_emb = model_obj.embed_t(t)
 		scorer = model_obj.scorer
-		if mode == 'head-batch' and hasattr(scorer, 'score_po'):
-			return scorer.score_po(h_emb, r_emb, t_emb)
-		if hasattr(scorer, 'score_spo'):
-			return scorer.score_spo(h_emb, r_emb, t_emb)
-		return self.model.score_spo(h, r, t)
+		if mode == 'head-batch' and hasattr(scorer, 'score_rt'):
+			return scorer.score_rt(h_emb, r_emb, t_emb)
+		if hasattr(scorer, 'score_hrt'):
+			return scorer.score_hrt(h_emb, r_emb, t_emb)
+		return self.model.score_hrt(h, r, t)
 
 	def _candidate_scoring_context(
 		self,
@@ -132,9 +132,9 @@ class NegSampStrategy:
 		if not self._supports_batched_candidate_scoring(model_obj):
 			return None
 
-		h_emb = model_obj.embed_s(h)
-		r_emb = model_obj.embed_p(r)
-		t_emb = model_obj.embed_o(t)
+		h_emb = model_obj.embed_h(h)
+		r_emb = model_obj.embed_r(r)
+		t_emb = model_obj.embed_t(t)
 		pos_scores = self._positive_scores(
 			h,
 			r,
@@ -385,11 +385,11 @@ class NegSampStrategy:
 			model_obj = get_model_obj(self.model)
 			scorer = model_obj.scorer
 			if mode == 'tail-batch':
-				t_emb = model_obj.embed_o(neg_entity_ids.reshape(-1)).view(batch_size, num_neg, -1)
-				neg_scores = scorer.score_spo_candidates(context['h_emb'], context['r_emb'], t_emb)
+				t_emb = model_obj.embed_t(neg_entity_ids.reshape(-1)).view(batch_size, num_neg, -1)
+				neg_scores = scorer.score_hrt_candidates(context['h_emb'], context['r_emb'], t_emb)
 			elif mode == 'head-batch':
-				h_emb = model_obj.embed_s(neg_entity_ids.reshape(-1)).view(batch_size, num_neg, -1)
-				neg_scores = scorer.score_po_candidates(h_emb, context['r_emb'], context['t_emb'])
+				h_emb = model_obj.embed_h(neg_entity_ids.reshape(-1)).view(batch_size, num_neg, -1)
+				neg_scores = scorer.score_rt_candidates(h_emb, context['r_emb'], context['t_emb'])
 			else:
 				raise ValueError(f'Unsupported negative-sampling mode: {mode}')
 			return context['pos_scores'], neg_scores
@@ -401,12 +401,12 @@ class NegSampStrategy:
 			h_exp = h.unsqueeze(1).expand(-1, num_neg).reshape(-1)
 			r_exp = r.unsqueeze(1).expand(-1, num_neg).reshape(-1)
 			t_neg = neg_entity_ids.reshape(-1)
-			neg_scores = self.model.score_spo(h_exp, r_exp, t_neg).view(batch_size, num_neg)
+			neg_scores = self.model.score_hrt(h_exp, r_exp, t_neg).view(batch_size, num_neg)
 		elif mode == 'head-batch':
 			h_neg = neg_entity_ids.reshape(-1)
 			r_exp = r.unsqueeze(1).expand(-1, num_neg).reshape(-1)
 			t_exp = t.unsqueeze(1).expand(-1, num_neg).reshape(-1)
-			neg_scores = self.model.score_po(r_exp, t_exp, s=h_neg).view(batch_size, num_neg)
+			neg_scores = self.model.score_rt(r_exp, t_exp, h=h_neg).view(batch_size, num_neg)
 		else:
 			raise ValueError(f'Unsupported negative-sampling mode: {mode}')
 
@@ -431,23 +431,23 @@ class NegSampStrategy:
 			scorer = model_obj.scorer
 			batch_size = h.size(0)
 			if mode == 'tail-batch':
-				t_emb = model_obj.embed_o(neg_slice.reshape(-1)).view(batch_size, chunk_neg, -1)
-				return scorer.score_spo_candidates(context['h_emb'], context['r_emb'], t_emb)
+				t_emb = model_obj.embed_t(neg_slice.reshape(-1)).view(batch_size, chunk_neg, -1)
+				return scorer.score_hrt_candidates(context['h_emb'], context['r_emb'], t_emb)
 			if mode == 'head-batch':
-				h_emb = model_obj.embed_s(neg_slice.reshape(-1)).view(batch_size, chunk_neg, -1)
-				return scorer.score_po_candidates(h_emb, context['r_emb'], context['t_emb'])
+				h_emb = model_obj.embed_h(neg_slice.reshape(-1)).view(batch_size, chunk_neg, -1)
+				return scorer.score_rt_candidates(h_emb, context['r_emb'], context['t_emb'])
 			raise ValueError(f'Unsupported negative-sampling mode: {mode}')
 
 		if mode == 'tail-batch':
 			h_exp = h.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
 			r_exp = r.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
 			t_neg = neg_slice.reshape(-1)
-			return self.model.score_spo(h_exp, r_exp, t_neg).view(h.size(0), chunk_neg)
+			return self.model.score_hrt(h_exp, r_exp, t_neg).view(h.size(0), chunk_neg)
 		if mode == 'head-batch':
 			h_neg = neg_slice.reshape(-1)
 			r_exp = r.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
 			t_exp = t.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
-			return self.model.score_po(r_exp, t_exp, s=h_neg).view(h.size(0), chunk_neg)
+			return self.model.score_rt(r_exp, t_exp, h=h_neg).view(h.size(0), chunk_neg)
 		raise ValueError(f'Unsupported negative-sampling mode: {mode}')
 
 	def _filtered_negsamp_loss_parts_chunked(
@@ -509,8 +509,8 @@ class NegSampStrategy:
 		pos_triples: torch.Tensor,
 		neg_triples: torch.Tensor,
 	) -> tuple[torch.Tensor, torch.Tensor]:
-		pos_scores = self.model.score_spo(pos_triples[:, 0], pos_triples[:, 1], pos_triples[:, 2])
-		neg_scores = self.model.score_spo(neg_triples[:, 0], neg_triples[:, 1], neg_triples[:, 2])
+		pos_scores = self.model.score_hrt(pos_triples[:, 0], pos_triples[:, 1], pos_triples[:, 2])
+		neg_scores = self.model.score_hrt(neg_triples[:, 0], neg_triples[:, 1], neg_triples[:, 2])
 		return pos_scores, neg_scores
 
 	def _compute_loss(self, pos_scores: torch.Tensor, neg_scores: torch.Tensor, weights) -> torch.Tensor:
@@ -590,9 +590,9 @@ class NegSampStrategy:
 		if config_bool(self.args, 'dabr_reg_include_negatives', False) and neg_triples is not None:
 			reg_triples = torch.cat([pos_triples, neg_triples], dim=0)
 
-		h = model_obj.embed_s(reg_triples[:, 0])
-		r = model_obj.embed_p(reg_triples[:, 1])
-		t = model_obj.embed_o(reg_triples[:, 2])
+		h = model_obj.embed_h(reg_triples[:, 0])
+		r = model_obj.embed_r(reg_triples[:, 1])
+		t = model_obj.embed_t(reg_triples[:, 2])
 		dr_embedder = self._aux_relation_embedding(model_obj, reg_triples[:, 1])
 		if dr_embedder is None:
 			return None

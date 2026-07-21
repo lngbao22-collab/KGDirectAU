@@ -11,13 +11,14 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from base.embeddings import (
+from base.model import (
+	KGEModel,
+	TextKGEModel,
 	compute_kge_regularization,
 	kbc_forward_relation_count,
 	use_kbc_reciprocal_relations,
 	use_reciprocal_relations,
 )
-from base.model import KGEModel, TextKGEModel
 from data.dataset import PointwiseDataset, load_data
 from data.dict_hub import get_entity_dict, get_relation_id_map
 from models.embedders.base import embedder_input_mode
@@ -200,10 +201,10 @@ def load_sampler(args, model: nn.Module | None = None, train_triples: torch.Tens
 	sampler_cls = getattr(module, 'FilteredSubsampler', None)
 	if sampler_cls is not None and train_triples is not None:
 		nentity = _resolve_nentity(args, model)
-		num_neg_o = int(getattr(args, 'n_sample_o', None) or getattr(args, 'n_sample', 1))
-		num_neg_s = int(getattr(args, 'n_sample_s', None) or getattr(args, 'n_sample', 1))
-		if getattr(args, 'n_sample_o', None) is not None or getattr(args, 'n_sample_s', None) is not None:
-			return sampler_cls(train_triples, nentity, num_neg_o, num_negatives_s=num_neg_s)
+		num_neg_t = int(getattr(args, 'n_sample_t', None) or getattr(args, 'n_sample', 1))
+		num_neg_h = int(getattr(args, 'n_sample_h', None) or getattr(args, 'n_sample', 1))
+		if getattr(args, 'n_sample_t', None) is not None or getattr(args, 'n_sample_h', None) is not None:
+			return sampler_cls(train_triples, nentity, num_neg_t, num_negatives_h=num_neg_h)
 		num_neg = int(getattr(args, 'n_sample', 1))
 		return sampler_cls(train_triples, nentity, num_neg)
 
@@ -436,7 +437,7 @@ def _kge_should_validate_at_epoch_end(args, epoch: int, *, stopping: bool = Fals
 
 
 def _kge_get_valid_examples(trainer):
-	from base.embeddings import uses_forward_examples_for_backward_eval
+	from base.model import uses_forward_examples_for_backward_eval
 	from data.dataset import Example, load_data, reverse_triplet
 	from utils.device import get_model_obj
 
@@ -1076,8 +1077,8 @@ def _load_train_examples(args, model: nn.Module | None = None):
 	add_backward = use_reciprocal_relations(args) and not use_kbc_reciprocal_relations(args)
 	strategy_path = (getattr(args, 'model_strategy_path', '') or '').replace('\\', '/').lower()
 	if 'kvsall' in strategy_path:
-		from models.strategies.kvsall_strategy import kvsall_uses_po_training
-		if kvsall_uses_po_training(args):
+		from models.strategies.kvsall_strategy import kvsall_uses_rt_training
+		if kvsall_uses_rt_training(args):
 			add_backward = False
 	return load_data(args.train_path, add_forward_triplet=True, add_backward_triplet=add_backward)
 

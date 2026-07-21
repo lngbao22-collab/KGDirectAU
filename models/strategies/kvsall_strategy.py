@@ -1,4 +1,4 @@
-"""KvsAll training: LibKGE-style sp_ and _po queries with KL/BCE multi-hot loss."""
+"""KvsAll training: LibKGE-style hr_ and _rt queries with KL/BCE multi-hot loss."""
 
 from collections import defaultdict
 from typing import Any
@@ -6,7 +6,7 @@ from typing import Any
 import torch
 from torch.utils.data import DataLoader
 
-from base.embeddings import load_relation_to_idx, use_reciprocal_relations
+from base.model import load_relation_to_idx, use_reciprocal_relations
 from models.builder import (
 	_resolve_nentity,
 	apply_kge_regularization,
@@ -22,18 +22,18 @@ from utils.logger import logger
 
 
 def resolve_kvsall_query_types(args) -> list[str]:
-	"""Return enabled KvsAll query types (LibKGE default: sp_ and _po)."""
+	"""Return enabled KvsAll query types (LibKGE default: hr_ and _rt)."""
 
 	raw = getattr(args, 'kvsall_query_types', None)
 	if raw is None:
-		return ['sp_', '_po']
+		return ['hr_', '_rt']
 	if isinstance(raw, str):
 		return [part.strip() for part in raw.split(',') if part.strip()]
 	return [str(part) for part in raw]
 
 
-def kvsall_uses_po_training(args) -> bool:
-	return '_po' in resolve_kvsall_query_types(args)
+def kvsall_uses_rt_training(args) -> bool:
+	return '_rt' in resolve_kvsall_query_types(args)
 
 
 def _iter_triple_rows(triples) -> list[tuple[int, int, int]]:
@@ -42,7 +42,7 @@ def _iter_triple_rows(triples) -> list[tuple[int, int, int]]:
 	return [(int(h), int(r), int(t)) for h, r, t in triples]
 
 
-def build_kvsall_sp_index(triples) -> list[dict[str, Any]]:
+def build_kvsall_hr_index(triples) -> list[dict[str, Any]]:
 	"""Group triples into unique (h, r) queries with all true tail answers."""
 
 	query_to_tails: dict[tuple[int, int], set[int]] = defaultdict(set)
@@ -51,7 +51,7 @@ def build_kvsall_sp_index(triples) -> list[dict[str, Any]]:
 
 	return [
 		{
-			'query_type': 'sp_',
+			'query_type': 'hr_',
 			'head_id': h,
 			'relation': r,
 			'target_ids': sorted(tails),
@@ -60,7 +60,7 @@ def build_kvsall_sp_index(triples) -> list[dict[str, Any]]:
 	]
 
 
-def build_kvsall_po_index(triples) -> list[dict[str, Any]]:
+def build_kvsall_rt_index(triples) -> list[dict[str, Any]]:
 	"""Group triples into unique (r, t) queries with all true head answers."""
 
 	query_to_heads: dict[tuple[int, int], set[int]] = defaultdict(set)
@@ -69,7 +69,7 @@ def build_kvsall_po_index(triples) -> list[dict[str, Any]]:
 
 	return [
 		{
-			'query_type': '_po',
+			'query_type': '_rt',
 			'relation': r,
 			'tail_id': t,
 			'target_ids': sorted(heads),
@@ -82,12 +82,12 @@ def build_kvsall_index(triples, query_types: list[str] | None = None) -> list[di
 	"""Build LibKGE-style KvsAll examples for the requested query types."""
 
 	if query_types is None:
-		query_types = ['sp_']
+		query_types = ['hr_']
 	grouped_data: list[dict[str, Any]] = []
-	if 'sp_' in query_types:
-		grouped_data.extend(build_kvsall_sp_index(triples))
-	if '_po' in query_types:
-		grouped_data.extend(build_kvsall_po_index(triples))
+	if 'hr_' in query_types:
+		grouped_data.extend(build_kvsall_hr_index(triples))
+	if '_rt' in query_types:
+		grouped_data.extend(build_kvsall_rt_index(triples))
 	return grouped_data
 
 
@@ -113,40 +113,40 @@ def _build_forward_to_inverse_map(args, model) -> torch.Tensor | None:
 
 def _collate_kvsall_batch(batch: list[dict[str, Any]]) -> dict[str, Any]:
 	query_type_indexes = torch.tensor(
-		[0 if item['query_type'] == 'sp_' else 1 for item in batch],
+		[0 if item['query_type'] == 'hr_' else 1 for item in batch],
 		dtype=torch.long,
 	)
-	sp_items = [item for item in batch if item['query_type'] == 'sp_']
-	po_items = [item for item in batch if item['query_type'] == '_po']
+	hr_items = [item for item in batch if item['query_type'] == 'hr_']
+	rt_items = [item for item in batch if item['query_type'] == '_rt']
 
 	collated: dict[str, Any] = {
 		'batch_size': len(batch),
 		'query_type_indexes': query_type_indexes,
 	}
 
-	if sp_items:
-		collated['sp_head_id'] = torch.tensor([item['head_id'] for item in sp_items], dtype=torch.long)
-		collated['sp_relation'] = torch.tensor([item['relation'] for item in sp_items], dtype=torch.long)
-		collated['sp_target_ids'] = [item['target_ids'] for item in sp_items]
+	if hr_items:
+		collated['hr_head_id'] = torch.tensor([item['head_id'] for item in hr_items], dtype=torch.long)
+		collated['hr_relation'] = torch.tensor([item['relation'] for item in hr_items], dtype=torch.long)
+		collated['hr_target_ids'] = [item['target_ids'] for item in hr_items]
 	else:
-		collated['sp_head_id'] = torch.empty(0, dtype=torch.long)
-		collated['sp_relation'] = torch.empty(0, dtype=torch.long)
-		collated['sp_target_ids'] = []
+		collated['hr_head_id'] = torch.empty(0, dtype=torch.long)
+		collated['hr_relation'] = torch.empty(0, dtype=torch.long)
+		collated['hr_target_ids'] = []
 
-	if po_items:
-		collated['po_relation'] = torch.tensor([item['relation'] for item in po_items], dtype=torch.long)
-		collated['po_tail_id'] = torch.tensor([item['tail_id'] for item in po_items], dtype=torch.long)
-		collated['po_target_ids'] = [item['target_ids'] for item in po_items]
+	if rt_items:
+		collated['rt_relation'] = torch.tensor([item['relation'] for item in rt_items], dtype=torch.long)
+		collated['rt_tail_id'] = torch.tensor([item['tail_id'] for item in rt_items], dtype=torch.long)
+		collated['rt_target_ids'] = [item['target_ids'] for item in rt_items]
 	else:
-		collated['po_relation'] = torch.empty(0, dtype=torch.long)
-		collated['po_tail_id'] = torch.empty(0, dtype=torch.long)
-		collated['po_target_ids'] = []
+		collated['rt_relation'] = torch.empty(0, dtype=torch.long)
+		collated['rt_tail_id'] = torch.empty(0, dtype=torch.long)
+		collated['rt_target_ids'] = []
 
 	return collated
 
 
 class KvsAllStrategy:
-	"""Train with LibKGE KvsAll queries (sp_ and/or _po) and multi-hot labels."""
+	"""Train with LibKGE KvsAll queries (hr_ and/or _rt) and multi-hot labels."""
 
 	def __init__(
 		self,
@@ -192,14 +192,14 @@ class KvsAllStrategy:
 			pin_memory=torch.cuda.is_available(),
 			drop_last=False,
 		)
-		sp_count = sum(1 for item in grouped_train_data if item['query_type'] == 'sp_')
-		po_count = sum(1 for item in grouped_train_data if item['query_type'] == '_po')
+		hr_count = sum(1 for item in grouped_train_data if item['query_type'] == 'hr_')
+		rt_count = sum(1 for item in grouped_train_data if item['query_type'] == '_rt')
 		logger.info(
-			'KvsAll: %d examples (sp_=%d, _po=%d) from training triples '
+			'KvsAll: %d examples (hr_=%d, _rt=%d) from training triples '
 			'(num_entities=%d, label_smoothing=%.6f, query_types=%s)',
 			len(self.grouped_train_data),
-			sp_count,
-			po_count,
+			hr_count,
+			rt_count,
 			self.num_entities,
 			self.label_smoothing,
 			self.query_types,
@@ -215,7 +215,7 @@ class KvsAllStrategy:
 			labels = (1.0 - self.label_smoothing) * labels + (1.0 / self.num_entities)
 		return labels
 
-	def _po_relation_indices(self, relation_indices: torch.Tensor) -> torch.Tensor:
+	def _rt_relation_indices(self, relation_indices: torch.Tensor) -> torch.Tensor:
 		if self._forward_to_inverse_rel is None:
 			return relation_indices
 		mapping = self._forward_to_inverse_rel.to(self.device)
@@ -224,21 +224,21 @@ class KvsAllStrategy:
 	def _regularization_triples(self, batch: dict[str, Any]) -> torch.Tensor | None:
 		rows: list[list[int]] = []
 
-		sp_head_ids = batch['sp_head_id']
-		sp_relations = batch['sp_relation']
-		for row_idx, target_ids in enumerate(batch['sp_target_ids']):
-			head_id = int(sp_head_ids[row_idx])
-			relation = int(sp_relations[row_idx])
+		hr_head_ids = batch['hr_head_id']
+		hr_relations = batch['hr_relation']
+		for row_idx, target_ids in enumerate(batch['hr_target_ids']):
+			head_id = int(hr_head_ids[row_idx])
+			relation = int(hr_relations[row_idx])
 			for tail_id in target_ids:
 				rows.append([head_id, relation, int(tail_id)])
 
-		po_relations = batch['po_relation']
-		po_tails = batch['po_tail_id']
-		if po_relations.numel() > 0:
-			mapped_relations = self._po_relation_indices(po_relations.to(self.device)).cpu()
-			for row_idx, target_ids in enumerate(batch['po_target_ids']):
+		rt_relations = batch['rt_relation']
+		rt_tails = batch['rt_tail_id']
+		if rt_relations.numel() > 0:
+			mapped_relations = self._rt_relation_indices(rt_relations.to(self.device)).cpu()
+			for row_idx, target_ids in enumerate(batch['rt_target_ids']):
 				relation = int(mapped_relations[row_idx])
-				tail_id = int(po_tails[row_idx])
+				tail_id = int(rt_tails[row_idx])
 				for head_id in target_ids:
 					rows.append([int(head_id), relation, tail_id])
 
@@ -258,22 +258,22 @@ class KvsAllStrategy:
 		self.optimizer.zero_grad()
 		loss = torch.zeros((), device=self.device)
 
-		sp_head_ids = batch['sp_head_id']
-		if sp_head_ids.numel() > 0:
-			sp_head_ids = sp_head_ids.to(self.device)
-			sp_relations = batch['sp_relation'].to(self.device)
-			scores_sp = self.model.score_sp_(sp_head_ids, sp_relations)
-			labels_sp = self._build_labels(batch['sp_target_ids'], sp_head_ids.size(0))
-			loss = loss + self.loss_fn(scores_sp, labels_sp) / batch_size
+		hr_head_ids = batch['hr_head_id']
+		if hr_head_ids.numel() > 0:
+			hr_head_ids = hr_head_ids.to(self.device)
+			hr_relations = batch['hr_relation'].to(self.device)
+			scores_hr = self.model.score_hr_(hr_head_ids, hr_relations)
+			labels_hr = self._build_labels(batch['hr_target_ids'], hr_head_ids.size(0))
+			loss = loss + self.loss_fn(scores_hr, labels_hr) / batch_size
 
-		po_relations = batch['po_relation']
-		if po_relations.numel() > 0:
-			po_relations = po_relations.to(self.device)
-			po_tails = batch['po_tail_id'].to(self.device)
-			po_relations_for_score = self._po_relation_indices(po_relations)
-			scores_po = self.model.score_po_(po_relations_for_score, po_tails)
-			labels_po = self._build_labels(batch['po_target_ids'], po_relations.size(0))
-			loss = loss + self.loss_fn(scores_po, labels_po) / batch_size
+		rt_relations = batch['rt_relation']
+		if rt_relations.numel() > 0:
+			rt_relations = rt_relations.to(self.device)
+			rt_tails = batch['rt_tail_id'].to(self.device)
+			rt_relations_for_score = self._rt_relation_indices(rt_relations)
+			scores_rt = self.model.score_rt_(rt_relations_for_score, rt_tails)
+			labels_rt = self._build_labels(batch['rt_target_ids'], rt_relations.size(0))
+			loss = loss + self.loss_fn(scores_rt, labels_rt) / batch_size
 
 		loss = apply_kge_regularization(
 			loss,

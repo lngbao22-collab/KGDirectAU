@@ -6,7 +6,7 @@
   "model_strategy_path": "models/strategies/negsamp_strategy.py",
   "model_sampler_path": "models/samplers/filtered_1_to_n_sampler.py",
 
-  "head_eval_mode": "po_forward",
+  "head_eval_mode": "rt_forward",
 
   "dim": 1000,
 

@@ -7,7 +7,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from base.embeddings import (
+from base.model import (
+	KGEEmbedder,
 	_lookup_dropout_rate,
 	_scaled_init,
 	init_lookup_embedding,
@@ -16,7 +17,7 @@ from base.embeddings import (
 from data.dict_hub import get_entity_dict
 
 
-class LookupEmbedder(nn.Module):
+class LookupEmbedder(KGEEmbedder):
 	"""Lightweight embedding table with LibKGE-style init and optional dropout."""
 
 	input_mode = 'indices'
@@ -29,10 +30,8 @@ class LookupEmbedder(nn.Module):
 		*,
 		role: str = 'entity',
 	):
-		super().__init__()
+		super().__init__(args, dim=int(dim))
 		self.num_items = int(num_items)
-		self.dim = int(dim)
-		self.args = args
 		self.role = role
 		self.dropout_rate = _lookup_dropout_rate(args, role)
 		sparse = bool(getattr(args, 'sparse_embeddings', False))
@@ -235,14 +234,14 @@ def build_entity_embedder(args) -> nn.Module:
 		hidden_dim = dim
 		weight = nn.Parameter(torch.zeros(n_ent, hidden_dim * 2))
 		_init_rotate_weight(weight, args, role='entity', hidden_dim=hidden_dim)
-		from base.embeddings import ParameterEmbedder
+		from base.model import ParameterEmbedder
 		return ParameterEmbedder(weight)
 
 	if _is_protate(args):
 		hidden_dim = dim
 		weight = nn.Parameter(torch.zeros(n_ent, hidden_dim))
 		_init_rotate_weight(weight, args, role='entity', hidden_dim=hidden_dim)
-		from base.embeddings import ParameterEmbedder
+		from base.model import ParameterEmbedder
 		return ParameterEmbedder(weight)
 
 	if _is_dabr(args):
@@ -281,7 +280,7 @@ def build_relation_embedder(args) -> nn.Module:
 		hidden_dim = dim
 		weight = nn.Parameter(torch.zeros(n_rel, hidden_dim))
 		_init_rotate_weight(weight, args, role='relation', hidden_dim=hidden_dim)
-		from base.embeddings import ParameterEmbedder
+		from base.model import ParameterEmbedder
 		return ParameterEmbedder(weight)
 
 	if _is_dabr(args):

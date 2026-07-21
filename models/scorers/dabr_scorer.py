@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from base.kge_scorer import KGEScorer
+from base.model import KGEScorer
 
 
 def build_scorer(args) -> 'DaBRScorer':
@@ -164,7 +164,7 @@ class DaBRScorer(KGEScorer):
 			return para
 		return float(para)
 
-	def score_spo(
+	def score_hrt(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -290,7 +290,7 @@ class DaBRScorer(KGEScorer):
 		memory_limit = max(1, bytes_budget // per_candidate)
 		return max(1, min(configured, memory_limit))
 
-	def _score_sp_candidate_chunk(
+	def _score_hr_candidate_chunk(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -315,7 +315,7 @@ class DaBRScorer(KGEScorer):
 		)
 		return score_s + para_value * score_d
 
-	def _score_po_candidate_chunk(
+	def _score_rt_candidate_chunk(
 		self,
 		h_emb_chunk: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -344,7 +344,7 @@ class DaBRScorer(KGEScorer):
 		)
 		return score_s + para_value * score_d
 
-	def score_sp_(
+	def score_hr_(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -364,17 +364,17 @@ class DaBRScorer(KGEScorer):
 		chunk_size = self._entity_chunk_size(batch_size, embed_dim)
 
 		if num_candidates <= chunk_size:
-			return self._score_sp_candidate_chunk(h_emb, r_emb, all_t_embs, dr_emb, para_value)
+			return self._score_hr_candidate_chunk(h_emb, r_emb, all_t_embs, dr_emb, para_value)
 
 		scores = h_emb.new_empty(batch_size, num_candidates)
 		for start in range(0, num_candidates, chunk_size):
 			end = min(start + chunk_size, num_candidates)
-			scores[:, start:end] = self._score_sp_candidate_chunk(
+			scores[:, start:end] = self._score_hr_candidate_chunk(
 				h_emb, r_emb, all_t_embs[start:end], dr_emb, para_value,
 			)
 		return scores
 
-	def score_po_(
+	def score_rt_(
 		self,
 		all_h_embs: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -394,12 +394,12 @@ class DaBRScorer(KGEScorer):
 		chunk_size = self._entity_chunk_size(batch_size, embed_dim)
 
 		if num_heads <= chunk_size:
-			return self._score_po_candidate_chunk(all_h_embs, r_emb, t_emb, dr_emb, para_value)
+			return self._score_rt_candidate_chunk(all_h_embs, r_emb, t_emb, dr_emb, para_value)
 
 		scores = r_emb.new_empty(batch_size, num_heads)
 		for start in range(0, num_heads, chunk_size):
 			end = min(start + chunk_size, num_heads)
-			scores[:, start:end] = self._score_po_candidate_chunk(
+			scores[:, start:end] = self._score_rt_candidate_chunk(
 				all_h_embs[start:end], r_emb, t_emb, dr_emb, para_value,
 			)
 		return scores
@@ -431,7 +431,7 @@ class DaBRScorer(KGEScorer):
 		r_sem, r_add = self._split_au_blocks(right)
 		return self._normalized_pair_score(l_sem, r_sem) + self._normalized_pair_score(l_add, r_add)
 
-	def normalized_score_sp(
+	def normalized_score_hr(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -447,7 +447,7 @@ class DaBRScorer(KGEScorer):
 			self._au_tail_vector(t_emb, r_emb),
 		)
 
-	def normalized_score_po(
+	def normalized_score_rt(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -555,7 +555,7 @@ class DaBRScorer(KGEScorer):
 		c_add = F.normalize(c_add, p=2, dim=-1)
 		return (q_sem.unsqueeze(1) * c_sem).sum(dim=-1) + (q_add.unsqueeze(1) * c_add).sum(dim=-1)
 
-	def _au_sp_scores_chunked(
+	def _au_hr_scores_chunked(
 		self,
 		query: torch.Tensor,
 		all_entity_embs: torch.Tensor,
@@ -593,7 +593,7 @@ class DaBRScorer(KGEScorer):
 				scores[:, start:end] = self._normalized_1vsall_score(query, targets)
 		return scores
 
-	def normalized_score_sp_(
+	def normalized_score_hr_(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -612,13 +612,13 @@ class DaBRScorer(KGEScorer):
 		for row_indices, r_row, (h_sub, dr_sub) in self._group_batch_by_relation(r_emb, h_emb, dr_emb):
 			r_sub = r_row.expand(h_sub.size(0), -1)
 			query = self.build_query(h_sub, r_sub, dr_emb=dr_sub)
-			group_scores = self._au_sp_scores_chunked(
+			group_scores = self._au_hr_scores_chunked(
 				query, all_t_embs, r_row, predict_head=False,
 			)
 			scores.index_copy_(0, row_indices, group_scores)
 		return scores
 
-	def normalized_score_po_(
+	def normalized_score_rt_(
 		self,
 		all_h_embs: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -637,7 +637,7 @@ class DaBRScorer(KGEScorer):
 		for row_indices, r_row, (t_sub, dr_sub) in self._group_batch_by_relation(r_emb, t_emb, dr_emb):
 			r_sub = r_row.expand(t_sub.size(0), -1)
 			query = self.build_inv_query(r_sub, t_sub)
-			group_scores = self._au_sp_scores_chunked(
+			group_scores = self._au_hr_scores_chunked(
 				query,
 				all_h_embs,
 				r_row,
@@ -655,7 +655,7 @@ class DaBRScorer(KGEScorer):
 			degree = getattr(self.args, 'lp_distance_degree', None)
 		return float(degree if degree is not None else 2.0)
 
-	def distance_score_sp_(
+	def distance_score_hr_(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -675,7 +675,7 @@ class DaBRScorer(KGEScorer):
 		for row_indices, r_row, (h_sub, dr_sub) in self._group_batch_by_relation(r_emb, h_emb, dr_emb):
 			r_sub = r_row.expand(h_sub.size(0), -1)
 			query = self.build_query(h_sub, r_sub, dr_emb=dr_sub)
-			group_scores = self._au_sp_scores_chunked(
+			group_scores = self._au_hr_scores_chunked(
 				query,
 				all_t_embs,
 				r_row,
@@ -686,7 +686,7 @@ class DaBRScorer(KGEScorer):
 			scores.index_copy_(0, row_indices, group_scores)
 		return scores
 
-	def distance_score_po_(
+	def distance_score_rt_(
 		self,
 		all_h_embs: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -706,7 +706,7 @@ class DaBRScorer(KGEScorer):
 		for row_indices, r_row, (t_sub, dr_sub) in self._group_batch_by_relation(r_emb, t_emb, dr_emb):
 			r_sub = r_row.expand(t_sub.size(0), -1)
 			query = self.build_inv_query(r_sub, t_sub)
-			group_scores = self._au_sp_scores_chunked(
+			group_scores = self._au_hr_scores_chunked(
 				query,
 				all_h_embs,
 				r_row,

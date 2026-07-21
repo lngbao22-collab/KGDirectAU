@@ -52,7 +52,7 @@ def _init_relation_id_map():
     if relation_id_map is not None:
         return
 
-    from base.embeddings import load_relation_to_idx
+    from base.model import load_relation_to_idx
 
     relation_id_map = load_relation_to_idx(args)
 

@@ -351,7 +351,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest='kgau_bidirectional',
         action='store_true',
         default=None,
-        help='KGAU: train tail-batch and head-batch per epoch (GB-Magic); eval head via po_forward',
+        help='KGAU: train tail-batch and head-batch per epoch (GB-Magic); eval head via rt_forward',
     )
     kgau_bidirectional_group.add_argument(
         '--no-kgau-bidirectional', '--no_kgau_bidirectional',
@@ -476,7 +476,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help='kbc-style reciprocal relations: inverse id = forward id + n_forward, doubled train triples')
     parser.add_argument('--bidirectional-1vsall', '--bidirectional_1vsall',
                         dest='bidirectional_1vsall', action='store_true', default=None,
-                        help='train both tail (sp_) and head (po_) 1-vs-all CE losses')
+                        help='train both tail (hr_) and head (rt_) 1-vs-all CE losses')
     parser.add_argument('--sparse-embeddings', '--sparse_embeddings',
                         dest='sparse_embeddings', action='store_true', default=None,
                         help='use sparse Embedding tables (kbc-style Adagrad)')
@@ -602,7 +602,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help='Optimizer: adam, adamw, adagrad, or sgd')
     parser.add_argument('--kvsall-query-types', '--kvsall_query_types', default=None,
                         nargs='+', type=str, dest='kvsall_query_types',
-                        help='KvsAll query types (e.g. sp_ _po)')
+                        help='KvsAll query types (e.g. hr_ _rt)')
 
     # DaBR-specific hyperparameters.
     parser.add_argument('--lmbda', default=None, type=float,
@@ -673,17 +673,17 @@ def build_parser() -> argparse.ArgumentParser:
         help='Use unweighted relation L3 regularization',
     )
 
-    # Separate object/subject negative sample counts (RotatE, etc.).
-    parser.add_argument('--n-sample-o', '--n_sample_o', default=None, type=int,
-                        dest='n_sample_o', help='Number of object negative samples per positive')
-    parser.add_argument('--n-sample-s', '--n_sample_s', default=None, type=int,
-                        dest='n_sample_s', help='Number of subject negative samples per positive')
+    # Separate head/tail negative sample counts (RotatE, etc.).
+    parser.add_argument('--n-sample-t', '--n_sample_t', default=None, type=int,
+                        dest='n_sample_t', help='Number of tail negative samples per positive')
+    parser.add_argument('--n-sample-h', '--n_sample_h', default=None, type=int,
+                        dest='n_sample_h', help='Number of head negative samples per positive')
 
     # Link-prediction evaluation.
     parser.add_argument('--head-eval-mode', '--head_eval_mode', default=None, type=str,
                         dest='head_eval_mode',
-                        help='Backward LP head scoring: po_forward (direct head, forward r), '
-                             'po_inverse (KvsAll _po), sp_inverse (kbc CE inverse triple), '
+                        help='Backward LP head scoring: rt_forward (direct head, forward r), '
+                             'rt_inverse (KvsAll _rt), hr_inverse (kbc CE inverse triple), '
                              'or auto (infer from strategy; default when omitted)')
     parser.add_argument('--eval-entity-chunk-size', '--eval_entity_chunk_size',
                         default=None, type=int, dest='eval_entity_chunk_size',

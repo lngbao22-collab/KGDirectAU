@@ -63,15 +63,15 @@ class OneVsAllStrategy:
 		t_idx = t_idx.to(self.device)
 
 		self.optimizer.zero_grad()
-		scores_sp = self.model.score_sp_(h_idx, r_idx)
-		loss_sp = self.loss_fn(scores_sp, t_idx)
+		scores_hr = self.model.score_hr_(h_idx, r_idx)
+		loss_hr = self.loss_fn(scores_hr, t_idx)
 
-		if self.bidirectional and hasattr(model_obj.scorer, 'score_po_'):
-			scores_po = self.model.score_po_(r_idx, t_idx)
-			loss_po = self.loss_fn(scores_po, h_idx)
-			loss = (loss_sp + loss_po) / 2.0
+		if self.bidirectional and hasattr(model_obj.scorer, 'score_rt_'):
+			scores_rt = self.model.score_rt_(r_idx, t_idx)
+			loss_rt = self.loss_fn(scores_rt, h_idx)
+			loss = (loss_hr + loss_rt) / 2.0
 		else:
-			loss = loss_sp
+			loss = loss_hr
 
 		batch_triples = torch.stack([h_idx, r_idx, t_idx], dim=1)
 		loss = apply_kge_regularization(

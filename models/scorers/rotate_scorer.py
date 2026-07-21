@@ -4,7 +4,7 @@ import math
 
 import torch
 
-from base.kge_scorer import KGEScorer
+from base.model import KGEScorer
 
 
 def build_scorer(args) -> 'RotatEScorer':
@@ -183,17 +183,17 @@ class RotatEScorer(KGEScorer):
 			return self._hadamard_complex(r_re, r_im, h_re, h_im)
 		return self._hadamard_complex(h_re, h_im, r_re, r_im)
 
-	def score_spo(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def score_hrt(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Return standard RotatE tail scores for matching batches of triples."""
 
 		return self._distance_score(h_emb, r_emb, t_emb, predict_head=False)
 
-	def score_po(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+	def score_rt(self, h_emb: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
 		"""Return standard RotatE head scores for matching batches of triples."""
 
 		return self._distance_score(h_emb, r_emb, t_emb, predict_head=True)
 
-	def score_spo_candidates(
+	def score_hrt_candidates(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -203,7 +203,7 @@ class RotatEScorer(KGEScorer):
 
 		return self._candidate_distance_score(h_emb, r_emb, t_emb, predict_head=False)
 
-	def score_po_candidates(
+	def score_rt_candidates(
 		self,
 		h_emb: torch.Tensor,
 		r_emb: torch.Tensor,
@@ -213,8 +213,8 @@ class RotatEScorer(KGEScorer):
 
 		return self._candidate_distance_score(h_emb, r_emb, t_emb, predict_head=True)
 
-	def score_sp_(self, h_emb: torch.Tensor, r_emb: torch.Tensor, all_t_embs: torch.Tensor) -> torch.Tensor:
-		"""Return 1-vs-all RotatE tail scores using LibKGE-style sp_ broadcasting."""
+	def score_hr_(self, h_emb: torch.Tensor, r_emb: torch.Tensor, all_t_embs: torch.Tensor) -> torch.Tensor:
+		"""Return 1-vs-all RotatE tail scores using LibKGE-style hr_ broadcasting."""
 
 		h_re, h_im = self._split_complex(h_emb)
 		t_re, t_im = self._split_complex(all_t_embs)
@@ -223,8 +223,8 @@ class RotatEScorer(KGEScorer):
 			return self._libkge_distance_1vsall(q_re, q_im, t_re, t_im)
 		return self._margin_distance_1vsall(q_re, q_im, t_re, t_im)
 
-	def score_po_(self, all_h_embs: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-		"""Return 1-vs-all RotatE head scores (LibKGE ``_po`` combine)."""
+	def score_rt_(self, all_h_embs: torch.Tensor, r_emb: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
+		"""Return 1-vs-all RotatE head scores (LibKGE ``_rt`` combine)."""
 
 		h_re, h_im = self._split_complex(all_h_embs)
 		t_re, t_im = self._split_complex(t_emb)
