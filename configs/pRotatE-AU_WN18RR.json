@@ -58,7 +58,7 @@
   "tie_atol": 1e-05,
 
   "normalize_lp_scores": true,
-  "lp_score_mode": "lp_distance",
+  "lp_score_mode": "cosine",
   "lp_distance_degree": 2,
-  "valid_metric": "lp_distance_l2"
+  "valid_metric": "cosine"
 }

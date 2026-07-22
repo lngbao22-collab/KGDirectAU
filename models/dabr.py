@@ -703,6 +703,7 @@ class DaBRSemanticScorer(KGEScorer):
 	"""Semantic matching component ``⟨h⊗r, t⊗r⁻¹⟩`` (hybrid DaBR building block)."""
 
 	bidirectional_score_batch = True
+	kgau_alignment_mode = 'cosine'
 
 	def __init__(self, args=None):
 		super().__init__()
@@ -724,11 +725,28 @@ class DaBRSemanticScorer(KGEScorer):
 			raise ValueError(f'DaBRSemanticScorer only supports combine="hrt", got "{combine}"')
 		return DaBRScorer._semantic_score(h_emb, r_emb, t_emb).view(r_emb.size(0), -1)
 
+	@staticmethod
+	def au_query_target(
+		h_emb: torch.Tensor,
+		r_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+		*,
+		predict_head: bool = False,
+	) -> tuple[torch.Tensor, torch.Tensor]:
+		"""AU pair for the semantic branch: ``(h⊗r, t⊗r⁻¹)`` (swapped for head pred)."""
+
+		hr = DaBRScorer._vec_vec_wise_multiplication(h_emb, r_emb)
+		tr = DaBRScorer._vec_vec_wise_multiplication(t_emb, DaBRScorer._quat_inv(r_emb))
+		if predict_head:
+			return tr, hr
+		return hr, tr
+
 
 class DaBRDistanceScorer(KGEScorer):
 	"""Geometric distance component (hybrid DaBR building block; needs ``dr_emb``)."""
 
 	bidirectional_score_batch = True
+	kgau_alignment_mode = 'cosine'
 
 	def __init__(self, args=None):
 		super().__init__()
@@ -759,13 +777,31 @@ class DaBRDistanceScorer(KGEScorer):
 			h_emb.size(0), -1
 		)
 
+	@staticmethod
+	def au_query_target(
+		h_emb: torch.Tensor,
+		t_emb: torch.Tensor,
+		dr_emb: torch.Tensor,
+		*,
+		predict_head: bool = False,
+	) -> tuple[torch.Tensor, torch.Tensor]:
+		"""AU pair for the distance branch: ``(h+dr, t)`` (swapped for head pred)."""
+
+		h_dr = h_emb + dr_emb
+		if predict_head:
+			return t_emb, h_dr
+		return h_dr, t_emb
+
 
 class DaBRModel(KGEModel):
 	"""Hybrid DaBR binder: primary ``DaBRScorer`` plus semantic/distance components.
 
-	``scorers[0]`` is the full combining scorer used by default LP/AU paths.
-	``scorers[1]`` / ``scorers[2]`` expose the semantic and distance terms for
-	hybrid inspection or custom training loops.
+	``scorers[0]`` is the full combining scorer used by default LP paths
+	(``φ = s + λ d`` in this codebase's higher-is-better form; official OpenKE
+	energy is ``-(s + λ d)``).
+	``scorers[1]`` / ``scorers[2]`` are the semantic and distance components used
+	by KGAU: separate AU losses combined as ``L = L_s + λ L_d`` with the same
+	learnable ``para`` (λ) as the primary scorer.
 	"""
 
 	def __init__(
@@ -793,7 +829,7 @@ class DaBRModel(KGEModel):
 	target_uses_relation = True
 
 	def query_encoder(self, h: torch.Tensor, r: torch.Tensor, **kwargs) -> torch.Tensor:
-		"""Tail-prediction query: ``cat(h⊗r, h+dr)``."""
+		"""Tail-prediction query: ``cat(h⊗r, h+dr)`` (legacy concat AU / cosine LP)."""
 
 		scorer = self.get_scorer()
 		scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
@@ -828,6 +864,52 @@ class DaBRModel(KGEModel):
 	def uniformity_head_encoder(self, h: torch.Tensor, r: torch.Tensor, **kwargs) -> torch.Tensor:
 		del r, kwargs
 		return self.embed_h(h)
+
+	def dabr_combine_weight(self) -> torch.Tensor:
+		"""Learnable λ (``para``) used by original DaBR to fuse semantic + distance."""
+
+		return self.get_scorer(0).para.view(())
+
+	def get_component_queries_targets(
+		self,
+		h: torch.Tensor,
+		r: torch.Tensor,
+		t: torch.Tensor,
+		*,
+		predict_head: bool = False,
+	) -> list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+		"""Per-component AU ``(query, target, head)`` for semantic then distance.
+
+		Semantic aligns ``h⊗r`` with ``t⊗r⁻¹``. Distance aligns ``h+dr`` with ``t``.
+		Head-prediction swaps query/target within each component. Head uniformity
+		uses raw entity rows for both components.
+		"""
+
+		h_emb = self.embed_h(h)
+		r_emb = self.embed_r(r)
+		t_emb = self.embed_t(t)
+		dr_emb = self._scorer_kwargs(r).get('dr_emb')
+		if dr_emb is None:
+			dr_emb = torch.zeros_like(h_emb)
+
+		q_s, t_s = DaBRSemanticScorer.au_query_target(
+			h_emb, r_emb, t_emb, predict_head=predict_head,
+		)
+		q_d, t_d = DaBRDistanceScorer.au_query_target(
+			h_emb, t_emb, dr_emb, predict_head=predict_head,
+		)
+		head = h_emb
+		parts = [(q_s, t_s, head), (q_d, t_d, head)]
+		if self.normalize_au_vectors:
+			parts = [
+				(
+					self._normalize_au_vector(q),
+					self._normalize_au_vector(tgt),
+					self._normalize_au_vector(hd),
+				)
+				for q, tgt, hd in parts
+			]
+		return parts
 
 
 def build_scorers(args) -> list:

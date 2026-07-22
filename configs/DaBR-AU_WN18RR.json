@@ -19,7 +19,7 @@
   "gamma_ent": 1.0,
   "gamma_cross": 0.0,
 
-  "alignment_mode": "dabr_blocks",
+  "alignment_mode": "cosine",
   "average_uniformity_terms": true,
   "entity_uniformity_batch": true,
   "au_deduplicate": false,

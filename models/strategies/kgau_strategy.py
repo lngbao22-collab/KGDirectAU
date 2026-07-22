@@ -442,13 +442,30 @@ class KGAUStrategy(Evaluator):
 
 		# Alignment mode is opt-in: cosine by default for all encoders; only pRotatE-AU sets
 		# ``sin_phase`` (via config and/or encoder ``kgau_alignment_mode``).
+		# DaBR-AU uses per-component scorers with standard cosine AU (not concat ``dabr_blocks``).
 		model_obj = get_model_obj(self.model)
+		self._dabr_component_au = (
+			_is_dabr_encoder(args) and hasattr(model_obj, 'get_component_queries_targets')
+		)
 		encoder_align = getattr(model_obj, 'kgau_alignment_mode', None)
 		alignment_mode = getattr(args, 'alignment_mode', None) or encoder_align or 'cosine'
+		if self._dabr_component_au:
+			if alignment_mode == 'dabr_blocks':
+				logger.info(
+					'KGAU DaBR-AU: ignoring alignment_mode=dabr_blocks; '
+					'using per-component cosine AU (L = L_sem + λ L_dist)',
+				)
+			alignment_mode = 'cosine'
 		normalize_uniformity = getattr(args, 'normalize_uniformity', None)
 		if normalize_uniformity is None:
 			normalize_uniformity = alignment_mode not in ('phase_residual', 'sin_phase')
-		if alignment_mode != 'cosine' and alignment_mode != 'dabr_blocks':
+		if self._dabr_component_au:
+			logger.info(
+				'KGAU DaBR-AU component scorers: separate AU per semantic/distance, '
+				'combine with learnable para (λ); normalize_uniformity=%s',
+				normalize_uniformity,
+			)
+		elif alignment_mode != 'cosine' and alignment_mode != 'dabr_blocks':
 			logger.info('KGAU alignment mode: %s (normalize_uniformity=%s)', alignment_mode, normalize_uniformity)
 		normalize_au = getattr(model_obj, 'normalize_au_vectors', None)
 		normalize_lp = getattr(model_obj, 'normalize_lp_scores', None)
@@ -850,6 +867,7 @@ class KGAUStrategy(Evaluator):
 		h_keys: torch.Tensor,
 		*,
 		batch_triples: torch.Tensor | None = None,
+		apply_regularization: bool = True,
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int, int, float]:
 		"""KGAU loss with deduplicated uniformity inputs (by entity/relation id keys)."""
 
@@ -859,8 +877,95 @@ class KGAUStrategy(Evaluator):
 		au_loss, l_align, l_unif, margin_active_frac = self.criterion(
 			q_raw, t_raw, h_raw, ent_raw, q_uni=q_uni, t_uni=t_uni, h_uni=h_uni,
 			cross_uni=cross_uni, return_stats=True)
-		loss, l_reg = self._apply_embedding_regularization(au_loss, batch_triples=batch_triples)
+		if apply_regularization:
+			loss, l_reg = self._apply_embedding_regularization(au_loss, batch_triples=batch_triples)
+		else:
+			loss, l_reg = au_loss, au_loss.new_zeros(())
 		return loss, l_align, l_unif, l_reg, n_unique_q, n_unique_t, margin_active_frac
+
+	def _dabr_component_au_loss(
+		self,
+		model,
+		ss: torch.Tensor,
+		rs: torch.Tensor,
+		ts: torch.Tensor,
+		q_keys: torch.Tensor,
+		t_keys: torch.Tensor,
+		h_keys: torch.Tensor,
+		*,
+		predict_head: bool = False,
+		batch_triples: torch.Tensor | None = None,
+	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int, int, float]:
+		"""Separate AU on semantic/distance scorers; fuse with DaBR ``para`` (λ).
+
+		``L = L_sem + λ L_dist`` mirrors original DaBR ``φ = s + λ d`` (higher-is-better
+		form) / ``-(s + λ d)`` (official OpenKE energy), using the same learnable λ.
+		"""
+
+		model_obj = get_model_obj(model)
+		components = model_obj.get_component_queries_targets(
+			ss, rs, ts, predict_head=predict_head,
+		)
+		if len(components) != 2:
+			raise RuntimeError(
+				f'DaBR component AU expects 2 (semantic, distance) parts, got {len(components)}',
+			)
+
+		part_losses: list[torch.Tensor] = []
+		align_parts: list[torch.Tensor] = []
+		unif_parts: list[torch.Tensor] = []
+		n_uq = 0
+		n_ut = 0
+		margin_sum = 0.0
+		for q_raw, t_raw, h_raw in components:
+			ent_raw = self._entity_uniformity_vectors_for_loss(
+				model, h_raw, t_raw, h_keys, t_keys,
+				q_raw=q_raw, head_indices=ss, tail_indices=ts, predict_head=predict_head,
+			)
+			part_loss, l_align, l_unif, _, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
+				q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys,
+				batch_triples=batch_triples,
+				apply_regularization=False,
+			)
+			part_losses.append(part_loss)
+			align_parts.append(l_align)
+			unif_parts.append(l_unif)
+			margin_sum += float(margin_active)
+
+		lam = model_obj.dabr_combine_weight()
+		au_loss = part_losses[0] + lam * part_losses[1]
+		l_align = align_parts[0] + lam * align_parts[1]
+		l_unif = unif_parts[0] + lam * unif_parts[1]
+		loss, l_reg = self._apply_embedding_regularization(au_loss, batch_triples=batch_triples)
+		return loss, l_align, l_unif, l_reg, n_uq, n_ut, margin_sum / 2.0
+
+	def _compute_batch_au_loss(
+		self,
+		model,
+		ss: torch.Tensor,
+		rs: torch.Tensor,
+		ts: torch.Tensor,
+		q_keys: torch.Tensor,
+		t_keys: torch.Tensor,
+		h_keys: torch.Tensor,
+		*,
+		predict_head: bool = False,
+		batch_triples: torch.Tensor | None = None,
+	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int, int, float]:
+		"""Dispatch single-scorer AU vs DaBR per-component AU."""
+
+		if self._dabr_component_au:
+			return self._dabr_component_au_loss(
+				model, ss, rs, ts, q_keys, t_keys, h_keys,
+				predict_head=predict_head, batch_triples=batch_triples,
+			)
+		q_raw, t_raw, h_raw = self._au_representation_batch(
+			model, ss, rs, ts, predict_head=predict_head)
+		ent_raw = self._entity_uniformity_vectors_for_loss(
+			model, h_raw, t_raw, h_keys, t_keys,
+			q_raw=q_raw, head_indices=ss, tail_indices=ts, predict_head=predict_head)
+		return self._au_loss_with_distinct_keys(
+			q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
 
 	def _batch_entity_uniformity_vectors(
 		self,
@@ -903,8 +1008,10 @@ class KGAUStrategy(Evaluator):
 		if not self.criterion.gamma_active('ent'):
 			return None
 		kwargs = _entity_embeddings_call_kwargs(model, self.device, self.criterion)
-		# Optional encoder hook (pRotatE-AU only); all other encoders use ``entity_embeddings``.
-		if hasattr(model, 'au_entity_embeddings'):
+		# DaBR component AU uses single-block vectors; skip ``cat(e, e)`` widening.
+		if self._dabr_component_au and hasattr(model, 'entity_embeddings'):
+			ent = model.entity_embeddings(**kwargs)
+		elif hasattr(model, 'au_entity_embeddings'):
 			ent = model.au_entity_embeddings(**kwargs)
 		elif hasattr(model, 'entity_embeddings'):
 			ent = model.entity_embeddings(**kwargs)
@@ -974,8 +1081,8 @@ class KGAUStrategy(Evaluator):
 		if model_name in {'rotate', 'complex', 'protate'}:
 			return max(dim * 2, 1)
 		if model_name == 'dabr':
-			# ``cat(quaternion, quaternion)`` with ``4 * dim`` blocks per side.
-			return max(dim * 8, 1)
+			# Per-component AU vectors are one quaternion block (``4 * dim``).
+			return max(dim * 4, 1)
 		return max(dim, 1)
 
 	def _uniformity_pdist_byte_budget(self) -> int:
@@ -1264,13 +1371,9 @@ class KGAUStrategy(Evaluator):
 		batch_triples = torch.stack([ss, rs, ts], dim=1)
 		if use_amp:
 			with torch.amp.autocast(device_type='cuda'):
-				q_raw, t_raw, h_raw = self._au_representation_batch(
-					model, ss, rs, ts, predict_head=predict_head)
-				ent_raw = self._entity_uniformity_vectors_for_loss(
-					model, h_raw, t_raw, h_keys, t_keys,
-					q_raw=q_raw, head_indices=ss, tail_indices=ts, predict_head=predict_head)
-				au_loss, l_align, l_unif, l_reg, _, _, margin_active = self._au_loss_with_distinct_keys(
-					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
+				au_loss, l_align, l_unif, l_reg, _, _, margin_active = self._compute_batch_au_loss(
+					model, ss, rs, ts, q_keys, t_keys, h_keys,
+					predict_head=predict_head, batch_triples=batch_triples)
 				kge_parts = None
 				if self.au_hybrid_adversarial_bce:
 					kge_parts = self._hybrid_adversarial_bce_loss_parts(
@@ -1283,13 +1386,9 @@ class KGAUStrategy(Evaluator):
 				self.scaler.scale(au_loss).backward()
 			self._optimizer_step(use_amp)
 		else:
-			q_raw, t_raw, h_raw = self._au_representation_batch(
-				model, ss, rs, ts, predict_head=predict_head)
-			ent_raw = self._entity_uniformity_vectors_for_loss(
-				model, h_raw, t_raw, h_keys, t_keys,
-				q_raw=q_raw, head_indices=ss, tail_indices=ts, predict_head=predict_head)
-			au_loss, l_align, l_unif, l_reg, _, _, margin_active = self._au_loss_with_distinct_keys(
-				q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
+			au_loss, l_align, l_unif, l_reg, _, _, margin_active = self._compute_batch_au_loss(
+				model, ss, rs, ts, q_keys, t_keys, h_keys,
+				predict_head=predict_head, batch_triples=batch_triples)
 			if self.au_hybrid_adversarial_bce:
 				kge_parts = self._hybrid_adversarial_bce_loss_parts(
 					ss, rs, ts, predict_head=predict_head)
@@ -1341,26 +1440,16 @@ class KGAUStrategy(Evaluator):
 			batch_triples = torch.stack([ss[start:end], rs[start:end], ts[start:end]], dim=1)
 			if use_amp:
 				with torch.amp.autocast(device_type='cuda'):
-					q_raw, t_raw, h_raw = self._au_representation_batch(
+					loss, l_align, l_unif, l_reg, _, _, margin_active = self._compute_batch_au_loss(
 						model, ss[start:end], rs[start:end], ts[start:end],
-						predict_head=predict_head)
-					ent_raw = self._entity_uniformity_vectors_for_loss(
-						model, h_raw, t_raw, h_keys, t_keys,
-						q_raw=q_raw, head_indices=ss[start:end], tail_indices=ts[start:end],
-						predict_head=predict_head)
-					loss, l_align, l_unif, l_reg, _, _, margin_active = self._au_loss_with_distinct_keys(
-						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
+						q_keys, t_keys, h_keys,
+						predict_head=predict_head, batch_triples=batch_triples)
 				self._backward_au_loss(loss, fraction, use_amp=True)
 			else:
-				q_raw, t_raw, h_raw = self._au_representation_batch(
+				loss, l_align, l_unif, l_reg, _, _, margin_active = self._compute_batch_au_loss(
 					model, ss[start:end], rs[start:end], ts[start:end],
-					predict_head=predict_head)
-				ent_raw = self._entity_uniformity_vectors_for_loss(
-					model, h_raw, t_raw, h_keys, t_keys,
-					q_raw=q_raw, head_indices=ss[start:end], tail_indices=ts[start:end],
-					predict_head=predict_head)
-				loss, l_align, l_unif, l_reg, _, _, margin_active = self._au_loss_with_distinct_keys(
-					q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys, batch_triples=batch_triples)
+					q_keys, t_keys, h_keys,
+					predict_head=predict_head, batch_triples=batch_triples)
 				self._backward_au_loss(loss, fraction, use_amp=False)
 			chunk = end - start
 			loss_sum += loss.item() * chunk
