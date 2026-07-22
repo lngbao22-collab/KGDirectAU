@@ -62,7 +62,7 @@ def compute_logits(model, output_dict: dict, batch_dict: dict) -> ModelOutput:
 
 
 def build_1vsall_loss_fn(args):
-	"""Factory for LibKGE-style 1-vs-all cross-entropy training."""
+	"""Factory for 1-vs-all cross-entropy training."""
 
 	del args
 

@@ -1,4 +1,4 @@
-"""Pairwise margin ranking loss for translational models (LibKGE ``margin_ranking`` loss)."""
+"""Pairwise margin ranking loss for translational models (``margin_ranking`` loss)."""
 
 import math
 

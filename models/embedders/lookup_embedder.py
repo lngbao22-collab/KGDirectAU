@@ -7,18 +7,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from base.model import (
-	KGEEmbedder,
-	_lookup_dropout_rate,
-	_scaled_init,
-	init_lookup_embedding,
-	load_relation_to_idx,
-)
+from base.model import KGEEmbedder, ParameterEmbedder
 from data.dict_hub import get_entity_dict
+from utils.relations import load_relation_to_idx
 
 
 class LookupEmbedder(KGEEmbedder):
-	"""Lightweight embedding table with LibKGE-style init and optional dropout."""
+	"""Lightweight embedding table with configurable init and optional dropout."""
 
 	input_mode = 'indices'
 
@@ -33,15 +28,83 @@ class LookupEmbedder(KGEEmbedder):
 		super().__init__(args, dim=int(dim))
 		self.num_items = int(num_items)
 		self.role = role
-		self.dropout_rate = _lookup_dropout_rate(args, role)
+		self.dropout_rate = self.dropout_rate_from_args(args, role)
 		sparse = bool(getattr(args, 'sparse_embeddings', False))
 		self.embedding = nn.Embedding(self.num_items, self.dim, sparse=sparse)
 		self._reset_parameters()
 
+	@staticmethod
+	def dropout_rate_from_args(args: Any | None, role: str) -> float:
+		if role == 'entity':
+			raw = getattr(args, 'entity_dropout', None) if args is not None else None
+			if raw is None:
+				raw = getattr(args, 'dropout', 0.0) if args is not None else 0.0
+		else:
+			raw = getattr(args, 'relation_dropout', None) if args is not None else None
+			if raw is None:
+				raw = getattr(args, 'dropout', 0.0) if args is not None else 0.0
+		return float(raw or 0.0)
+
+	@staticmethod
+	def scaled_init(module: nn.Module, dim: int, sigma: float = 0.2) -> None:
+		"""DistMult/ComplEx-style scale: ``(dim / σ²)^(1/6)``."""
+
+		scale = (dim / sigma ** 2) ** (1 / 6)
+		for param in module.parameters():
+			param.data.div_(scale)
+
+	@staticmethod
+	def initialize(module: nn.Module, args: Any | None, dim: int, role: str = 'entity') -> None:
+		"""Initialize a lookup embedding table (``lookup_embedder.initialize``)."""
+
+		del role  # reserved for role-specific defaults
+		init_method = str(getattr(args, 'init_method', '') or '').lower() if args is not None else ''
+		if not init_method:
+			model_name = str(getattr(args, 'model', '') or '').lower() if args is not None else ''
+			if any(name in model_name for name in ('rotate', 'protate', 'transe')):
+				margin_raw = getattr(args, 'margin', None)
+				margin = 6.0 if margin_raw is None else float(margin_raw)
+				epsilon_raw = getattr(args, 'epsilon', None)
+				epsilon = 2.0 if epsilon_raw is None else float(epsilon_raw)
+				bound = (margin + epsilon) / max(1, dim)
+				nn.init.uniform_(module.embedding.weight, a=-bound, b=bound)
+				return
+			if model_name in {'distmult', 'distmult-au', 'complex', 'complex-au'}:
+				LookupEmbedder.scaled_init(module, dim)
+				return
+			nn.init.xavier_uniform_(module.embedding.weight)
+			return
+
+		weight = module.embedding.weight
+		if init_method == 'uniform_':
+			low = float(getattr(args, 'init_uniform_a', -0.05))
+			high = getattr(args, 'init_uniform_b', None)
+			high = float(-low if high is None else high)
+			if low > high:
+				low, high = high, low
+			nn.init.uniform_(weight, a=low, b=high)
+		elif init_method in {'xavier_uniform_', 'xavier_uniform'}:
+			gain = float(getattr(args, 'init_xavier_gain', 1.0))
+			nn.init.xavier_uniform_(weight, gain=gain)
+		elif init_method in {'xavier_normal_', 'xavier_normal'}:
+			gain = float(getattr(args, 'init_xavier_gain', 1.0))
+			nn.init.xavier_normal_(weight, gain=gain)
+		elif init_method == 'normal_':
+			mean = float(getattr(args, 'init_normal_mean', 0.0))
+			std = float(getattr(args, 'init_normal_std', 1.0))
+			nn.init.normal_(weight, mean=mean, std=std)
+		elif init_method == 'scaled':
+			LookupEmbedder.scaled_init(module, dim)
+		elif init_method == 'kbc':
+			scale = float(getattr(args, 'init_scale', 1e-3))
+			weight.data.mul_(scale)
+		else:
+			nn.init.xavier_uniform_(weight)
+
 	def _reset_parameters(self) -> None:
 		model_name = str(getattr(self.args, 'model', '')).lower()
 		if getattr(self.args, 'init_method', None):
-			init_lookup_embedding(self, self.args, self.dim, role=self.role)
+			self.initialize(self, self.args, self.dim, role=self.role)
 			return
 		if any(name in model_name for name in ('rotate', 'protate', 'transe', 'transerr')):
 			margin = _float_arg(self.args, 'margin', 6.0)
@@ -181,15 +244,15 @@ def _init_lookup_table(embedder: LookupEmbedder, args, dim: int, role: str) -> N
 	if bool(getattr(args, 'adversarial_training', False)):
 		_adversarial_uniform_init(embedder, args, dim)
 	elif getattr(args, 'init_method', None):
-		init_lookup_embedding(embedder, args, dim, role=role)
+		LookupEmbedder.initialize(embedder, args, dim, role=role)
 	elif _model_name(args) in {'distmult', 'distmult-au', 'complex', 'complex-au'}:
-		_scaled_init(embedder, dim)
+		LookupEmbedder.scaled_init(embedder, dim)
 	else:
 		embedder._reset_parameters()
 
 
 def _init_rotate_weight(weight: nn.Parameter, args, *, role: str, hidden_dim: int) -> None:
-	"""Initialize RotatE/pRotatE parameter tables (LibKGE ``lookup_embedder.initialize``)."""
+	"""Initialize RotatE/pRotatE parameter tables (``lookup_embedder.initialize``)."""
 
 	full_dim = hidden_dim * 2 if role == 'entity' and _is_rotate(args) else hidden_dim
 	if _is_protate(args):
@@ -207,7 +270,7 @@ def _init_rotate_weight(weight: nn.Parameter, args, *, role: str, hidden_dim: in
 			return
 	if getattr(args, 'init_method', None):
 		temp = LookupEmbedder(weight.size(0), full_dim, args, role=role)
-		init_lookup_embedding(temp, args, full_dim, role=role)
+		LookupEmbedder.initialize(temp, args, full_dim, role=role)
 		weight.data.copy_(temp.embedding.weight.data)
 		return
 	bound = _embedding_range(args, hidden_dim)
@@ -215,7 +278,7 @@ def _init_rotate_weight(weight: nn.Parameter, args, *, role: str, hidden_dim: in
 
 
 def build_entity_embedder(args) -> nn.Module:
-	n_ent, n_rel = _counts(args)
+	n_ent, _n_rel = _counts(args)
 	dim = int(getattr(args, 'dim', 200))
 
 	if _is_complex(args):
@@ -227,21 +290,19 @@ def build_entity_embedder(args) -> nn.Module:
 				_adversarial_uniform_init(module, args, dim)
 		elif getattr(args, 'init_scaled', True) and not getattr(args, 'init_method', None):
 			for module in (ent_re, ent_im):
-				_scaled_init(module, entity_dim)
+				LookupEmbedder.scaled_init(module, entity_dim)
 		return ComplExEntityEmbedder(ent_re, ent_im)
 
 	if _is_rotate(args):
 		hidden_dim = dim
 		weight = nn.Parameter(torch.zeros(n_ent, hidden_dim * 2))
 		_init_rotate_weight(weight, args, role='entity', hidden_dim=hidden_dim)
-		from base.model import ParameterEmbedder
 		return ParameterEmbedder(weight)
 
 	if _is_protate(args):
 		hidden_dim = dim
 		weight = nn.Parameter(torch.zeros(n_ent, hidden_dim))
 		_init_rotate_weight(weight, args, role='entity', hidden_dim=hidden_dim)
-		from base.model import ParameterEmbedder
 		return ParameterEmbedder(weight)
 
 	if _is_dabr(args):
@@ -273,14 +334,13 @@ def build_relation_embedder(args) -> nn.Module:
 				_adversarial_uniform_init(module, args, dim)
 		elif getattr(args, 'init_scaled', True) and not getattr(args, 'init_method', None):
 			for module in (rel_re, rel_im):
-				_scaled_init(module, relation_dim)
+				LookupEmbedder.scaled_init(module, relation_dim)
 		return ComplExRelationEmbedder(rel_re, rel_im)
 
 	if _is_rotate(args) or _is_protate(args):
 		hidden_dim = dim
 		weight = nn.Parameter(torch.zeros(n_rel, hidden_dim))
 		_init_rotate_weight(weight, args, role='relation', hidden_dim=hidden_dim)
-		from base.model import ParameterEmbedder
 		return ParameterEmbedder(weight)
 
 	if _is_dabr(args):

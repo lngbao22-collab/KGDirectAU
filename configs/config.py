@@ -467,7 +467,7 @@ def build_parser() -> argparse.ArgumentParser:
         help='Disable 3x relation embedding width',
     )
 
-    # LibKGE-style index KGE training (DistMult, ComplEx, KvsAll, reciprocal relations).
+    # Index KGE training (DistMult, ComplEx, KvsAll, reciprocal relations).
     parser.add_argument('--add-reciprocal-relations', '--add_reciprocal_relations',
                         dest='add_reciprocal_relations', action='store_true',
                         help='train with inverse relations (reciprocal_relations_model)')
@@ -483,7 +483,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--label-smoothing', '--label_smoothing', default=None, type=float,
                         dest='label_smoothing', help='KvsAll label smoothing')
     parser.add_argument('--loss-arg', '--loss_arg', default=None, type=float,
-                        dest='loss_arg', help='BCE loss offset (LibKGE train.loss_arg)')
+                        dest='loss_arg', help='BCE loss offset (train.loss_arg)')
     parser.add_argument('--entity-dropout', '--entity_dropout', default=None, type=float,
                         dest='entity_dropout', help='entity embedding dropout')
     parser.add_argument('--relation-dropout', '--relation_dropout', default=None, type=float,
@@ -495,7 +495,7 @@ def build_parser() -> argparse.ArgumentParser:
                         default=None, type=float, dest='relation_regularize_weight',
                         help='L3 relation embedding regularization weight')
     parser.add_argument('--regularizer', default=None, type=str,
-                        help='regularization backend: n3_kbc (kbc ComplEx N3) or LibKGE L3 (default)')
+                        help='regularization backend: n3_kbc (kbc ComplEx N3) or L3 (default)')
     parser.add_argument('--regularize-weight', '--regularize_weight', default=None, type=float,
                         dest='regularize_weight', help='kbc N3 regularization weight')
     parser.add_argument('--init-method', '--init_method', default=None, type=str,
@@ -641,7 +641,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help='Validation metric for checkpointing/early stop '
                              '(e.g. mrr, hit@10, or scorer label lp_distance_l2)')
 
-    # L3 regularization and weighted LibKGE-style flags.
+    # L3 regularization and weighted regularization flags.
     parser.add_argument('--regularize-p', '--regularize_p', default=None, type=int,
                         dest='regularize_p', help='L3 regularization norm order')
     entity_regularize_weighted_group = parser.add_mutually_exclusive_group()

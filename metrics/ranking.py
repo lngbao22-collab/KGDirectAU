@@ -43,7 +43,7 @@ def ranks_from_score_matrix(
 	tie_rtol: float = 1e-4,
 	tie_atol: float = 1e-5,
 ) -> list[int]:
-	"""Compute 1-based filtered ranks with LibKGE-style tie handling."""
+	"""Compute 1-based filtered ranks with configurable tie handling."""
 
 	scores = score.clone()
 	scores[torch.isnan(scores)] = float('-inf')

@@ -1,5 +1,5 @@
 {
-  "description": "LibKGE-style search for ComplEx-AU with learnable gammas/tuni on WN18RR",
+  "description": "Hyperparameter search for ComplEx-AU with learnable gammas/tuni on WN18RR",
   "base_config": "configs/ComplEx-AU_WN18RR_learnable_gammas_tuni.json",
   "study_dir": "ComplEx-AU_WN18RR_learnable_gammas_tuni",
   "objective": "maximize_valid_mrr",

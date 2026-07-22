@@ -20,11 +20,8 @@ from metrics.ranking import ranking_metrics_from_ranks, ranks_from_score_matrix
 from metrics.classification import classification_metrics, find_global_threshold
 from models.losses.bce_loss import bce_logit_offset
 
-from base.model import (
-	build_forward_to_inverse_index_tensor,
-	resolve_head_eval_mode,
-	uses_forward_examples_for_backward_eval,
-)
+from utils.eval_modes import resolve_head_eval_mode, uses_forward_examples_for_backward_eval
+from utils.relations import build_forward_to_inverse_index_tensor
 from configs.config import args as global_args
 from data.dict_hub import build_tokenizer
 from models.builder import import_module_from_path, is_index_kge_model, load_attr_from_path
@@ -75,14 +72,9 @@ def lp_score_mode_context(model, mode: str, distance_degree: float | None = None
 
 
 def _lp_distance_degree(args=None) -> float:
-	eval_args = args if args is not None else global_args
-	value = getattr(eval_args, 'lp_distance_degree', None)
-	if value is None:
-		value = getattr(eval_args, 'distance_degree_l', None)
-	degree = float(value if value is not None else 2.0)
-	if degree <= 0:
-		raise ValueError('lp_distance_degree must be > 0')
-	return degree
+	from base.model import KGEModel
+
+	return KGEModel.resolve_lp_distance_degree(args if args is not None else global_args)
 
 
 def _lp_distance_label(args=None) -> str:
@@ -185,7 +177,7 @@ def _model_uses_token_inputs(model) -> bool:
 
 
 def _supports_kge_1vsall_eval(model) -> bool:
-	"""Return True when the model exposes LibKGE-style 1-vs-all tail/head scoring."""
+	"""Return True when the model exposes 1-vs-all tail/head scoring."""
 
 	model_obj = get_model_obj(model)
 	if getattr(model_obj, 'training_input_mode', 'indices') == 'tokens':
@@ -207,18 +199,9 @@ def _supports_simkgc_link_eval(model) -> bool:
 def _resolve_relation_index(relation: str, relation_to_idx: dict) -> int:
 	"""Map a relation string to its embedding index."""
 
-	if relation in relation_to_idx:
-		return relation_to_idx[relation]
-	normalized = ' '.join(relation.split())
-	if normalized in relation_to_idx:
-		return relation_to_idx[normalized]
-	if relation.startswith('inverse '):
-		base_relation = relation[len('inverse '):]
-		if f'inverse {base_relation}' in relation_to_idx:
-			return relation_to_idx[f'inverse {base_relation}']
-		if base_relation in relation_to_idx:
-			return relation_to_idx[base_relation]
-	raise KeyError(relation)
+	from utils.relations import resolve_relation_index
+
+	return resolve_relation_index(relation, relation_to_idx)
 
 
 def _relation_lookup(model):
@@ -643,7 +626,7 @@ def _infer_target_indices(examples: Sequence[Example], entity_dict, predict_head
 
 
 def _tie_handling_kwargs(args=None) -> dict:
-	"""Resolve LibKGE-style tie-handling options for ranking."""
+	"""Resolve tie-handling options for ranking (``tie_handling`` / ``tie_method``)."""
 
 	eval_args = args if args is not None else global_args
 	return {
@@ -658,7 +641,7 @@ def _ranks_from_score_matrix(
 	target_indices: torch.Tensor,
 	args=None,
 ) -> list[int]:
-	"""Compute 1-based filtered ranks with LibKGE tie handling."""
+	"""Compute 1-based filtered ranks with configurable tie handling."""
 
 	return ranks_from_score_matrix(score, target_indices, **_tie_handling_kwargs(args))
 

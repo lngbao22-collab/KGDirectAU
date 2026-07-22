@@ -1,4 +1,4 @@
-"""Multi-class cross entropy loss for 1vsAll broadcasting (LibKGE ``ce`` loss)."""
+"""Multi-class cross entropy loss for 1vsAll broadcasting (``ce`` loss)."""
 
 import torch
 
@@ -20,7 +20,7 @@ def compute_ce_loss(scores: torch.Tensor, targets: torch.Tensor) -> torch.Tensor
 
 
 def build_ce_loss_fn(args):
-	"""Factory for LibKGE-style 1-vs-all cross-entropy training."""
+	"""Factory for 1-vs-all cross-entropy training."""
 
 	del args
 

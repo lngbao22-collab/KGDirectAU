@@ -1,4 +1,4 @@
-"""KL divergence loss for KvsAll multi-hot targets (LibKGE ``kl`` loss)."""
+"""KL divergence loss for KvsAll multi-hot targets (``kl`` loss)."""
 
 import torch
 
@@ -15,14 +15,14 @@ def compute_kl_loss(
 
 	For index targets (1vsAll), this reduces to cross-entropy with ``reduction``.
 
-	For multi-hot / smoothed KvsAll labels, matches LibKGE ``KLDivWithSoftmaxKgeLoss``.
+	For multi-hot / smoothed KvsAll labels, matches ``KLDivWithSoftmaxKgeLoss``.
 	"""
 
 	return compute_softmax_loss(scores, targets, reduction=reduction)
 
 
 def build_kl_loss_fn(args):
-	"""Factory for LibKGE-style KvsAll KL training (sum reduction; divide by batch_size in strategy)."""
+	"""Factory for KvsAll KL training (sum reduction; divide by batch_size in strategy)."""
 
 	reduction = str(getattr(args, 'kl_reduction', 'sum'))
 

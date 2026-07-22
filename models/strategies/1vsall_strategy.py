@@ -1,4 +1,4 @@
-"""1-vs-all broadcasting training paradigm (LibKGE ``TrainingJob1vsAll`` flow)."""
+"""1-vs-all broadcasting training paradigm (``TrainingJob1vsAll`` flow)."""
 
 import math
 

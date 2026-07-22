@@ -1,4 +1,4 @@
-"""Standard binary cross entropy loss for KvsAll and multi-hot targets (LibKGE ``bce`` loss)."""
+"""Standard binary cross entropy loss for KvsAll and multi-hot targets (``bce`` loss)."""
 
 import math
 import os
@@ -8,7 +8,7 @@ from models.losses.loss_utilities import compute_bce_loss as _compute_bce_loss
 
 
 def uses_bce_logit_offset(args) -> bool:
-	"""Return True when inference should add the LibKGE BCE logit offset to raw scores."""
+	"""Return True when inference should add the BCE logit offset to raw scores."""
 
 	loss_path = str(getattr(args, 'model_loss_path', '') or '').lower()
 	basename = os.path.basename(loss_path)
@@ -16,7 +16,7 @@ def uses_bce_logit_offset(args) -> bool:
 
 
 def bce_logit_offset(args) -> float:
-	"""Return the BCE logit offset (LibKGE ``train.loss_arg``) for inference."""
+	"""Return the BCE logit offset (``train.loss_arg``) for inference."""
 
 	if not uses_bce_logit_offset(args):
 		return 0.0
@@ -39,7 +39,7 @@ def compute_bce_loss(
 
 	:param scores: ``[batch_size, num_entities]`` or ``[batch_size, 1 + num_neg]`` logits
 	:param targets: Same shape as ``scores`` (multi-hot) or ``[batch_size]`` entity indices
-	:param offset: Optional score offset (LibKGE ``train.loss_arg`` for BCE)
+	:param offset: Optional score offset (``train.loss_arg`` for BCE)
 	:param reduction: ``mean``, ``sum``, or ``none``
 	"""
 
@@ -63,7 +63,7 @@ build_loss_fn = build_bce_loss_fn
 
 
 def build_negsamp_loss_fn(args):
-	"""Factory for LibKGE triple negative-sampling BCE (``train.loss: bce``)."""
+	"""Factory for triple negative-sampling BCE (``train.loss: bce``)."""
 
 	offset = bce_logit_offset(args)
 

@@ -1,4 +1,4 @@
-"""ComplEx scorer and model (LibKGE Hadamard ``score_emb``)."""
+"""ComplEx scorer and model (Hadamard ``score_emb``)."""
 
 import torch
 
@@ -10,7 +10,7 @@ def build_scorer(args) -> 'ComplExScorer':
 
 
 class ComplExScorer(KGEScorer):
-	"""ComplEx score function via a single Hadamard ``score_emb`` (LibKGE / Eq. 11).
+	"""ComplEx score function via a single Hadamard ``score_emb`` (Eq. 11).
 
 	``combine`` modes: ``hrt``, ``hr_``, ``_rt``, ``hr_c``, ``_rt_c``.
 	"""
@@ -32,7 +32,7 @@ class ComplExScorer(KGEScorer):
 		combine: str,
 		**kwargs,
 	) -> torch.Tensor:
-		"""Fast ComplEx scores via Hadamard products (LibKGE / Trouillon et al. Eq. 11)."""
+		"""Fast ComplEx scores via Hadamard products (Trouillon et al. Eq. 11)."""
 
 		del kwargs
 		n = r_emb.size(0)

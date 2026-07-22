@@ -10,14 +10,13 @@ import torch
 from torch import optim
 from torch.optim import Adam
 
-from base.model import use_reciprocal_relations
+from utils.relations import use_reciprocal_relations
 from contextlib import nullcontext
 
 from base.evaluator import Evaluator, log_bidirectional_link_metrics, lp_score_mode_context
 from data.dataloader import collate
 from data.dataset import Dataset, load_data
 from data.dict_hub import get_entity_dict, get_relation_id_map
-from base.model import compute_kge_regularization, embedding_l3_penalty
 from models.builder import (
 	_kge_metric_value,
 	_kge_resolve_monitor_metric,
@@ -96,7 +95,7 @@ def _is_dabr_encoder(args) -> bool:
 def _build_relation_to_idx() -> dict[str, int]:
 	"""Build the relation->index map with distinct IDs for inverse relations."""
 
-	from base.model import add_inverse_relations
+	from utils.relations import add_inverse_relations
 
 	base = {str(key): int(value) for key, value in get_relation_id_map().items()}
 	return add_inverse_relations(base)
@@ -606,16 +605,13 @@ class KGAUStrategy(Evaluator):
 		"""Resolve a relation string to its index.
 
 		Forward and inverse relations have distinct IDs (see
-		``_add_inverse_relations``); inverse relations are looked up directly
+		``add_inverse_relations``); inverse relations are looked up directly
 		rather than collapsed onto their forward counterpart.
 		"""
 
-		if relation in self.relation_to_idx:
-			return self.relation_to_idx[relation]
-		normalized = ' '.join(relation.split())
-		if normalized in self.relation_to_idx:
-			return self.relation_to_idx[normalized]
-		raise KeyError(relation)
+		from utils.relations import resolve_relation_index
+
+		return resolve_relation_index(relation, self.relation_to_idx)
 
 	def _examples_to_tensors(self, examples) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 		"""Convert a list of examples into tensors of head, relation, and tail indices."""
@@ -812,7 +808,8 @@ class KGAUStrategy(Evaluator):
 		"""Optional L3 embedding penalty (adversarial / legacy scalar ``regularization``)."""
 
 		model_obj = get_model_obj(model)
-		return embedding_l3_penalty(model_obj)
+		fn = getattr(model_obj, 'embedding_l3_penalty', None)
+		return fn() if callable(fn) else None
 
 	def _apply_embedding_regularization(
 		self,
@@ -820,17 +817,15 @@ class KGAUStrategy(Evaluator):
 		*,
 		batch_triples: torch.Tensor | None = None,
 	) -> tuple[torch.Tensor, torch.Tensor]:
-		"""Add L3 embedding penalty (LibKGE weights or legacy ``regularization`` scalar)."""
+		"""Add L3 embedding penalty (``entity_regularize_weight`` / ``relation_regularize_weight``, or legacy ``regularization``)."""
 
 		zero = loss.new_zeros(())
 		ent_weight = float(getattr(self.args, 'entity_regularize_weight', 0.0) or 0.0)
 		rel_weight = float(getattr(self.args, 'relation_regularize_weight', 0.0) or 0.0)
 		if ent_weight > 0.0 or rel_weight > 0.0:
-			reg_term = compute_kge_regularization(
-				get_model_obj(self.model),
-				self.args,
-				batch_triples=batch_triples,
-			)
+			model_obj = get_model_obj(self.model)
+			reg_fn = getattr(model_obj, 'regularization_term', None)
+			reg_term = reg_fn(batch_triples=batch_triples) if callable(reg_fn) else None
 			if reg_term is None:
 				return loss, zero
 			return loss + reg_term, reg_term

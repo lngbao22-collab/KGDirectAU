@@ -1,4 +1,4 @@
-"""Optuna hyperparameter search for ComplEx-AU (LibKGE-style space)."""
+"""Optuna hyperparameter search for ComplEx-AU."""
 
 import argparse
 import json

@@ -12,7 +12,7 @@ def build_scorer(args) -> 'RotatEScorer':
 
 
 def _is_libkge_rotate(args) -> bool:
-	"""Return True for plain RotatE (LibKGE ``rotate``), not RotatE-AU or KGE adversarial runs."""
+	"""Return True for plain RotatE (``rotate``), not RotatE-AU or KGE adversarial runs."""
 
 	if bool(getattr(args, 'adversarial_training', False)):
 		return False
@@ -21,7 +21,7 @@ def _is_libkge_rotate(args) -> bool:
 
 @torch.no_grad()
 def normalize_rotate_phases(model) -> None:
-	"""Keep relation phases in [-pi, pi] (LibKGE ``RotatE.normalize_phases``)."""
+	"""Keep relation phases in [-pi, pi] (``RotatE.normalize_phases``)."""
 
 	from utils.device import get_model_obj
 
@@ -90,12 +90,12 @@ class RotatEScorer(KGEScorer):
 
 	@staticmethod
 	def _abs_complex(x_re: torch.Tensor, x_im: torch.Tensor) -> torch.Tensor:
-		# Match LibKGE ``abs_complex``: norm avoids NaN grads at zero vs sqrt(x^2+y^2).
+		# Complex modulus via norm: avoids NaN grads at zero vs sqrt(x^2+y^2).
 		x_re_im = torch.stack((x_re, x_im), dim=0)
 		return torch.norm(x_re_im, dim=0)
 
 	def _norm_nonnegative(self, values: torch.Tensor, dim: int) -> torch.Tensor:
-		"""Lp norm along ``dim`` for non-negative inputs (LibKGE ``norm_nonnegative``)."""
+		"""Lp norm along ``dim`` for non-negative inputs (``norm_nonnegative``)."""
 
 		if self.l_norm == 1.0:
 			return values.sum(dim=dim)

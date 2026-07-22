@@ -1,4 +1,4 @@
-"""Negative-sampling training paradigm (LibKGE ``TrainingJobNegativeSampling`` flow)."""
+"""Negative-sampling training paradigm (``TrainingJobNegativeSampling`` flow)."""
 
 import math
 from typing import Iterable
@@ -17,7 +17,6 @@ from models.builder import (
 	load_sampler,
 	run_index_kge_train_loop,
 )
-from base.model import rotate_style_embedding_l3_penalty
 from models.losses.bce_loss import bce_logit_offset, uses_bce_logit_offset
 from models.losses.loss_utilities import (
 	compute_adversarial_negsamp_losses_chunked,
@@ -546,7 +545,8 @@ class NegSampStrategy:
 		reg_fn = getattr(scorer, 'embedding_regularization', None)
 		if reg_fn is not None:
 			return reg_coef * reg_fn(model_obj)
-		l3_term = rotate_style_embedding_l3_penalty(model_obj)
+		l3_fn = getattr(model_obj, 'rotate_style_embedding_l3_penalty', None)
+		l3_term = l3_fn() if callable(l3_fn) else None
 		if l3_term is not None:
 			return reg_coef * l3_term
 		return None

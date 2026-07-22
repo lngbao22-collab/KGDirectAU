@@ -1,4 +1,4 @@
-"""KvsAll training: LibKGE-style hr_ and _rt queries with KL/BCE multi-hot loss."""
+"""KvsAll training: hr_ and _rt queries with KL/BCE multi-hot loss."""
 
 from collections import defaultdict
 from typing import Any
@@ -6,7 +6,11 @@ from typing import Any
 import torch
 from torch.utils.data import DataLoader
 
-from base.model import load_relation_to_idx, use_reciprocal_relations
+from utils.relations import (
+	build_forward_to_inverse_index_tensor,
+	load_relation_to_idx,
+	use_reciprocal_relations,
+)
 from models.builder import (
 	_resolve_nentity,
 	apply_kge_regularization,
@@ -22,7 +26,7 @@ from utils.logger import logger
 
 
 def resolve_kvsall_query_types(args) -> list[str]:
-	"""Return enabled KvsAll query types (LibKGE default: hr_ and _rt)."""
+	"""Return enabled KvsAll query types (default: hr_ and _rt)."""
 
 	raw = getattr(args, 'kvsall_query_types', None)
 	if raw is None:
@@ -79,7 +83,7 @@ def build_kvsall_rt_index(triples) -> list[dict[str, Any]]:
 
 
 def build_kvsall_index(triples, query_types: list[str] | None = None) -> list[dict[str, Any]]:
-	"""Build LibKGE-style KvsAll examples for the requested query types."""
+	"""Build KvsAll examples for the requested query types."""
 
 	if query_types is None:
 		query_types = ['hr_']
@@ -96,19 +100,7 @@ def _build_forward_to_inverse_map(args, model) -> torch.Tensor | None:
 		return None
 	model_obj = get_model_obj(model)
 	rel_to_idx = getattr(model_obj, 'rel_to_idx', None) or load_relation_to_idx(args)
-	if not rel_to_idx:
-		return None
-	max_idx = max(rel_to_idx.values())
-	mapping = torch.full((max_idx + 1,), -1, dtype=torch.long)
-	for relation, fwd_idx in rel_to_idx.items():
-		if relation.startswith('inverse '):
-			continue
-		inv_idx = rel_to_idx.get(f'inverse {relation}')
-		if inv_idx is not None:
-			mapping[int(fwd_idx)] = int(inv_idx)
-	if int(mapping.ge(0).sum()) == 0:
-		return None
-	return mapping
+	return build_forward_to_inverse_index_tensor(rel_to_idx)
 
 
 def _collate_kvsall_batch(batch: list[dict[str, Any]]) -> dict[str, Any]:
@@ -146,7 +138,7 @@ def _collate_kvsall_batch(batch: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 class KvsAllStrategy:
-	"""Train with LibKGE KvsAll queries (hr_ and/or _rt) and multi-hot labels."""
+	"""Train with KvsAll queries (hr_ and/or _rt) and multi-hot labels."""
 
 	def __init__(
 		self,

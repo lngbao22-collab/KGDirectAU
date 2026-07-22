@@ -11,8 +11,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from base.model import (
-	compute_kge_regularization,
+from utils.relations import (
 	kbc_forward_relation_count,
 	use_kbc_reciprocal_relations,
 	use_reciprocal_relations,
@@ -288,7 +287,7 @@ def build_optimizer(args, parameters, weight_decay: float):
 
 
 def build_lr_scheduler(args, optimizer):
-	"""Build an optional LR scheduler for index-based KGE training (LibKGE-style)."""
+	"""Build an optional LR scheduler for index-based KGE training."""
 
 	from torch.optim.lr_scheduler import ReduceLROnPlateau, StepLR
 
@@ -340,11 +339,10 @@ def apply_kge_regularization(
 	*,
 	batch_triples: torch.Tensor | None = None,
 ) -> torch.Tensor:
-	reg_term = compute_kge_regularization(
-		get_model_obj(model),
-		args,
-		batch_triples=batch_triples,
-	)
+	del args  # regularization reads weights from ``model.args``
+	model_obj = get_model_obj(model)
+	reg_fn = getattr(model_obj, 'regularization_term', None)
+	reg_term = reg_fn(batch_triples=batch_triples) if callable(reg_fn) else None
 	if reg_term is None:
 		return loss
 	return loss + reg_term
@@ -481,9 +479,9 @@ def _kge_should_validate_at_epoch_end(args, epoch: int, *, stopping: bool = Fals
 
 
 def _kge_get_valid_examples(trainer):
-	from base.model import uses_forward_examples_for_backward_eval
 	from data.dataset import Example, load_data, reverse_triplet
 	from utils.device import get_model_obj
+	from utils.eval_modes import uses_forward_examples_for_backward_eval
 
 	if trainer._cached_valid_exs is not None:
 		return trainer._cached_valid_exs, trainer._cached_valid_backward_exs
@@ -840,7 +838,7 @@ def _kge_update_early_stopping_bad_count(
 
 
 def run_epoch_based_kge_train_loop(trainer, dataloader=None) -> dict:
-	"""Epoch-driven training with optional early stopping (LibKGE-style index KGE)."""
+	"""Epoch-driven training with optional early stopping for index KGE."""
 
 	import time
 
@@ -1093,19 +1091,9 @@ def load_strategy_class(args):
 
 
 def _resolve_relation_index(relation: str, relation_to_idx: dict) -> int:
-	if relation in relation_to_idx:
-		return relation_to_idx[relation]
-	normalized = ' '.join(relation.split())
-	if normalized in relation_to_idx:
-		return relation_to_idx[normalized]
-	if relation.startswith('inverse '):
-		base_relation = relation[len('inverse '):]
-		inverse_relation = f'inverse {base_relation}'
-		if inverse_relation in relation_to_idx:
-			return relation_to_idx[inverse_relation]
-		if base_relation in relation_to_idx and f'inverse {base_relation}' not in relation_to_idx:
-			return relation_to_idx[base_relation]
-	raise KeyError(relation)
+	from utils.relations import resolve_relation_index
+
+	return resolve_relation_index(relation, relation_to_idx)
 
 
 def _relation_index_map(model: nn.Module | None) -> dict[str, int]:
