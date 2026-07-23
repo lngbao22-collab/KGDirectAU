@@ -180,29 +180,38 @@ class DaBRScorer(KGEScorer):
 		para: float | torch.Tensor | None = None,
 		**kwargs,
 	) -> torch.Tensor:
-		"""DaBR score ``⟨h⊗r, t⊗r⁻¹⟩ + λ‖(h+dr−t)_Σ‖`` under ``combine``."""
+		"""DaBR score under ``combine``.
+
+		Default: ``⟨h⊗r, t⊗r⁻¹⟩ + λ‖(h+dr−t)_Σ‖``.
+		With ``dabr_au_semantic_only``: semantic quaternion branch only (no distance / λ).
+		"""
 
 		del kwargs
 		n = r_emb.size(0)
+		semantic_only = self._semantic_only()
 		para_value = self._coalesce_para(para, self.para)
 
 		if combine == 'hrt':
+			score_s = self._semantic_score(h_emb, r_emb, t_emb)
+			if semantic_only:
+				return score_s.view(n, -1)
 			if dr_emb is None:
 				dr_emb = torch.zeros_like(h_emb)
-			score_s = self._semantic_score(h_emb, r_emb, t_emb)
 			score_d = self._distance_score(h_emb, dr_emb, t_emb, self.distance_norm)
 			return (score_s + para_value * score_d).view(n, -1)
 
 		if combine == 'hr_c':
 			# t_emb is [B, C, D]
-			if dr_emb is None:
-				dr_emb = torch.zeros_like(h_emb)
 			hr = self._vec_vec_wise_multiplication(h_emb, r_emb).unsqueeze(1)
 			tr = self._vec_vec_wise_multiplication(
 				t_emb,
 				self._quat_inv(r_emb).unsqueeze(1),
 			)
 			score_s = torch.sum(hr * tr, dim=-1)
+			if semantic_only:
+				return score_s
+			if dr_emb is None:
+				dr_emb = torch.zeros_like(h_emb)
 			score_d = self._distance_score(
 				h_emb.unsqueeze(1),
 				dr_emb.unsqueeze(1),
@@ -213,8 +222,6 @@ class DaBRScorer(KGEScorer):
 
 		if combine == '_rt_c':
 			# h_emb is [B, C, D]
-			if dr_emb is None:
-				dr_emb = torch.zeros_like(t_emb)
 			num_heads = h_emb.size(1)
 			hr = self._vec_vec_wise_multiplication(h_emb, r_emb.unsqueeze(1))
 			tr = self._vec_vec_wise_multiplication(
@@ -222,6 +229,10 @@ class DaBRScorer(KGEScorer):
 				self._quat_inv(r_emb).unsqueeze(1),
 			)
 			score_s = torch.sum(hr * tr, dim=-1)
+			if semantic_only:
+				return score_s
+			if dr_emb is None:
+				dr_emb = torch.zeros_like(t_emb)
 			score_d = self._distance_score(
 				h_emb,
 				dr_emb.unsqueeze(1).expand(-1, num_heads, -1),
@@ -347,6 +358,8 @@ class DaBRScorer(KGEScorer):
 		)
 
 		score_s = torch.sum(hr * tr, dim=-1)
+		if self._semantic_only():
+			return score_s
 		score_d = self._distance_score(
 			h_emb.unsqueeze(1),
 			dr_emb.unsqueeze(1),
@@ -376,6 +389,8 @@ class DaBRScorer(KGEScorer):
 		)
 
 		score_s = torch.sum(hr * tr, dim=-1)
+		if self._semantic_only():
+			return score_s
 		score_d = self._distance_score(
 			h_emb_chunk.unsqueeze(0).expand(r_emb.size(0), num_heads, -1),
 			dr_emb.unsqueeze(1).expand(-1, num_heads, -1),
@@ -404,6 +419,11 @@ class DaBRScorer(KGEScorer):
 
 		return self.para.reshape(())
 
+	def _semantic_only(self) -> bool:
+		"""DaBR-AU semantic-only mode: rank on the quaternion branch alone (no distance)."""
+
+		return bool(getattr(self.args, 'dabr_au_semantic_only', False))
+
 	@classmethod
 	def _normalized_pair_score(self, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
 		"""Cosine similarity along the last dimension."""
@@ -413,12 +433,19 @@ class DaBRScorer(KGEScorer):
 		return torch.sum(left * right, dim=-1)
 
 	def _normalized_block_pair_score(self, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
-		"""λ-weighted per-block cosine ``cos_sem + λ·cos_add`` (matches DaBR ``φ`` fusion)."""
+		"""DaBR-AU cosine LP over AU blocks.
+
+		- Semantic-only: cosine on the quaternion branch (matches single-sphere AU training).
+		- Hybrid: original semantic dot ``⟨h⊗r, t⊗r⁻¹⟩`` + λ·cosine(additive).
+		"""
 
 		l_sem, l_add = self._split_au_blocks(left)
 		r_sem, r_add = self._split_au_blocks(right)
+		if self._semantic_only():
+			return self._normalized_pair_score(l_sem, r_sem)
+		semantic = torch.sum(l_sem * r_sem, dim=-1)
 		lam = self._lp_combine_weight()
-		return self._normalized_pair_score(l_sem, r_sem) + lam * self._normalized_pair_score(l_add, r_add)
+		return semantic + lam * self._normalized_pair_score(l_add, r_add)
 
 	def normalized_score_hr(
 		self,
@@ -533,16 +560,23 @@ class DaBRScorer(KGEScorer):
 		return -(dist_sem + dist_add)
 
 	def _normalized_1vsall_score(self, query: torch.Tensor, candidates: torch.Tensor) -> torch.Tensor:
-		"""1-vs-all λ-weighted per-block cosine ``cos_sem + λ·cos_add``."""
+		"""1-vs-all DaBR-AU cosine LP over AU blocks.
+
+		Semantic-only uses cosine on the quaternion branch; hybrid uses original
+		semantic dot + λ·cosine(additive).
+		"""
 
 		q_sem, q_add = self._split_au_blocks(query)
 		c_sem, c_add = self._split_au_blocks(candidates)
-		q_sem = F.normalize(q_sem, p=2, dim=-1)
+		if self._semantic_only():
+			q_sem = F.normalize(q_sem, p=2, dim=-1)
+			c_sem = F.normalize(c_sem, p=2, dim=-1)
+			return (q_sem.unsqueeze(1) * c_sem).sum(dim=-1)
+		semantic = (q_sem.unsqueeze(1) * c_sem).sum(dim=-1)
 		q_add = F.normalize(q_add, p=2, dim=-1)
-		c_sem = F.normalize(c_sem, p=2, dim=-1)
 		c_add = F.normalize(c_add, p=2, dim=-1)
 		lam = self._lp_combine_weight()
-		return (q_sem.unsqueeze(1) * c_sem).sum(dim=-1) + lam * (q_add.unsqueeze(1) * c_add).sum(dim=-1)
+		return semantic + lam * (q_add.unsqueeze(1) * c_add).sum(dim=-1)
 
 	def _au_hr_scores_chunked(
 		self,
@@ -891,24 +925,29 @@ class DaBRModel(KGEModel):
 
 		Semantic aligns ``h⊗r`` with ``t⊗r⁻¹``. Distance aligns ``h+dr`` with ``t``.
 		Head-prediction swaps query/target within each component. Head uniformity
-		uses raw entity rows for both components.
+		uses raw entity rows for both components. With ``dabr_au_semantic_only`` only
+		the semantic component is returned (single-sphere AU, no distance/λ fusion).
 		"""
 
 		h_emb = self.embed_h(h)
 		r_emb = self.embed_r(r)
 		t_emb = self.embed_t(t)
-		dr_emb = self._scorer_kwargs(r).get('dr_emb')
-		if dr_emb is None:
-			dr_emb = torch.zeros_like(h_emb)
 
 		q_s, t_s = DaBRSemanticScorer.au_query_target(
 			h_emb, r_emb, t_emb, predict_head=predict_head,
 		)
-		q_d, t_d = DaBRDistanceScorer.au_query_target(
-			h_emb, t_emb, dr_emb, predict_head=predict_head,
-		)
 		head = h_emb
-		parts = [(q_s, t_s, head), (q_d, t_d, head)]
+		# Semantic-only mode: single-sphere AU on the quaternion branch (no distance term).
+		if bool(getattr(self.args, 'dabr_au_semantic_only', False)):
+			parts = [(q_s, t_s, head)]
+		else:
+			dr_emb = self._scorer_kwargs(r).get('dr_emb')
+			if dr_emb is None:
+				dr_emb = torch.zeros_like(h_emb)
+			q_d, t_d = DaBRDistanceScorer.au_query_target(
+				h_emb, t_emb, dr_emb, predict_head=predict_head,
+			)
+			parts = [(q_s, t_s, head), (q_d, t_d, head)]
 		if self.normalize_au_vectors:
 			parts = [
 				(

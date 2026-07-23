@@ -195,6 +195,9 @@ def _build_aux_embedders(args) -> dict[str, nn.Module] | None:
 	model_name = str(getattr(args, 'model', '') or '').lower()
 	if 'dabr' not in model_name:
 		return None
+	# Semantic-only DaBR-AU does not use the relation-drift table.
+	if config_bool(args, 'dabr_au_semantic_only', False):
+		return None
 	embedder_path = _config_path(args, 'model_embedder_path')
 	return {'dr': load_attr_from_path(embedder_path, 'build_dr_embedder')(args)}
 

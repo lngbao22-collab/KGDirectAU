@@ -453,18 +453,25 @@ class KGAUStrategy(Evaluator):
 			if alignment_mode == 'dabr_blocks':
 				logger.info(
 					'KGAU DaBR-AU: ignoring alignment_mode=dabr_blocks; '
-					'using per-component cosine AU (L = L_sem + λ L_dist)',
+					'using per-component cosine AU',
 				)
 			alignment_mode = 'cosine'
 		normalize_uniformity = getattr(args, 'normalize_uniformity', None)
 		if normalize_uniformity is None:
 			normalize_uniformity = alignment_mode not in ('phase_residual', 'sin_phase')
 		if self._dabr_component_au:
-			logger.info(
-				'KGAU DaBR-AU component scorers: separate AU per semantic/distance, '
-				'combine with learnable para (λ); normalize_uniformity=%s',
-				normalize_uniformity,
-			)
+			if config_bool(args, 'dabr_au_semantic_only', False):
+				logger.info(
+					'KGAU DaBR-AU semantic-only: single-sphere AU on quaternion branch '
+					'(no distance / λ); normalize_uniformity=%s',
+					normalize_uniformity,
+				)
+			else:
+				logger.info(
+					'KGAU DaBR-AU component scorers: separate AU per semantic/distance, '
+					'combine with learnable para (λ); normalize_uniformity=%s',
+					normalize_uniformity,
+				)
 		elif alignment_mode != 'cosine' and alignment_mode != 'dabr_blocks':
 			logger.info('KGAU alignment mode: %s (normalize_uniformity=%s)', alignment_mode, normalize_uniformity)
 		normalize_au = getattr(model_obj, 'normalize_au_vectors', None)
@@ -898,17 +905,18 @@ class KGAUStrategy(Evaluator):
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int, int, float]:
 		"""Separate AU on semantic/distance scorers; fuse with DaBR ``para`` (λ).
 
-		``L = L_sem + λ L_dist`` mirrors original DaBR ``φ = s + λ d`` (higher-is-better
-		form) / ``-(s + λ d)`` (official OpenKE energy), using the same learnable λ.
+		Default: ``L = L_sem + λ L_dist`` (mirrors DaBR ``φ = s + λ d``).
+		With ``dabr_au_semantic_only``: ``L = L_sem`` only (single-sphere AU).
 		"""
 
 		model_obj = get_model_obj(model)
 		components = model_obj.get_component_queries_targets(
 			ss, rs, ts, predict_head=predict_head,
 		)
-		if len(components) != 2:
+		if len(components) not in (1, 2):
 			raise RuntimeError(
-				f'DaBR component AU expects 2 (semantic, distance) parts, got {len(components)}',
+				'DaBR component AU expects 1 (semantic-only) or 2 (semantic, distance) parts, '
+				f'got {len(components)}',
 			)
 
 		part_losses: list[torch.Tensor] = []
@@ -932,12 +940,18 @@ class KGAUStrategy(Evaluator):
 			unif_parts.append(l_unif)
 			margin_sum += float(margin_active)
 
-		lam = model_obj.dabr_combine_weight()
-		au_loss = part_losses[0] + lam * part_losses[1]
-		l_align = align_parts[0] + lam * align_parts[1]
-		l_unif = unif_parts[0] + lam * unif_parts[1]
+		if len(components) == 1:
+			# Semantic-only: single-sphere AU, no distance term / no λ fusion.
+			au_loss = part_losses[0]
+			l_align = align_parts[0]
+			l_unif = unif_parts[0]
+		else:
+			lam = model_obj.dabr_combine_weight()
+			au_loss = part_losses[0] + lam * part_losses[1]
+			l_align = align_parts[0] + lam * align_parts[1]
+			l_unif = unif_parts[0] + lam * unif_parts[1]
 		loss, l_reg = self._apply_embedding_regularization(au_loss, batch_triples=batch_triples)
-		return loss, l_align, l_unif, l_reg, n_uq, n_ut, margin_sum / 2.0
+		return loss, l_align, l_unif, l_reg, n_uq, n_ut, margin_sum / max(len(components), 1)
 
 	def _compute_batch_au_loss(
 		self,

@@ -622,6 +622,16 @@ def build_parser() -> argparse.ArgumentParser:
         '--no-dabr-reg-include-negatives', '--no_dabr_reg_include_negatives',
         dest='dabr_reg_include_negatives', action='store_false',
         help='DaBR: regularize over positive triples only (default)')
+    dabr_semantic_only_group = parser.add_mutually_exclusive_group()
+    dabr_semantic_only_group.add_argument(
+        '--dabr-au-semantic-only', '--dabr_au_semantic_only',
+        dest='dabr_au_semantic_only', action='store_true', default=None,
+        help='DaBR-AU: single-sphere AU on the semantic (quaternion) branch only; '
+             'drop the distance/translation component in training and link prediction')
+    dabr_semantic_only_group.add_argument(
+        '--no-dabr-au-semantic-only', '--no_dabr_au_semantic_only',
+        dest='dabr_au_semantic_only', action='store_false',
+        help='DaBR-AU: use both semantic and distance components (default)')
     parser.add_argument('--n-batches', '--n_batches', default=None, type=int,
                         dest='n_batches', help='Training batches per epoch (OpenKE nbatches; sets batch_size)')
     openke_batch_group = parser.add_mutually_exclusive_group()
