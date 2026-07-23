@@ -21,7 +21,7 @@
 
   "alignment_mode": "cosine",
   "average_uniformity_terms": true,
-  "entity_uniformity_batch": false,
+  "entity_uniformity_batch": true,
   "au_deduplicate": false,
   "tuni": 2,
 
