@@ -14,8 +14,8 @@
 
   "max_uniformity_samples": 0,
   "normalize_au_vectors": true,
-  "gamma_q": 1.0,
-  "gamma_t": 1.0,
+  "gamma_q": 0.0,
+  "gamma_t": 0.0,
   "gamma_ent": 1.0,
   "gamma_cross": 0.0,
 
@@ -23,9 +23,9 @@
   "average_uniformity_terms": true,
   "entity_uniformity_batch": true,
   "au_deduplicate": false,
-  "tuni": 4,
+  "tuni": 2,
 
-  "dim": 64,
+  "dim": 128,
 
   "dabr_au_semantic_only": true,
   "lmbda": 0.5,
