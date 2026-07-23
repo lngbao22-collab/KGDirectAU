@@ -395,6 +395,15 @@ class DaBRScorer(KGEScorer):
 		mid = vectors.size(-1) // 2
 		return vectors[..., :mid], vectors[..., mid:]
 
+	def _lp_combine_weight(self) -> torch.Tensor:
+		"""Learnable λ (``para``) fusing the additive branch, mirroring DaBR ``φ = s + λ d``.
+
+		Cosine LP must reuse the same λ as training (``L = L_sem + λ L_dist``) so the
+		ranked geometry matches the objective instead of weighting both blocks equally.
+		"""
+
+		return self.para.reshape(())
+
 	@classmethod
 	def _normalized_pair_score(self, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
 		"""Cosine similarity along the last dimension."""
@@ -403,13 +412,13 @@ class DaBRScorer(KGEScorer):
 		right = F.normalize(right, p=2, dim=-1)
 		return torch.sum(left * right, dim=-1)
 
-	@classmethod
 	def _normalized_block_pair_score(self, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
-		"""Sum of per-block cosines (semantic + additive), matching DaBR ``φ`` structure."""
+		"""λ-weighted per-block cosine ``cos_sem + λ·cos_add`` (matches DaBR ``φ`` fusion)."""
 
 		l_sem, l_add = self._split_au_blocks(left)
 		r_sem, r_add = self._split_au_blocks(right)
-		return self._normalized_pair_score(l_sem, r_sem) + self._normalized_pair_score(l_add, r_add)
+		lam = self._lp_combine_weight()
+		return self._normalized_pair_score(l_sem, r_sem) + lam * self._normalized_pair_score(l_add, r_add)
 
 	def normalized_score_hr(
 		self,
@@ -523,9 +532,8 @@ class DaBRScorer(KGEScorer):
 		dist_add = torch.norm(q_add.unsqueeze(1) - c_add, p=degree, dim=-1)
 		return -(dist_sem + dist_add)
 
-	@classmethod
 	def _normalized_1vsall_score(self, query: torch.Tensor, candidates: torch.Tensor) -> torch.Tensor:
-		"""1-vs-all sum of per-block cosines between query and candidates."""
+		"""1-vs-all λ-weighted per-block cosine ``cos_sem + λ·cos_add``."""
 
 		q_sem, q_add = self._split_au_blocks(query)
 		c_sem, c_add = self._split_au_blocks(candidates)
@@ -533,7 +541,8 @@ class DaBRScorer(KGEScorer):
 		q_add = F.normalize(q_add, p=2, dim=-1)
 		c_sem = F.normalize(c_sem, p=2, dim=-1)
 		c_add = F.normalize(c_add, p=2, dim=-1)
-		return (q_sem.unsqueeze(1) * c_sem).sum(dim=-1) + (q_add.unsqueeze(1) * c_add).sum(dim=-1)
+		lam = self._lp_combine_weight()
+		return (q_sem.unsqueeze(1) * c_sem).sum(dim=-1) + lam * (q_add.unsqueeze(1) * c_add).sum(dim=-1)
 
 	def _au_hr_scores_chunked(
 		self,

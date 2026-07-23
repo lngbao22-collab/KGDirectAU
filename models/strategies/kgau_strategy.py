@@ -1037,6 +1037,15 @@ class KGAUStrategy(Evaluator):
 		"""Entity vectors for ``gamma_ent``: batch dedup (text) or full table (embedding encoders)."""
 
 		if config_bool(self.args, 'entity_uniformity_batch', False) or self.uses_text_inputs:
+			# DaBR-AU per-component AU: keep entity uniformity in the SAME per-component
+			# cosine space as alignment. Pool the component query/target AU vectors
+			# (semantic h⊗r / t⊗r⁻¹, distance h+dr / t) instead of widening raw entities
+			# via ``au_entity_embeddings`` (cat(e, e)), which lives in a different space
+			# and mismatches the per-component (L_sem + λ L_dist) objective.
+			if self._dabr_component_au and q_raw is not None and t_raw is not None:
+				head_vecs = t_raw if predict_head else q_raw
+				tail_vecs = q_raw if predict_head else t_raw
+				return self._batch_entity_uniformity_vectors(head_vecs, tail_vecs, h_keys, t_keys)
 			if (
 				not self.uses_text_inputs
 				and head_indices is not None
