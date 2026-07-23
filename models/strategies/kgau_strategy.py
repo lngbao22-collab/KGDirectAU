@@ -468,7 +468,7 @@ class KGAUStrategy(Evaluator):
 				)
 			elif config_bool(args, 'dabr_au_distance_only', False):
 				logger.info(
-					'KGAU DaBR-AU distance-only: TransE-style AU on h+dr ↔ t '
+					'KGAU DaBR-AU distance-only: TransE-style AU on (h+dr, t) / (t-dr, h) '
 					'(no semantic / λ); normalize_uniformity=%s',
 					normalize_uniformity,
 				)

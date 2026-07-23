@@ -340,12 +340,14 @@ class DaBRScorer(KGEScorer):
 
 
 	def au_entity_embeddings(self, entity_emb: torch.Tensor) -> torch.Tensor:
-		"""Widen raw entities to two-block AU width via ``cat(e, e)``.
+		"""Map entity rows into the LP / uniformity vector space.
 
-		Used for entity-uniformity / LP table wrappers. Alignment and cosine LP
-		still build relation-aware targets via ``_au_tail_vector`` / ``_au_head_vector``.
+		Distance-only (TransE-style) keeps raw entities. Hybrid / semantic AU widens
+		via ``cat(e, e)`` for two-block concat vectors.
 		"""
 
+		if self._distance_only():
+			return entity_emb
 		return torch.cat([entity_emb, entity_emb], dim=-1)
 
 	# ------------------------------------------------------------------
@@ -508,9 +510,12 @@ class DaBRScorer(KGEScorer):
 		dr_emb: torch.Tensor | None = None,
 		**kwargs,
 	) -> torch.Tensor:
-		"""1-to-1 block-cosine score for tail prediction."""
+		"""1-to-1 cosine score for tail prediction."""
 
+		del kwargs
 		dr_emb = self._coalesce_dr(h_emb, dr_emb)
+		if self._distance_only():
+			return self._normalized_pair_score(h_emb + dr_emb, t_emb)
 		return self._normalized_block_pair_score(
 			self._au_head_vector(h_emb, r_emb, dr_emb),
 			self._au_tail_vector(t_emb, r_emb),
@@ -524,18 +529,25 @@ class DaBRScorer(KGEScorer):
 		dr_emb: torch.Tensor | None = None,
 		**kwargs,
 	) -> torch.Tensor:
-		"""1-to-1 block-cosine score for head prediction."""
+		"""1-to-1 cosine score for head prediction."""
 
+		del kwargs
 		dr_emb = self._coalesce_dr(h_emb, dr_emb)
+		if self._distance_only():
+			return self._normalized_pair_score(t_emb - dr_emb, h_emb)
 		return self._normalized_block_pair_score(
 			self._au_head_vector(h_emb, r_emb, dr_emb),
 			self._au_tail_vector(t_emb, r_emb),
 		)
 
-	@staticmethod
-	def _raw_from_entity_au(entity_au: torch.Tensor) -> torch.Tensor:
-		"""Recover raw entity rows from ``au_entity_embeddings`` (``cat(e, e)``)."""
+	def _raw_from_entity_au(self, entity_au: torch.Tensor) -> torch.Tensor:
+		"""Recover raw entity rows from LP entity table vectors.
 
+		Hybrid/semantic widen via ``cat(e, e)``; distance-only keeps raw ``e``.
+		"""
+
+		if self._distance_only():
+			return entity_au
 		return entity_au[..., : entity_au.size(-1) // 2]
 
 	def _group_batch_by_relation(
@@ -688,14 +700,20 @@ class DaBRScorer(KGEScorer):
 		dr_emb: torch.Tensor | None = None,
 		**kwargs,
 	) -> torch.Tensor:
-		"""1-vs-all block-cosine tail scores (candidates via ``cat(t⊗r⁻¹, t)``)."""
+		"""1-vs-all cosine tail scores.
 
-		dr_emb = self._coalesce_dr(h_emb, dr_emb)
+		Distance-only: TransE-style ``cos(h+dr, e)`` against the raw entity table.
+		"""
+
+		del kwargs
 		all_t_embs = self._raw_from_entity_au(all_t_embs)
-		batch_size = h_emb.size(0)
-		num_candidates = all_t_embs.size(0)
+		dr_emb = self._coalesce_dr(h_emb, dr_emb)
+		if self._distance_only():
+			query = F.normalize(h_emb + dr_emb, p=2, dim=-1)
+			cand = F.normalize(all_t_embs, p=2, dim=-1)
+			return torch.mm(query, cand.t())
 
-		scores = h_emb.new_empty(batch_size, num_candidates)
+		scores = h_emb.new_empty(h_emb.size(0), all_t_embs.size(0))
 		for row_indices, r_row, (h_sub, dr_sub) in self._group_batch_by_relation(r_emb, h_emb, dr_emb):
 			r_sub = r_row.expand(h_sub.size(0), -1)
 			query = self._au_head_vector(h_sub, r_sub, dr_sub)
@@ -713,14 +731,20 @@ class DaBRScorer(KGEScorer):
 		dr_emb: torch.Tensor | None = None,
 		**kwargs,
 	) -> torch.Tensor:
-		"""1-vs-all block-cosine head scores (candidates via ``cat(h⊗r, h+dr)``)."""
+		"""1-vs-all cosine head scores.
 
-		dr_emb = self._coalesce_dr(t_emb, dr_emb)
+		Distance-only: TransE-style ``cos(t-dr, e)`` against the raw entity table.
+		"""
+
+		del kwargs
 		all_h_embs = self._raw_from_entity_au(all_h_embs)
-		batch_size = t_emb.size(0)
-		num_candidates = all_h_embs.size(0)
+		dr_emb = self._coalesce_dr(t_emb, dr_emb)
+		if self._distance_only():
+			query = F.normalize(t_emb - dr_emb, p=2, dim=-1)
+			cand = F.normalize(all_h_embs, p=2, dim=-1)
+			return torch.mm(query, cand.t())
 
-		scores = t_emb.new_empty(batch_size, num_candidates)
+		scores = t_emb.new_empty(t_emb.size(0), all_h_embs.size(0))
 		for row_indices, r_row, (t_sub, dr_sub) in self._group_batch_by_relation(r_emb, t_emb, dr_emb):
 			r_sub = r_row.expand(t_sub.size(0), -1)
 			query = self._au_tail_vector(t_sub, r_sub)
@@ -892,12 +916,17 @@ class DaBRDistanceScorer(KGEScorer):
 		*,
 		predict_head: bool = False,
 	) -> tuple[torch.Tensor, torch.Tensor]:
-		"""AU pair for the distance branch: ``(h+dr, t)`` (swapped for head pred)."""
+		"""AU pair for the distance branch (TransE-style).
 
-		h_dr = h_emb + dr_emb
+		Tail prediction: ``(h+dr, t)``.
+		Head prediction: ``(t-dr, h)`` — same geometry as TransE ``inverse_query``,
+		not ``(t, h+dr)``. Cosine(t, h+dr) ≠ cosine(t-dr, h) under unit-norm AU,
+		so the TransE form is required for head-batch training and rt_forward eval.
+		"""
+
 		if predict_head:
-			return t_emb, h_dr
-		return h_dr, t_emb
+			return t_emb - dr_emb, h_emb
+		return h_emb + dr_emb, t_emb
 
 
 class DaBRModel(KGEModel):
@@ -932,25 +961,46 @@ class DaBRModel(KGEModel):
 			args=args,
 			aux_embedders=aux_embedders,
 		)
+		# Distance-only is TransE-style: targets are raw entities (not relation-composed).
+		self.target_uses_relation = not bool(
+			getattr(args, 'dabr_au_distance_only', False) if args is not None else False
+		)
 
 	target_uses_relation = True
 
-	def query_encoder(self, h: torch.Tensor, r: torch.Tensor, **kwargs) -> torch.Tensor:
-		"""Tail-prediction query: ``cat(h⊗r, h+dr)`` (legacy concat AU / cosine LP)."""
+	def _distance_only_mode(self) -> bool:
+		return bool(getattr(self.args, 'dabr_au_distance_only', False))
 
-		scorer = self.get_scorer()
+	def query_encoder(self, h: torch.Tensor, r: torch.Tensor, **kwargs) -> torch.Tensor:
+		"""Tail-prediction query.
+
+		Distance-only: TransE-style ``h+dr``. Otherwise legacy ``cat(h⊗r, h+dr)``.
+		"""
+
 		scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
-		return scorer._au_head_vector(
-			self.embed_h(h),
-			self.embed_r(r),
-			scorer_kwargs.get('dr_emb'),
-		)
+		h_emb = self.embed_h(h)
+		dr_emb = scorer_kwargs.get('dr_emb')
+		if self._distance_only_mode():
+			if dr_emb is None:
+				dr_emb = torch.zeros_like(h_emb)
+			return h_emb + dr_emb
+		return self.get_scorer()._au_head_vector(h_emb, self.embed_r(r), dr_emb)
 
 	def inverse_query_encoder(self, r: torch.Tensor, t: torch.Tensor, **kwargs) -> torch.Tensor:
-		"""Head-prediction query: ``cat(t⊗r⁻¹, t)``."""
+		"""Head-prediction query.
 
+		Distance-only: TransE-style ``t-dr``. Otherwise legacy ``cat(t⊗r⁻¹, t)``.
+		"""
+
+		scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
+		t_emb = self.embed_t(t)
+		dr_emb = scorer_kwargs.get('dr_emb')
+		if self._distance_only_mode():
+			if dr_emb is None:
+				dr_emb = torch.zeros_like(t_emb)
+			return t_emb - dr_emb
 		del kwargs
-		return self.get_scorer()._au_tail_vector(self.embed_t(t), self.embed_r(r))
+		return self.get_scorer()._au_tail_vector(t_emb, self.embed_r(r))
 
 	def target_encoder(
 		self,
@@ -987,8 +1037,8 @@ class DaBRModel(KGEModel):
 	) -> list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
 		"""Per-component AU ``(query, target, head)`` for semantic and/or distance.
 
-		Semantic aligns ``h⊗r`` with ``t⊗r⁻¹``. Distance aligns ``h+dr`` with ``t``
-		(TransE-style). Modes:
+		Semantic aligns ``h⊗r`` with ``t⊗r⁻¹``. Distance is TransE-style:
+		``(h+dr, t)`` for tail batches and ``(t-dr, h)`` for head batches.
 
 		- ``dabr_au_semantic_only``: semantic sphere only
 		- ``dabr_au_distance_only``: distance / translation sphere only

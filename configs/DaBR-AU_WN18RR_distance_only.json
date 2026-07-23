@@ -14,8 +14,8 @@
 
   "max_uniformity_samples": 0,
   "normalize_au_vectors": true,
-  "gamma_q": 0.0,
-  "gamma_t": 0.0,
+  "gamma_q": 1.0,
+  "gamma_t": 1.0,
   "gamma_ent": 1.0,
   "gamma_cross": 0.0,
 
@@ -56,5 +56,6 @@
   "tie_handling": "rounded_mean_rank",
   "tie_rtol": 0.0001,
   "tie_atol": 1e-05,
-  "normalize_lp_scores": true
+  "normalize_lp_scores": true,
+  "lp_score_mode": "cosine"
 }
