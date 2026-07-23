@@ -466,6 +466,12 @@ class KGAUStrategy(Evaluator):
 					'(no distance / λ); normalize_uniformity=%s',
 					normalize_uniformity,
 				)
+			elif config_bool(args, 'dabr_au_distance_only', False):
+				logger.info(
+					'KGAU DaBR-AU distance-only: TransE-style AU on h+dr ↔ t '
+					'(no semantic / λ); normalize_uniformity=%s',
+					normalize_uniformity,
+				)
 			else:
 				logger.info(
 					'KGAU DaBR-AU component scorers: separate AU per semantic/distance, '
@@ -907,6 +913,7 @@ class KGAUStrategy(Evaluator):
 
 		Default: ``L = L_sem + λ L_dist`` (mirrors DaBR ``φ = s + λ d``).
 		With ``dabr_au_semantic_only``: ``L = L_sem`` only (single-sphere AU).
+		With ``dabr_au_distance_only``: ``L = L_dist`` only (TransE-style AU on h+dr ↔ t).
 		"""
 
 		model_obj = get_model_obj(model)
@@ -915,8 +922,8 @@ class KGAUStrategy(Evaluator):
 		)
 		if len(components) not in (1, 2):
 			raise RuntimeError(
-				'DaBR component AU expects 1 (semantic-only) or 2 (semantic, distance) parts, '
-				f'got {len(components)}',
+				'DaBR component AU expects 1 (semantic-only / distance-only) or '
+				f'2 (semantic, distance) parts, got {len(components)}',
 			)
 
 		part_losses: list[torch.Tensor] = []
@@ -941,7 +948,7 @@ class KGAUStrategy(Evaluator):
 			margin_sum += float(margin_active)
 
 		if len(components) == 1:
-			# Semantic-only: single-sphere AU, no distance term / no λ fusion.
+			# Semantic-only or distance-only: single-sphere AU, no λ fusion.
 			au_loss = part_losses[0]
 			l_align = align_parts[0]
 			l_unif = unif_parts[0]
