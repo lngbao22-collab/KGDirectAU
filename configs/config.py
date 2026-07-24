@@ -642,6 +642,16 @@ def build_parser() -> argparse.ArgumentParser:
         '--no-dabr-au-distance-only', '--no_dabr_au_distance_only',
         dest='dabr_au_distance_only', action='store_false',
         help='DaBR-AU: disable distance-only mode')
+    dabr_independent_group = parser.add_mutually_exclusive_group()
+    dabr_independent_group.add_argument(
+        '--dabr-au-independent-spheres', '--dabr_au_independent_spheres',
+        dest='dabr_au_independent_spheres', action='store_true', default=None,
+        help='DaBR-AU: separate entity tables for semantic and distance hyperspheres '
+             '(no shared entity params); fuse scores as cos_sem + λ·cos_dist')
+    dabr_independent_group.add_argument(
+        '--no-dabr-au-independent-spheres', '--no_dabr_au_independent_spheres',
+        dest='dabr_au_independent_spheres', action='store_false',
+        help='DaBR-AU: share entity embeddings across semantic and distance components')
     parser.add_argument('--n-batches', '--n_batches', default=None, type=int,
                         dest='n_batches', help='Training batches per epoch (OpenKE nbatches; sets batch_size)')
     openke_batch_group = parser.add_mutually_exclusive_group()

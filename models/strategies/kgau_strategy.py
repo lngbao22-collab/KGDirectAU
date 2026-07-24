@@ -472,6 +472,14 @@ class KGAUStrategy(Evaluator):
 					'(no semantic / λ); normalize_uniformity=%s',
 					normalize_uniformity,
 				)
+			elif config_bool(args, 'dabr_au_independent_spheres', False):
+				logger.info(
+					'KGAU DaBR-AU independent spheres: separate entity tables for '
+					'semantic and distance AU; fuse with learnable λ '
+					'(L = L_sem + λ L_dist, score = cos_sem + λ·cos_dist); '
+					'normalize_uniformity=%s',
+					normalize_uniformity,
+				)
 			else:
 				logger.info(
 					'KGAU DaBR-AU component scorers: separate AU per semantic/distance, '

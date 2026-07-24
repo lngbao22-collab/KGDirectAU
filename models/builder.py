@@ -198,8 +198,25 @@ def _build_aux_embedders(args) -> dict[str, nn.Module] | None:
 	# Semantic-only DaBR-AU does not use the relation-drift table.
 	if config_bool(args, 'dabr_au_semantic_only', False):
 		return None
+	if (
+		config_bool(args, 'dabr_au_independent_spheres', False)
+		and (
+			config_bool(args, 'dabr_au_semantic_only', False)
+			or config_bool(args, 'dabr_au_distance_only', False)
+		)
+	):
+		raise ValueError(
+			'dabr_au_independent_spheres cannot be combined with '
+			'dabr_au_semantic_only or dabr_au_distance_only',
+		)
 	embedder_path = _config_path(args, 'model_embedder_path')
-	return {'dr': load_attr_from_path(embedder_path, 'build_dr_embedder')(args)}
+	aux: dict[str, nn.Module] = {
+		'dr': load_attr_from_path(embedder_path, 'build_dr_embedder')(args),
+	}
+	# Second entity table for the distance hypersphere (semantic keeps primary ent_embedder).
+	if config_bool(args, 'dabr_au_independent_spheres', False):
+		aux['ent_dist'] = load_attr_from_path(embedder_path, 'build_entity_embedder')(args)
+	return aux
 
 
 def build_model(args) -> nn.Module:

@@ -938,6 +938,10 @@ class DaBRModel(KGEModel):
 	``scorers[1]`` / ``scorers[2]`` are the semantic and distance components used
 	by KGAU: separate AU losses combined as ``L = L_s + λ L_d`` with the same
 	learnable ``para`` (λ) as the primary scorer.
+
+	With ``dabr_au_independent_spheres``, the distance branch uses a second entity
+	table (``aux_embedders['ent_dist']``) so the two unit hyperspheres have no
+	shared entity parameters; scores are still fused as ``s + λ d``.
 	"""
 
 	def __init__(
@@ -965,11 +969,39 @@ class DaBRModel(KGEModel):
 		self.target_uses_relation = not bool(
 			getattr(args, 'dabr_au_distance_only', False) if args is not None else False
 		)
+		if self._independent_spheres() and 'ent_dist' not in self.aux_embedders:
+			raise ValueError(
+				'dabr_au_independent_spheres requires aux_embedders[\"ent_dist\"] '
+				'(second entity table for the distance hypersphere)',
+			)
 
 	target_uses_relation = True
 
 	def _distance_only_mode(self) -> bool:
 		return bool(getattr(self.args, 'dabr_au_distance_only', False))
+
+	def _independent_spheres(self) -> bool:
+		return bool(getattr(self.args, 'dabr_au_independent_spheres', False))
+
+	def _scorer_kwargs(self, r: torch.Tensor | None = None, **extra):
+		"""Forward only relation-side aux embeddings (``dr``), never ``ent_dist``."""
+
+		kwargs = dict(extra)
+		if r is not None and 'dr' in self.aux_embedders:
+			kwargs['dr_emb'] = self._embed(self.aux_embedders['dr'], r)
+		return kwargs
+
+	def _embed_dist_entity(self, indices: torch.Tensor) -> torch.Tensor:
+		"""Entity rows for the distance hypersphere (independent table or shared)."""
+
+		if self._independent_spheres():
+			return self._embed(self.aux_embedders['ent_dist'], indices)
+		return self.embed_h(indices)
+
+	def _embed_all_dist_entities(self) -> torch.Tensor:
+		if self._independent_spheres():
+			return self._embed_all(self.aux_embedders['ent_dist'])
+		return self.embed_all_entities()
 
 	def query_encoder(self, h: torch.Tensor, r: torch.Tensor, **kwargs) -> torch.Tensor:
 		"""Tail-prediction query.
@@ -1040,14 +1072,14 @@ class DaBRModel(KGEModel):
 		Semantic aligns ``h⊗r`` with ``t⊗r⁻¹``. Distance is TransE-style:
 		``(h+dr, t)`` for tail batches and ``(t-dr, h)`` for head batches.
 
+		With ``dabr_au_independent_spheres``, semantic uses the primary entity table
+		and distance uses ``aux_embedders['ent_dist']`` (no shared entity params).
+
 		- ``dabr_au_semantic_only``: semantic sphere only
 		- ``dabr_au_distance_only``: distance / translation sphere only
-		- default: both, fused later as ``L_sem + λ L_dist``
+		- default / independent: both, fused later as ``L_sem + λ L_dist``
 		"""
 
-		h_emb = self.embed_h(h)
-		t_emb = self.embed_t(t)
-		head = h_emb
 		mode = 'both'
 		scorer = self.get_scorer(0)
 		if hasattr(scorer, '_au_component_mode'):
@@ -1059,19 +1091,23 @@ class DaBRModel(KGEModel):
 
 		parts: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
 		if mode in ('semantic', 'both'):
+			h_sem = self.embed_h(h)
+			t_sem = self.embed_t(t)
 			r_emb = self.embed_r(r)
 			q_s, t_s = DaBRSemanticScorer.au_query_target(
-				h_emb, r_emb, t_emb, predict_head=predict_head,
+				h_sem, r_emb, t_sem, predict_head=predict_head,
 			)
-			parts.append((q_s, t_s, head))
+			parts.append((q_s, t_s, h_sem))
 		if mode in ('distance', 'both'):
+			h_dist = self._embed_dist_entity(h)
+			t_dist = self._embed_dist_entity(t)
 			dr_emb = self._scorer_kwargs(r).get('dr_emb')
 			if dr_emb is None:
-				dr_emb = torch.zeros_like(h_emb)
+				dr_emb = torch.zeros_like(h_dist)
 			q_d, t_d = DaBRDistanceScorer.au_query_target(
-				h_emb, t_emb, dr_emb, predict_head=predict_head,
+				h_dist, t_dist, dr_emb, predict_head=predict_head,
 			)
-			parts.append((q_d, t_d, head))
+			parts.append((q_d, t_d, h_dist))
 		if self.normalize_au_vectors:
 			parts = [
 				(
@@ -1082,6 +1118,125 @@ class DaBRModel(KGEModel):
 				for q, tgt, hd in parts
 			]
 		return parts
+
+	def score_hr_(
+		self,
+		h: torch.Tensor,
+		r: torch.Tensor,
+		all_t_embs: torch.Tensor | None = None,
+		**kwargs,
+	) -> torch.Tensor:
+		"""1-vs-all tail scores; independent spheres use ``cos_sem + λ·cos_dist``."""
+
+		if not (self._independent_spheres() and self._uses_cosine_lp_scores()):
+			return super().score_hr_(h, r, all_t_embs, **kwargs)
+		del all_t_embs, kwargs
+		return self._score_independent_hr_(h, r)
+
+	def score_rt_(
+		self,
+		r: torch.Tensor,
+		t: torch.Tensor,
+		all_h_embs: torch.Tensor | None = None,
+		**kwargs,
+	) -> torch.Tensor:
+		"""1-vs-all head scores; independent spheres use ``cos_sem + λ·cos_dist``."""
+
+		if not (self._independent_spheres() and self._uses_cosine_lp_scores()):
+			return super().score_rt_(r, t, all_h_embs, **kwargs)
+		del all_h_embs, kwargs
+		return self._score_independent_rt_(r, t)
+
+	def score_hrt(
+		self,
+		h: torch.Tensor,
+		r: torch.Tensor,
+		t: torch.Tensor,
+		**kwargs,
+	) -> torch.Tensor:
+		if not (self._independent_spheres() and self._uses_cosine_lp_scores()):
+			return super().score_hrt(h, r, t, **kwargs)
+		del kwargs
+		scorer = self.get_scorer(0)
+		lam = self.dabr_combine_weight()
+		h_sem, t_sem, r_emb = self.embed_h(h), self.embed_t(t), self.embed_r(r)
+		q_s, t_s = DaBRSemanticScorer.au_query_target(h_sem, r_emb, t_sem, predict_head=False)
+		sem = scorer._normalized_pair_score(q_s, t_s)
+		h_dist, t_dist = self._embed_dist_entity(h), self._embed_dist_entity(t)
+		dr_emb = self._scorer_kwargs(r).get('dr_emb')
+		if dr_emb is None:
+			dr_emb = torch.zeros_like(h_dist)
+		q_d, t_d = DaBRDistanceScorer.au_query_target(h_dist, t_dist, dr_emb, predict_head=False)
+		dist = scorer._normalized_pair_score(q_d, t_d)
+		return sem + lam * dist
+
+	def _score_independent_hr_(self, h: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
+		"""Tail prediction: ``cos(h⊗r, e⊗r⁻¹) + λ·cos(h_d+dr, e_d)`` over all entities."""
+
+		scorer = self.get_scorer(0)
+		lam = self.dabr_combine_weight()
+		all_sem = self.embed_all_entities()
+		all_dist = self._embed_all_dist_entities()
+		h_sem = self.embed_h(h)
+		r_emb = self.embed_r(r)
+		dr_emb = self._scorer_kwargs(r).get('dr_emb')
+		if dr_emb is None:
+			dr_emb = torch.zeros_like(h_sem)
+		h_dist = self._embed_dist_entity(h)
+		batch_size = h_sem.size(0)
+		num_ent = all_sem.size(0)
+		scores = h_sem.new_empty(batch_size, num_ent)
+
+		for row_indices, r_row, (h_sem_sub, h_dist_sub, dr_sub) in scorer._group_batch_by_relation(
+			r_emb, h_sem, h_dist, dr_emb,
+		):
+			r_sub = r_row.expand(h_sem_sub.size(0), -1)
+			q_sem = DaBRScorer._vec_vec_wise_multiplication(h_sem_sub, r_sub)
+			r_inv = DaBRScorer._quat_inv(r_row).expand(num_ent, -1)
+			t_rot = DaBRScorer._vec_vec_wise_multiplication(all_sem, r_inv)
+			q_sem_n = F.normalize(q_sem, p=2, dim=-1)
+			t_rot_n = F.normalize(t_rot, p=2, dim=-1)
+			sem = torch.mm(q_sem_n, t_rot_n.t())
+
+			q_dist = F.normalize(h_dist_sub + dr_sub, p=2, dim=-1)
+			c_dist = F.normalize(all_dist, p=2, dim=-1)
+			dist = torch.mm(q_dist, c_dist.t())
+			scores.index_copy_(0, row_indices, sem + lam * dist)
+		return scores
+
+	def _score_independent_rt_(self, r: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+		"""Head prediction: ``cos(t⊗r⁻¹, e⊗r) + λ·cos(t_d−dr, e_d)`` over all entities."""
+
+		scorer = self.get_scorer(0)
+		lam = self.dabr_combine_weight()
+		all_sem = self.embed_all_entities()
+		all_dist = self._embed_all_dist_entities()
+		t_sem = self.embed_t(t)
+		r_emb = self.embed_r(r)
+		dr_emb = self._scorer_kwargs(r).get('dr_emb')
+		if dr_emb is None:
+			dr_emb = torch.zeros_like(t_sem)
+		t_dist = self._embed_dist_entity(t)
+		batch_size = t_sem.size(0)
+		num_ent = all_sem.size(0)
+		scores = t_sem.new_empty(batch_size, num_ent)
+
+		for row_indices, r_row, (t_sem_sub, t_dist_sub, dr_sub) in scorer._group_batch_by_relation(
+			r_emb, t_sem, t_dist, dr_emb,
+		):
+			r_sub = r_row.expand(t_sem_sub.size(0), -1)
+			q_sem = DaBRScorer._vec_vec_wise_multiplication(t_sem_sub, DaBRScorer._quat_inv(r_sub))
+			r_exp = r_row.expand(num_ent, -1)
+			h_rot = DaBRScorer._vec_vec_wise_multiplication(all_sem, r_exp)
+			q_sem_n = F.normalize(q_sem, p=2, dim=-1)
+			h_rot_n = F.normalize(h_rot, p=2, dim=-1)
+			sem = torch.mm(q_sem_n, h_rot_n.t())
+
+			q_dist = F.normalize(t_dist_sub - dr_sub, p=2, dim=-1)
+			c_dist = F.normalize(all_dist, p=2, dim=-1)
+			dist = torch.mm(q_dist, c_dist.t())
+			scores.index_copy_(0, row_indices, sem + lam * dist)
+		return scores
 
 
 def build_scorers(args) -> list:
