@@ -21,7 +21,7 @@
   "au_deduplicate": false,
   "tuni": 4,
 
-  "dim": 128,
+  "dim": 500,
 
   "adversarial_training": true,
   "margin": 200.0,
@@ -40,7 +40,6 @@
   "shuffle_train": true,
 
   "n_sample": 0,
-  "regularization": 1e-05,
 
   "training_cadence": "epoch",
   "epoch_per_eval": 5,
