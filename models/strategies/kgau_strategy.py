@@ -475,8 +475,8 @@ class KGAUStrategy(Evaluator):
 			elif config_bool(args, 'dabr_au_independent_spheres', False):
 				logger.info(
 					'KGAU DaBR-AU independent spheres: separate entity tables for '
-					'semantic and distance AU; fuse with learnable λ '
-					'(L = L_sem + λ L_dist, score = ⟨h⊗r,t⊗r⁻¹⟩ + λ·cos_dist); '
+					'semantic and distance AU; equal train AU, λ only at eval '
+					'(L = L_sem + L_dist, score = ⟨h⊗r,t⊗r⁻¹⟩ + λ·cos_dist); '
 					'normalize_uniformity=%s',
 					normalize_uniformity,
 				)
@@ -917,9 +917,10 @@ class KGAUStrategy(Evaluator):
 		predict_head: bool = False,
 		batch_triples: torch.Tensor | None = None,
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int, int, float]:
-		"""Separate AU on semantic/distance scorers; fuse with DaBR ``para`` (λ).
+		"""Separate AU on semantic/distance scorers.
 
-		Default: ``L = L_sem + λ L_dist`` (mirrors DaBR ``φ = s + λ d``).
+		Default / independent spheres: ``L = L_sem + L_dist`` (equal AU); λ fuses
+		scores only at eval (``φ = original_sem + λ·cos_dist``).
 		With ``dabr_au_semantic_only``: ``L = L_sem`` only (single-sphere AU).
 		With ``dabr_au_distance_only``: ``L = L_dist`` only (TransE-style AU on h+dr ↔ t).
 		"""
@@ -961,10 +962,12 @@ class KGAUStrategy(Evaluator):
 			l_align = align_parts[0]
 			l_unif = unif_parts[0]
 		else:
-			lam = model_obj.dabr_combine_weight()
-			au_loss = part_losses[0] + lam * part_losses[1]
-			l_align = align_parts[0] + lam * align_parts[1]
-			l_unif = unif_parts[0] + lam * unif_parts[1]
+			# Train both spheres with equal AU weight. Learnable λ is eval-only
+			# fusion (φ = original_sem + λ·cos_dist); scaling L_dist by λ lets one
+			# sphere starve when λ drifts and worsens the AU align/unif tradeoff.
+			au_loss = part_losses[0] + part_losses[1]
+			l_align = align_parts[0] + align_parts[1]
+			l_unif = unif_parts[0] + unif_parts[1]
 		loss, l_reg = self._apply_embedding_regularization(au_loss, batch_triples=batch_triples)
 		return loss, l_align, l_unif, l_reg, n_uq, n_ut, margin_sum / max(len(components), 1)
 
@@ -1070,7 +1073,7 @@ class KGAUStrategy(Evaluator):
 			# cosine space as alignment. Pool the component query/target AU vectors
 			# (semantic h⊗r / t⊗r⁻¹, distance h+dr / t) instead of widening raw entities
 			# via ``au_entity_embeddings`` (cat(e, e)), which lives in a different space
-			# and mismatches the per-component (L_sem + λ L_dist) objective.
+			# and mismatches the per-component (L_sem + L_dist) objective.
 			if self._dabr_component_au and q_raw is not None and t_raw is not None:
 				head_vecs = t_raw if predict_head else q_raw
 				tail_vecs = q_raw if predict_head else t_raw

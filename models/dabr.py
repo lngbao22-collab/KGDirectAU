@@ -1077,7 +1077,7 @@ class DaBRModel(KGEModel):
 
 		- ``dabr_au_semantic_only``: semantic sphere only
 		- ``dabr_au_distance_only``: distance / translation sphere only
-		- default / independent: both, fused later as ``L_sem + λ L_dist``
+		- default / independent: both, fused later as ``L_sem + L_dist`` (λ at eval)
 		"""
 
 		mode = 'both'
@@ -1128,7 +1128,7 @@ class DaBRModel(KGEModel):
 	) -> torch.Tensor:
 		"""1-vs-all tail scores; independent spheres use ``⟨h⊗r,e⊗r⁻¹⟩ + λ·cos_dist``."""
 
-		if not (self._independent_spheres() and self._uses_cosine_lp_scores()):
+		if not self._independent_spheres():
 			return super().score_hr_(h, r, all_t_embs, **kwargs)
 		del all_t_embs, kwargs
 		return self._score_independent_hr_(h, r)
@@ -1142,7 +1142,7 @@ class DaBRModel(KGEModel):
 	) -> torch.Tensor:
 		"""1-vs-all head scores; independent spheres use ``⟨t⊗r⁻¹,e⊗r⟩ + λ·cos_dist``."""
 
-		if not (self._independent_spheres() and self._uses_cosine_lp_scores()):
+		if not self._independent_spheres():
 			return super().score_rt_(r, t, all_h_embs, **kwargs)
 		del all_h_embs, kwargs
 		return self._score_independent_rt_(r, t)
@@ -1154,7 +1154,7 @@ class DaBRModel(KGEModel):
 		t: torch.Tensor,
 		**kwargs,
 	) -> torch.Tensor:
-		if not (self._independent_spheres() and self._uses_cosine_lp_scores()):
+		if not self._independent_spheres():
 			return super().score_hrt(h, r, t, **kwargs)
 		del kwargs
 		scorer = self.get_scorer(0)
