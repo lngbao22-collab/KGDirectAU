@@ -476,7 +476,7 @@ class KGAUStrategy(Evaluator):
 				logger.info(
 					'KGAU DaBR-AU independent spheres: separate entity tables for '
 					'semantic and distance AU; fuse with learnable λ '
-					'(L = L_sem + λ L_dist, score = cos_sem + λ·cos_dist); '
+					'(L = L_sem + λ L_dist, score = ⟨h⊗r,t⊗r⁻¹⟩ + λ·cos_dist); '
 					'normalize_uniformity=%s',
 					normalize_uniformity,
 				)

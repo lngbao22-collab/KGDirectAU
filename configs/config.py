@@ -647,7 +647,7 @@ def build_parser() -> argparse.ArgumentParser:
         '--dabr-au-independent-spheres', '--dabr_au_independent_spheres',
         dest='dabr_au_independent_spheres', action='store_true', default=None,
         help='DaBR-AU: separate entity tables for semantic and distance hyperspheres '
-             '(no shared entity params); fuse scores as cos_sem + λ·cos_dist')
+             '(no shared entity params); fuse LP as ⟨h⊗r,t⊗r⁻¹⟩ + λ·cos_dist')
     dabr_independent_group.add_argument(
         '--no-dabr-au-independent-spheres', '--no_dabr_au_independent_spheres',
         dest='dabr_au_independent_spheres', action='store_false',

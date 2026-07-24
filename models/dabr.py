@@ -940,8 +940,8 @@ class DaBRModel(KGEModel):
 	learnable ``para`` (λ) as the primary scorer.
 
 	With ``dabr_au_independent_spheres``, the distance branch uses a second entity
-	table (``aux_embedders['ent_dist']``) so the two unit hyperspheres have no
-	shared entity parameters; scores are still fused as ``s + λ d``.
+	table (``aux_embedders['ent_dist']``) so the two AU hyperspheres have no
+	shared entity parameters; LP scores are fused as ``⟨h⊗r, t⊗r⁻¹⟩ + λ·cos_dist``.
 	"""
 
 	def __init__(
@@ -1126,7 +1126,7 @@ class DaBRModel(KGEModel):
 		all_t_embs: torch.Tensor | None = None,
 		**kwargs,
 	) -> torch.Tensor:
-		"""1-vs-all tail scores; independent spheres use ``cos_sem + λ·cos_dist``."""
+		"""1-vs-all tail scores; independent spheres use ``⟨h⊗r,e⊗r⁻¹⟩ + λ·cos_dist``."""
 
 		if not (self._independent_spheres() and self._uses_cosine_lp_scores()):
 			return super().score_hr_(h, r, all_t_embs, **kwargs)
@@ -1140,7 +1140,7 @@ class DaBRModel(KGEModel):
 		all_h_embs: torch.Tensor | None = None,
 		**kwargs,
 	) -> torch.Tensor:
-		"""1-vs-all head scores; independent spheres use ``cos_sem + λ·cos_dist``."""
+		"""1-vs-all head scores; independent spheres use ``⟨t⊗r⁻¹,e⊗r⟩ + λ·cos_dist``."""
 
 		if not (self._independent_spheres() and self._uses_cosine_lp_scores()):
 			return super().score_rt_(r, t, all_h_embs, **kwargs)
@@ -1160,8 +1160,8 @@ class DaBRModel(KGEModel):
 		scorer = self.get_scorer(0)
 		lam = self.dabr_combine_weight()
 		h_sem, t_sem, r_emb = self.embed_h(h), self.embed_t(t), self.embed_r(r)
-		q_s, t_s = DaBRSemanticScorer.au_query_target(h_sem, r_emb, t_sem, predict_head=False)
-		sem = scorer._normalized_pair_score(q_s, t_s)
+		# Original semantic scorer (unnormalized quaternion inner product).
+		sem = DaBRScorer._semantic_score(h_sem, r_emb, t_sem)
 		h_dist, t_dist = self._embed_dist_entity(h), self._embed_dist_entity(t)
 		dr_emb = self._scorer_kwargs(r).get('dr_emb')
 		if dr_emb is None:
@@ -1171,7 +1171,7 @@ class DaBRModel(KGEModel):
 		return sem + lam * dist
 
 	def _score_independent_hr_(self, h: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
-		"""Tail prediction: ``cos(h⊗r, e⊗r⁻¹) + λ·cos(h_d+dr, e_d)`` over all entities."""
+		"""Tail prediction: ``⟨h⊗r, e⊗r⁻¹⟩ + λ·cos(h_d+dr, e_d)`` over all entities."""
 
 		scorer = self.get_scorer(0)
 		lam = self.dabr_combine_weight()
@@ -1194,9 +1194,8 @@ class DaBRModel(KGEModel):
 			q_sem = DaBRScorer._vec_vec_wise_multiplication(h_sem_sub, r_sub)
 			r_inv = DaBRScorer._quat_inv(r_row).expand(num_ent, -1)
 			t_rot = DaBRScorer._vec_vec_wise_multiplication(all_sem, r_inv)
-			q_sem_n = F.normalize(q_sem, p=2, dim=-1)
-			t_rot_n = F.normalize(t_rot, p=2, dim=-1)
-			sem = torch.mm(q_sem_n, t_rot_n.t())
+			# Original semantic: unnormalized inner product (not cosine).
+			sem = torch.mm(q_sem, t_rot.t())
 
 			q_dist = F.normalize(h_dist_sub + dr_sub, p=2, dim=-1)
 			c_dist = F.normalize(all_dist, p=2, dim=-1)
@@ -1205,7 +1204,7 @@ class DaBRModel(KGEModel):
 		return scores
 
 	def _score_independent_rt_(self, r: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-		"""Head prediction: ``cos(t⊗r⁻¹, e⊗r) + λ·cos(t_d−dr, e_d)`` over all entities."""
+		"""Head prediction: ``⟨t⊗r⁻¹, e⊗r⟩ + λ·cos(t_d−dr, e_d)`` over all entities."""
 
 		scorer = self.get_scorer(0)
 		lam = self.dabr_combine_weight()
@@ -1228,9 +1227,8 @@ class DaBRModel(KGEModel):
 			q_sem = DaBRScorer._vec_vec_wise_multiplication(t_sem_sub, DaBRScorer._quat_inv(r_sub))
 			r_exp = r_row.expand(num_ent, -1)
 			h_rot = DaBRScorer._vec_vec_wise_multiplication(all_sem, r_exp)
-			q_sem_n = F.normalize(q_sem, p=2, dim=-1)
-			h_rot_n = F.normalize(h_rot, p=2, dim=-1)
-			sem = torch.mm(q_sem_n, h_rot_n.t())
+			# Original semantic: unnormalized inner product (not cosine).
+			sem = torch.mm(q_sem, h_rot.t())
 
 			q_dist = F.normalize(t_dist_sub - dr_sub, p=2, dim=-1)
 			c_dist = F.normalize(all_dist, p=2, dim=-1)
