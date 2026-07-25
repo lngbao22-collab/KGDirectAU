@@ -19,6 +19,7 @@
   "gamma_cross": 0,
   "tuni": 4,
   "dim": 256,
+  "regularization_p": 3,
   "adversarial_training": true,
   "margin": 6,
   "add_reciprocal_relations": true,

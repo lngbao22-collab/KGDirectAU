@@ -682,7 +682,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     # L3 regularization and weighted regularization flags.
     parser.add_argument('--regularize-p', '--regularize_p', default=None, type=int,
-                        dest='regularize_p', help='L3 regularization norm order')
+                        dest='regularize_p', help='L3 regularization norm order (LibKGE-style)')
+    parser.add_argument('--regularization-p', '--regularization_p', default=None, type=int,
+                        dest='regularization_p',
+                        help='Lp norm order for legacy scalar regularization (GB-Magic; default 3)')
+    parser.add_argument('--regularization', default=None, type=float,
+                        dest='regularization',
+                        help='Legacy scalar Lp embedding regularization coefficient')
     entity_regularize_weighted_group = parser.add_mutually_exclusive_group()
     entity_regularize_weighted_group.add_argument(
         '--entity-regularize-weighted', '--entity_regularize_weighted',

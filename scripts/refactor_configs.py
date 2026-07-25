@@ -19,7 +19,7 @@ KEY_ORDER = [
     'n_sample', 'n_sample_t', 'n_sample_h',
     'neg_score_chunk_size', 'neg_weight_chunk_size', 'sample_freq', 'loss_arg',
     'lam', 'lmbda', 'lmbda_two',
-    'regularizer', 'regularize_weight', 'regularization',
+    'regularizer', 'regularize_weight', 'regularization', 'regularization_p',
     'label_smoothing',
     'entity_dropout', 'relation_dropout',
     'entity_regularize_weight', 'relation_regularize_weight',

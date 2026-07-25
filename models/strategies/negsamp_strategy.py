@@ -622,7 +622,11 @@ class NegSampStrategy:
 		if reg_fn is not None:
 			return reg_coef * reg_fn(model_obj)
 		l3_fn = getattr(model_obj, 'rotate_style_embedding_l3_penalty', None)
-		l3_term = l3_fn() if callable(l3_fn) else None
+		if not callable(l3_fn):
+			return None
+		p_fn = getattr(model_obj, '_regularize_p', None)
+		p = int(p_fn(self.args)) if callable(p_fn) else 3
+		l3_term = l3_fn(p=p)
 		if l3_term is not None:
 			return reg_coef * l3_term
 		return None

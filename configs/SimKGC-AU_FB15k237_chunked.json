@@ -15,6 +15,7 @@
   "max_uniformity_samples": 0,
   "entity_uniformity_batch": true,
   "dim": 768,
+  "regularization_p": 3,
   "dropout": 0.1,
   "bert_encoder": "distilbert-base-uncased",
   "pooling": "mean",

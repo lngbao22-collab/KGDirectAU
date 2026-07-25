@@ -896,11 +896,15 @@ class KGAUStrategy(Evaluator):
 		return n_unique_q, n_unique_t
 
 	def _embedding_l3_regularization(self, model) -> torch.Tensor | None:
-		"""Optional L3 embedding penalty (adversarial / legacy scalar ``regularization``)."""
+		"""Optional Lp embedding penalty (adversarial / legacy scalar ``regularization``)."""
 
 		model_obj = get_model_obj(model)
 		fn = getattr(model_obj, 'embedding_l3_penalty', None)
-		return fn() if callable(fn) else None
+		if not callable(fn):
+			return None
+		p_fn = getattr(model_obj, '_regularize_p', None)
+		p = int(p_fn(self.args)) if callable(p_fn) else 3
+		return fn(p=p)
 
 	def _apply_embedding_regularization(
 		self,

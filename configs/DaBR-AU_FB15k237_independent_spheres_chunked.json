@@ -20,6 +20,7 @@
   "au_deduplicate": false,
   "tuni": 2.0,
   "dim": 128,
+  "regularization_p": 3,
   "dabr_au_independent_spheres": true,
   "lmbda": 0.5,
   "lmbda_two": 0.01,

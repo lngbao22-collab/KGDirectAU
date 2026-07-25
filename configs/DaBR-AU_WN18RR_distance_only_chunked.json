@@ -20,6 +20,7 @@
   "au_deduplicate": false,
   "tuni": 2,
   "dim": 128,
+  "regularization_p": 3,
   "dabr_au_distance_only": true,
   "lmbda": 0.5,
   "lmbda_two": 0.01,

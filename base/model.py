@@ -269,8 +269,15 @@ class KGEModel(KGEBase):
 
 	@staticmethod
 	def _regularize_p(args: Any | None) -> int:
-		raw = getattr(args, 'regularize_p', None) if args is not None else None
-		return int(raw) if raw is not None else 3
+		"""Lp order: prefer ``regularization_p`` (GB-Magic), then ``regularize_p``, else 3."""
+
+		if args is None:
+			return 3
+		for key in ('regularization_p', 'regularize_p'):
+			raw = getattr(args, key, None)
+			if raw is not None:
+				return int(raw)
+		return 3
 
 	@staticmethod
 	def _regularize_weighted(args: Any | None, role: str) -> bool:
