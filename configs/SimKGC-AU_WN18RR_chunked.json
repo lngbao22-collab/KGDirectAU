@@ -40,5 +40,5 @@
   "max_to_keep": 0,
   "output_dir_prefix": "logs/SimKGC-AU_WN18RR_chunked",
   "normalize_lp_scores": true,
-  "uniform_pair_chunk_size": 256
+  "uniform_pair_chunk_size": 128
 }
