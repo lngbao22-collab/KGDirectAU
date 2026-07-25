@@ -18,7 +18,7 @@
   "entity_uniformity_batch": true,
   "au_deduplicate": false,
   "tuni": 4,
-  "dim": 128,
+  "dim": 500,
   "triple_relation_embedding": true,
   "adversarial_training": true,
   "adversarial_temperature": 0.5,
