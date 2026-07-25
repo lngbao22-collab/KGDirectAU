@@ -519,11 +519,17 @@ class KGAUStrategy(Evaluator):
 			average_uniformity_terms=config_bool(args, 'average_uniformity_terms', False),
 			uniformity_full_pdist=config_bool(args, 'uniformity_full_pdist', False),
 			uniformity_pdist_gb=getattr(args, 'uniformity_pdist_gb', None),
+			uniform_pair_chunk_size=int(_config_float(args, 'uniform_pair_chunk_size', 0) or 0),
 		).to(self.device)
 		if config_bool(args, 'average_uniformity_terms', False):
 			logger.info('KGAU average_uniformity_terms: enabled (sum active terms / count)')
 		if config_bool(args, 'uniformity_full_pdist', False):
-			logger.info('KGAU uniformity_full_pdist: full-batch torch.pdist (GB-Magic au style)')
+			pair_chunk = int(getattr(self.criterion, 'uniform_pair_chunk_size', 0) or 0)
+			logger.info(
+				'KGAU uniformity_full_pdist: exact i<j chunked pairwise '
+				'(uniform_pair_chunk_size=%s, 0=auto)',
+				pair_chunk if pair_chunk > 0 else 'auto',
+			)
 		if learnable_tuni:
 			if tuni_as_alpha:
 				logger.info(
@@ -621,8 +627,8 @@ class KGAUStrategy(Evaluator):
 			logger.info('KGAU entity_uniformity_batch: batch cat(head, tail) (GB-Magic au style)')
 		if self.kgau_bidirectional:
 			logger.info(
-				'KGAU kgau_bidirectional: tail-batch + head-batch per epoch (GB-Magic); '
-				'head eval uses rt_forward',
+				'KGAU kgau_bidirectional: alternating tail/head each step '
+				'(GB-Magic BidirectionalOneShotIterator); head eval uses rt_forward',
 			)
 		if self.criterion.gamma_active('ent') and self.uses_text_inputs:
 			ent_mode = 'deduplicated' if self.au_deduplicate else 'all batch'
@@ -696,6 +702,53 @@ class KGAUStrategy(Evaluator):
 		for start in range(0, num_examples, batch_size):
 			end = start + batch_size
 			yield src[start:end], rel[start:end], dst[start:end]
+
+	def _iter_bidirectional_au_batches(
+		self,
+		batch_size: int,
+	) -> Iterator[tuple[torch.Tensor, torch.Tensor, torch.Tensor, bool]]:
+		"""Alternate tail/head AU batches (GB-Magic ``BidirectionalOneShotIterator``).
+
+		Odd steps use tail-batch (``predict_head=False``); even steps use head-batch.
+		Each direction gets an independent shuffle (or OpenKE sample draw).
+		"""
+
+		tail_batches = list(
+			self._iter_batches(
+				self.train_src, self.train_rel, self.train_dst, batch_size, shuffle=True,
+			)
+		)
+		head_batches = list(
+			self._iter_batches(
+				self.train_src, self.train_rel, self.train_dst, batch_size, shuffle=True,
+			)
+		)
+		head_idx = 0
+		tail_idx = 0
+		step = 0
+		while head_idx < len(head_batches) or tail_idx < len(tail_batches):
+			step += 1
+			if step % 2 == 0:
+				if head_idx < len(head_batches):
+					ss, rs, ts = head_batches[head_idx]
+					head_idx += 1
+					yield ss, rs, ts, True
+				elif tail_idx < len(tail_batches):
+					ss, rs, ts = tail_batches[tail_idx]
+					tail_idx += 1
+					yield ss, rs, ts, False
+				else:
+					break
+			elif tail_idx < len(tail_batches):
+				ss, rs, ts = tail_batches[tail_idx]
+				tail_idx += 1
+				yield ss, rs, ts, False
+			elif head_idx < len(head_batches):
+				ss, rs, ts = head_batches[head_idx]
+				head_idx += 1
+				yield ss, rs, ts, True
+			else:
+				break
 
 	def _validation_interval(self) -> int:
 		"""Epochs between full link-prediction validation runs.
@@ -1112,38 +1165,6 @@ class KGAUStrategy(Evaluator):
 			return self._batch_entity_uniformity_vectors(h_raw, t_raw, h_keys, t_keys)
 		return self._catalog_entity_uniformity_vectors(model)
 
-	def _au_vector_dim(self) -> int:
-		"""Effective AU vector width (ComplEx/RotatE concat real+imag → ``2 * dim``)."""
-
-		dim = int(getattr(self.args, 'dim', 0) or 0)
-		model_name = str(getattr(self.args, 'model', '') or '').lower()
-		if model_name.endswith('-au'):
-			model_name = model_name[:-3]
-		if model_name in {'rotate', 'complex', 'protate'}:
-			return max(dim * 2, 1)
-		if model_name == 'dabr':
-			# Per-component AU vectors are one quaternion block (``4 * dim``).
-			return max(dim * 4, 1)
-		return max(dim, 1)
-
-	def _uniformity_pdist_byte_budget(self) -> int:
-		raw = getattr(self.args, 'uniformity_pdist_gb', None)
-		gb = 3.0 if raw is None else float(raw)
-		return max(int(gb * 1024 ** 3), 1)
-
-	def _max_batch_for_uniformity_pdist(self) -> int | None:
-		"""Cap train batch when batch entity uniformity uses full ``torch.pdist``."""
-
-		if not config_bool(self.args, 'uniformity_full_pdist', False):
-			return None
-		if not config_bool(self.args, 'entity_uniformity_batch', False):
-			return None
-		au_dim = self._au_vector_dim()
-		budget = self._uniformity_pdist_byte_budget()
-		# q/t/h ~ N rows each, entity batch ~ 2N rows → ~7N^2 pdist backward storage.
-		max_batch = int((budget / (28 * max(au_dim, 1))) ** 0.5)
-		return max(1, max_batch)
-
 	def _train_micro_batch_size(self, batch_size: int) -> int:
 		"""Split large AU batches when forward/backward would exceed GPU memory."""
 
@@ -1157,9 +1178,8 @@ class KGAUStrategy(Evaluator):
 				return 64
 			return batch_size
 
-		pdist_cap = self._max_batch_for_uniformity_pdist()
-		if pdist_cap is not None and batch_size > pdist_cap:
-			return pdist_cap
+		# Exact i<j uniformity is chunked (``uniform_pair_chunk_size``); no pdist-based
+		# batch cap is required for ``uniformity_full_pdist`` + ``gamma_ent`` anymore.
 		return batch_size
 
 	def _micro_batch_epoch_suffix(self, batch_size: int) -> str:
@@ -1255,19 +1275,28 @@ class KGAUStrategy(Evaluator):
 			or 1.0
 		)
 
-	def _hybrid_neg_score_chunk_size(self, num_neg: int) -> int | None:
-		raw = config_int(self.args, 'neg_score_chunk_size', None)
-		if raw is not None and int(raw) <= 0:
+	def _hybrid_neg_score_chunk_size(self, num_neg: int, *, batch_size: int | None = None) -> int | None:
+		"""NegSamp-style auto chunk width (0/None = ~512MiB budget, soft floor 256)."""
+
+		if num_neg <= 0:
 			return None
+		explicit = config_int(self.args, 'negative_chunk_size', None)
+		if explicit is None:
+			explicit = config_int(self.args, 'neg_score_chunk_size', None)
+		explicit = int(explicit or 0)
+		bs = int(batch_size if batch_size is not None else (getattr(self.args, 'batch_size', 1) or 1))
 		model_obj = get_model_obj(self.model)
-		scorer = model_obj.get_scorer()
-		uses_batched = scorer is not None and scorer.supports_candidate_scoring()
-		if raw is None:
-			return None if uses_batched else 128
-		chunk_size = int(raw)
-		if num_neg <= chunk_size:
+		ent = getattr(model_obj, 'ent_embedder', None)
+		entity_dim = int(getattr(ent, 'dim', 0) or getattr(self.args, 'dim', 1) or 1)
+		if explicit > 0:
+			chunk = min(explicit, num_neg)
+		else:
+			bytes_budget = 512 * 1024 * 1024
+			per_neg = max(bs * max(entity_dim, 1) * 4 * 2, 1)
+			chunk = min(max(256, bytes_budget // per_neg), num_neg)
+		if chunk >= num_neg:
 			return None
-		return chunk_size
+		return int(chunk)
 
 	def _hybrid_candidate_scoring_context(
 		self,
@@ -1350,7 +1379,7 @@ class KGAUStrategy(Evaluator):
 		context = self._hybrid_candidate_scoring_context(h, r, t, mode)
 		pos_scores = context['pos_scores']
 		num_neg = int(neg_entity_ids.size(1))
-		chunk_size = self._hybrid_neg_score_chunk_size(num_neg)
+		chunk_size = self._hybrid_neg_score_chunk_size(num_neg, batch_size=int(h.size(0)))
 		if chunk_size is None:
 			chunk_size = num_neg
 
@@ -1624,23 +1653,28 @@ class KGAUStrategy(Evaluator):
 				if i % self.args.print_freq == 0:
 					progress.display(i)
 		else:
-			directions = (False, True) if self.kgau_bidirectional else (False,)
-			for predict_head in directions:
-				for batch_idx, (ss, rs, ts) in enumerate(
-					self._iter_batches(self.train_src, self.train_rel, self.train_dst, batch_size, shuffle=True),
-				):
-					loss, l_align, l_unif, l_reg, l_kge, n_uq, n_ut, margin_active, n_examples = self._train_au_tensor_batch(
-						model, ss, rs, ts, use_amp, predict_head=predict_head,
+			if self.kgau_bidirectional:
+				batch_iter = self._iter_bidirectional_au_batches(batch_size)
+			else:
+				batch_iter = (
+					(*batch, False)
+					for batch in self._iter_batches(
+						self.train_src, self.train_rel, self.train_dst, batch_size, shuffle=True,
 					)
-					epoch_align_loss += l_align * n_examples
-					epoch_unif_loss += l_unif * n_examples
-					epoch_reg_loss += l_reg * n_examples
-					epoch_kge_loss += l_kge * n_examples
-					epoch_loss += loss * n_examples
-					epoch_unique_q += n_uq
-					epoch_unique_t += n_ut
-					epoch_margin_active += margin_active
-					epoch_batches += 1
+				)
+			for ss, rs, ts, predict_head in batch_iter:
+				loss, l_align, l_unif, l_reg, l_kge, n_uq, n_ut, margin_active, n_examples = self._train_au_tensor_batch(
+					model, ss, rs, ts, use_amp, predict_head=predict_head,
+				)
+				epoch_align_loss += l_align * n_examples
+				epoch_unif_loss += l_unif * n_examples
+				epoch_reg_loss += l_reg * n_examples
+				epoch_kge_loss += l_kge * n_examples
+				epoch_loss += loss * n_examples
+				epoch_unique_q += n_uq
+				epoch_unique_t += n_ut
+				epoch_margin_active += margin_active
+				epoch_batches += 1
 
 		avg_count = max(len(self.train_examples) * (2 if self.kgau_bidirectional else 1), 1)
 		avg_loss = epoch_loss / avg_count

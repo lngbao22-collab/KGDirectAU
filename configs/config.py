@@ -144,8 +144,8 @@ def build_parser() -> argparse.ArgumentParser:
                        action='store_false', help='disable BERT encode checkpointing (default)')
     parser.add_argument('--uniformity-pdist-gb', '--uniformity_pdist_gb', default=None, type=float,
                         dest='uniformity_pdist_gb',
-                        help='GiB budget for torch.pdist uniformity backward (default 3). Caps train micro-batch '
-                             'when uniformity_full_pdist and entity_uniformity_batch are enabled.')
+                        help='Deprecated legacy knob (kept for config compatibility). Exact i<j '
+                             'uniformity now uses chunked pairwise blocks; prefer --uniform-pair-chunk-size.')
     parser.add_argument('--max-uniformity-samples', '--max_uniformity_samples', default=None, type=int,
                         dest='max_uniformity_samples',
                         help='maximum number of embeddings used to estimate the AU uniformity term (0=no cap)')
@@ -190,10 +190,17 @@ def build_parser() -> argparse.ArgumentParser:
                         help='number of negative samples per positive')
     parser.add_argument('--neg-score-chunk-size', '--neg_score_chunk_size', default=None, type=int,
                         dest='neg_score_chunk_size',
-                        help='Score negatives in chunks of this size to reduce GPU memory (0: disable chunking)')
+                        help='NegSamp: max negatives scored per chunk (None/0=auto ~512MiB [B,C,D]; '
+                             'when chunking, uses gradient checkpointing). Alias: --negative-chunk-size')
+    parser.add_argument('--negative-chunk-size', '--negative_chunk_size', default=None, type=int,
+                        dest='negative_chunk_size',
+                        help='Alias of --neg-score-chunk-size (GB-Magic name; 0=auto)')
     parser.add_argument('--neg-weight-chunk-size', '--neg_weight_chunk_size', default=None, type=int,
                         dest='neg_weight_chunk_size',
                         help='Optional chunk size for no-grad adversarial weight scoring (default: one full pass)')
+    parser.add_argument('--uniform-pair-chunk-size', '--uniform_pair_chunk_size', default=None, type=int,
+                        dest='uniform_pair_chunk_size',
+                        help='KGAU: pairwise block size for exact i<j uniformity (0/None=auto, soft-cap 256)')
     parser.add_argument('--lam', default=None, type=float,
                         help='L2 regularization strength (kgau/softmax; overrides weight_decay when set)')
 
@@ -351,7 +358,8 @@ def build_parser() -> argparse.ArgumentParser:
         dest='kgau_bidirectional',
         action='store_true',
         default=None,
-        help='KGAU: train tail-batch and head-batch per epoch (GB-Magic); eval head via rt_forward',
+        help='KGAU: alternate tail/head batches each step (GB-Magic BidirectionalOneShotIterator); '
+             'eval head via rt_forward',
     )
     kgau_bidirectional_group.add_argument(
         '--no-kgau-bidirectional', '--no_kgau_bidirectional',
@@ -365,7 +373,8 @@ def build_parser() -> argparse.ArgumentParser:
         dest='uniformity_full_pdist',
         action='store_true',
         default=None,
-        help='KGAU: full-batch torch.pdist uniformity (GB-Magic au; no Monte Carlo pairs)',
+        help='KGAU: exact full-batch i<j uniformity via chunked pairwise blocks '
+             '(replaces torch.pdist; no Monte Carlo pairs)',
     )
     uniformity_full_pdist_group.add_argument(
         '--no-uniformity-full-pdist', '--no_uniformity_full_pdist',

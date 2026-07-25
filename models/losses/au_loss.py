@@ -6,6 +6,153 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# Shared with NegSamp / AllNeg chunk heuristics: cap peak pair-block memory.
+_UNIFORM_PAIR_CHUNK_BYTES_BUDGET = 512 * 1024 * 1024
+
+
+def resolve_uniform_pair_chunk_size(n: int, dim: int, explicit: int = 0) -> int:
+	"""Pair-block width C for chunked uniformity.
+
+	explicit > 0: use min(explicit, n).
+	Else (0 = auto): choose C so a [C, C] float32 block stays near the shared
+	~512MiB budget, with a soft cap of 256 (reference: B=512 entity term n=1024).
+	"""
+
+	if n <= 1:
+		return max(n, 1)
+	explicit = int(explicit or 0)
+	if explicit > 0:
+		return min(explicit, n)
+	max_by_pair = int((_UNIFORM_PAIR_CHUNK_BYTES_BUDGET / 8.0) ** 0.5)
+	max_by_dim = max(_UNIFORM_PAIR_CHUNK_BYTES_BUDGET // max(dim * 4 * 4, 1), 32)
+	auto = max(32, min(max_by_pair, max_by_dim, n, 256))
+	return int(auto)
+
+
+def _normalized_sqdist_block(xi: torch.Tensor, xj: torch.Tensor) -> torch.Tensor:
+	"""||a-b||^2 for L2-normalized rows via 2 - 2 a·b. Shape [Ci, Cj]."""
+
+	return (2.0 - 2.0 * (xi @ xj.transpose(0, 1))).clamp_min(0)
+
+
+def chunked_pairwise_uniformity(
+	x: torch.Tensor,
+	uniform_t: float | torch.Tensor = 4,
+	pair_chunk_size: int = 0,
+	*,
+	already_normalized: bool = False,
+) -> torch.Tensor:
+	"""Exact Wang-Isola uniformity: log(mean_{i<j} exp(-t ||x_i-x_j||^2)).
+
+	Same pairs as ``torch.pdist``, but accumulates over [C,C] blocks so peak
+	memory stays O(C^2 + n·D) instead of pdist's backward spike ~O(n^2·D).
+	"""
+
+	if not already_normalized:
+		x = F.normalize(x, dim=-1)
+	n = x.size(0)
+	if n < 2:
+		return (x * 0).sum()
+
+	chunk = resolve_uniform_pair_chunk_size(n, x.size(1), pair_chunk_size)
+	sum_exp = x.new_zeros(())
+	count = 0
+
+	for i0 in range(0, n, chunk):
+		i1 = min(i0 + chunk, n)
+		xi = x[i0:i1]
+		for j0 in range(i0, n, chunk):
+			j1 = min(j0 + chunk, n)
+			xj = x[j0:j1]
+			sq = _normalized_sqdist_block(xi, xj)
+			if i0 == j0:
+				tri = torch.triu(
+					torch.ones(i1 - i0, j1 - j0, device=x.device, dtype=torch.bool),
+					diagonal=1,
+				)
+				vals = sq.masked_select(tri)
+			else:
+				vals = sq.reshape(-1)
+			sum_exp = sum_exp + (-uniform_t * vals).exp().sum()
+			count += vals.numel()
+
+	return (sum_exp / max(count, 1)).log()
+
+
+def chunked_pairwise_margin_uniformity(
+	x: torch.Tensor,
+	uniform_margin: float = 2.0,
+	uniform_t: float | torch.Tensor = 4,
+	pair_chunk_size: int = 0,
+	*,
+	already_normalized: bool = False,
+) -> torch.Tensor:
+	"""Exact soft-margin uniformity: log(mean_{i<j} exp(t * ReLU(m - ||x_i-x_j||^2)))."""
+
+	if not already_normalized:
+		x = F.normalize(x, dim=-1)
+	n = x.size(0)
+	if n < 2:
+		return (x * 0).sum()
+
+	chunk = resolve_uniform_pair_chunk_size(n, x.size(1), pair_chunk_size)
+	sum_exp = x.new_zeros(())
+	count = 0
+
+	for i0 in range(0, n, chunk):
+		i1 = min(i0 + chunk, n)
+		xi = x[i0:i1]
+		for j0 in range(i0, n, chunk):
+			j1 = min(j0 + chunk, n)
+			xj = x[j0:j1]
+			sq = _normalized_sqdist_block(xi, xj)
+			if i0 == j0:
+				tri = torch.triu(
+					torch.ones(i1 - i0, j1 - j0, device=x.device, dtype=torch.bool),
+					diagonal=1,
+				)
+				vals = sq.masked_select(tri)
+			else:
+				vals = sq.reshape(-1)
+			sum_exp = sum_exp + F.relu(uniform_margin - vals).mul(uniform_t).exp().sum()
+			count += vals.numel()
+
+	return (sum_exp / max(count, 1)).log()
+
+
+def chunked_pairwise_sqdist(
+	x: torch.Tensor,
+	pair_chunk_size: int = 0,
+	*,
+	already_normalized: bool = False,
+) -> torch.Tensor:
+	"""Collect exact i<j squared distances via [C,C] blocks (no ``torch.pdist``)."""
+
+	if not already_normalized:
+		x = F.normalize(x, dim=-1)
+	n = x.size(0)
+	if n < 2:
+		return x.new_empty(0)
+
+	chunk = resolve_uniform_pair_chunk_size(n, x.size(1), pair_chunk_size)
+	parts: list[torch.Tensor] = []
+	for i0 in range(0, n, chunk):
+		i1 = min(i0 + chunk, n)
+		xi = x[i0:i1]
+		for j0 in range(i0, n, chunk):
+			j1 = min(j0 + chunk, n)
+			xj = x[j0:j1]
+			sq = _normalized_sqdist_block(xi, xj)
+			if i0 == j0:
+				tri = torch.triu(
+					torch.ones(i1 - i0, j1 - j0, device=x.device, dtype=torch.bool),
+					diagonal=1,
+				)
+				parts.append(sq.masked_select(tri))
+			else:
+				parts.append(sq.reshape(-1))
+	return torch.cat(parts, dim=0) if parts else x.new_empty(0)
+
 
 def distinct_first_indices(keys: torch.Tensor) -> torch.Tensor:
 	"""Return row indices of the first occurrence of each unique key in the batch."""
@@ -66,11 +213,15 @@ class KGAULoss(nn.Module):
 		average_uniformity_terms: bool = False,
 		uniformity_full_pdist: bool = False,
 		uniformity_pdist_gb: float | None = None,
+		uniform_pair_chunk_size: int = 0,
 	):
 		super().__init__()
 		self.average_uniformity_terms = bool(average_uniformity_terms)
 		self.uniformity_full_pdist = bool(uniformity_full_pdist)
 		self.uniformity_pdist_gb = uniformity_pdist_gb
+		# 0 = auto (~512MiB / soft-cap 256); >0 forces pair-block width. Always used
+		# instead of torch.pdist when computing full i<j uniformity.
+		self.uniform_pair_chunk_size = int(uniform_pair_chunk_size or 0)
 		self.tuni_as_alpha = bool(tuni_as_alpha)
 		self.learnable_au_alpha = bool(learnable_au_alpha)
 		self.learnable_au_gammas = bool(learnable_au_gammas)
@@ -265,27 +416,28 @@ class KGAULoss(nn.Module):
 		residual = phase_query - phase_target
 		return torch.abs(torch.sin(residual)).sum(dim=-1).mean()
 
-	def _uniformity_pdist_row_cap(self, dim: int) -> int | None:
-		"""Max rows safe for ``torch.pdist`` backward (O(n^2 * dim) autograd storage)."""
+	def _uniformity_row_cap(self, dim: int) -> int | None:
+		"""Optional explicit row cap via ``max_uniformity_samples`` (full exact mode skips GB budgets)."""
 
-		if not self.uniformity_full_pdist:
-			return None
+		del dim
 		max_samples = int(getattr(self, 'max_uniformity_samples', 0) or 0)
 		if max_samples > 0:
 			return max_samples
-		pdist_budget = max(int((self.uniformity_pdist_gb if self.uniformity_pdist_gb is not None else 3.0) * 1024 ** 3), 1)
-		return max(2, int((pdist_budget / (max(dim, 1) * 4)) ** 0.5))
+		# Chunked i<j uniformity replaces ``torch.pdist``; no pdist-backward row budget.
+		return None
 
 	def _subsample_uniformity_rows(self, x: torch.Tensor) -> torch.Tensor | None:
-		"""Cap row count before uniformity (entity table or large batches)."""
+		"""Optionally cap row count before uniformity (entity table or large batches)."""
 
 		if x is None or x.size(0) < 2:
 			return None
-		row_cap = self._uniformity_pdist_row_cap(x.size(-1))
-		if row_cap is not None and x.size(0) > row_cap:
-			indices = torch.randperm(x.size(0), device=x.device)[:row_cap]
-			x = x.index_select(0, indices)
-		elif not self.uniformity_full_pdist:
+		if self.uniformity_full_pdist:
+			# Exact full-batch path: only honor an explicit max_uniformity_samples > 0.
+			row_cap = self._uniformity_row_cap(x.size(-1))
+			if row_cap is not None and x.size(0) > row_cap:
+				indices = torch.randperm(x.size(0), device=x.device)[:row_cap]
+				x = x.index_select(0, indices)
+		else:
 			max_samples = int(getattr(self, 'max_uniformity_samples', 0) or 0)
 			if max_samples > 0 and x.size(0) > max_samples:
 				indices = torch.randperm(x.size(0), device=x.device)[:max_samples]
@@ -293,7 +445,7 @@ class KGAULoss(nn.Module):
 		return x if x.size(0) >= 2 else None
 
 	def _max_uniformity_pair_count(self, num_rows: int, dim: int) -> int:
-		"""Choose how many pairwise distances to estimate without O(n^2) autograd memory."""
+		"""Choose how many pairwise distances to estimate (Monte Carlo path only)."""
 
 		full_pairs = num_rows * (num_rows - 1) // 2
 		if full_pairs <= 0:
@@ -301,14 +453,15 @@ class KGAULoss(nn.Module):
 		if self.uniformity_full_pdist:
 			return full_pairs
 		max_samples = int(getattr(self, 'max_uniformity_samples', 0) or 0)
-		# `pdist` backward requires O(n^2 * dim) intermediate storage; budget 32 MiB to stay safe
-		# across high-dim AU vectors (e.g. DaBR concatenates two 2000-D vectors → 4000-D).
-		pdist_budget = 32 * 1024 * 1024
-		if num_rows * num_rows * max(dim, 1) * 2 <= pdist_budget:  # assume fp16 (×2 bytes)
+		# Prefer exact chunked i<j when the pair matrix is small enough that a full
+		# reduction is cheap; otherwise Monte Carlo with a bounded pair count.
+		pair_budget = 32 * 1024 * 1024
+		if num_rows * num_rows * 4 <= pair_budget:
 			return full_pairs
 		pair_cap = int(getattr(self, 'max_uniformity_pairs', 0) or 0)
 		if pair_cap <= 0:
 			pair_cap = max(4096, max_samples * 8)
+		del dim
 		return min(full_pairs, pair_cap)
 
 	@staticmethod
@@ -323,24 +476,66 @@ class KGAULoss(nn.Module):
 			j = torch.where(same, (j + 1) % n, j)
 		return (x[i] - x[j]).pow(2).sum(dim=-1)
 
+	def _normalize_uniformity_rows(self, x: torch.Tensor) -> torch.Tensor:
+		if self.normalize_uniformity:
+			return self._l2_normalize_if_needed(x)
+		return x
+
 	def _prepare_uniformity_pairs(self, x: torch.Tensor) -> torch.Tensor | None:
-		"""Normalize and subsample embeddings; return squared pairwise L2 distances."""
+		"""Normalize and subsample embeddings; return squared pairwise L2 distances.
+
+		Full i<j distances use chunked blocks (never ``torch.pdist``).
+		"""
 
 		x = self._subsample_uniformity_rows(x)
 		if x is None:
 			return None
-		if self.normalize_uniformity:
-			x = self._l2_normalize_if_needed(x)
+		x = self._normalize_uniformity_rows(x)
 		num_pairs = self._max_uniformity_pair_count(x.size(0), x.size(-1))
 		if num_pairs <= 0:
 			return None
 		full_pairs = x.size(0) * (x.size(0) - 1) // 2
 		if num_pairs >= full_pairs:
-			pairwise = torch.pdist(x, p=2)
-			if pairwise.numel() == 0:
-				return None
-			return pairwise.pow(2)
+			# Unit-sphere identity ``||a-b||^2 = 2-2a·b`` requires normalized rows.
+			if self.normalize_uniformity or self.assume_unit_norm:
+				dists = chunked_pairwise_sqdist(
+					x,
+					pair_chunk_size=self.uniform_pair_chunk_size,
+					already_normalized=True,
+				)
+			else:
+				# Non-normalized vectors: fall back to explicit row differences in chunks.
+				dists = self._chunked_raw_pairwise_sqdist(x)
+			return dists if dists.numel() > 0 else None
 		return self._random_pairwise_dist_sq(x, num_pairs)
+
+	def _chunked_raw_pairwise_sqdist(self, x: torch.Tensor) -> torch.Tensor:
+		"""Exact i<j ||a-b||^2 for non-normalized rows via [C,C] blocks."""
+
+		n = x.size(0)
+		if n < 2:
+			return x.new_empty(0)
+		chunk = resolve_uniform_pair_chunk_size(n, x.size(1), self.uniform_pair_chunk_size)
+		parts: list[torch.Tensor] = []
+		for i0 in range(0, n, chunk):
+			i1 = min(i0 + chunk, n)
+			xi = x[i0:i1]
+			for j0 in range(i0, n, chunk):
+				j1 = min(j0 + chunk, n)
+				xj = x[j0:j1]
+				# (xi - xj)^2 = ||xi||^2 + ||xj||^2 - 2 xi·xj
+				sq_i = xi.pow(2).sum(dim=-1, keepdim=True)
+				sq_j = xj.pow(2).sum(dim=-1, keepdim=True).transpose(0, 1)
+				sq = (sq_i + sq_j - 2.0 * (xi @ xj.transpose(0, 1))).clamp_min(0)
+				if i0 == j0:
+					tri = torch.triu(
+						torch.ones(i1 - i0, j1 - j0, device=x.device, dtype=torch.bool),
+						diagonal=1,
+					)
+					parts.append(sq.masked_select(tri))
+				else:
+					parts.append(sq.reshape(-1))
+		return torch.cat(parts, dim=0) if parts else x.new_empty(0)
 
 	def uniformity_loss(self, x: torch.Tensor) -> torch.Tensor:
 		"""Uniformity on the unit hypersphere.
@@ -385,12 +580,38 @@ class KGAULoss(nn.Module):
 			return torch.tensor(0.0), 0.0
 		if x.size(0) < 2:
 			return x.new_zeros(()), 0.0
+
+		margin = float(self.additive_margin)
+		uniformity_temp = self.tuni
+
+		# Classic AU + full i<j: exact chunked reduction (same formula as pdist, lower peak).
+		if margin <= 0.0 and (
+			self.uniformity_full_pdist
+			or self._uses_exact_chunked_uniformity(x)
+		):
+			x_prep = self._subsample_uniformity_rows(x)
+			if x_prep is None:
+				return x.new_zeros(()), 0.0
+			normalized = self.normalize_uniformity or self.assume_unit_norm
+			x_prep = self._normalize_uniformity_rows(x_prep)
+			if normalized:
+				return chunked_pairwise_uniformity(
+					x_prep,
+					uniform_t=uniformity_temp,
+					pair_chunk_size=self.uniform_pair_chunk_size,
+					already_normalized=True,
+				), 1.0
+			# Non-normalized: materialize chunked distances then log-mean potential.
+			dist_sq = self._chunked_raw_pairwise_sqdist(x_prep)
+			if dist_sq.numel() == 0:
+				return x.new_zeros(()), 0.0
+			scaled_dist_sq = self._scaled_uniformity_dist_sq(dist_sq)
+			return self._log_mean_potential(uniformity_temp * scaled_dist_sq), 1.0
+
 		dist_sq = self._prepare_uniformity_pairs(x)
 		if dist_sq is None:
 			return x.new_zeros(()), 0.0
 		scaled_dist_sq = self._scaled_uniformity_dist_sq(dist_sq)
-		margin = float(self.additive_margin)
-		uniformity_temp = self.tuni
 		if margin <= 0.0:
 			return self._log_mean_potential(uniformity_temp * scaled_dist_sq), 1.0
 		# Fixed m = 2*gamma is far too small in high dimensions (random pairs have d^2 ~ 2).
@@ -403,6 +624,16 @@ class KGAULoss(nn.Module):
 		buffer = buffer_penalty.mean().clamp_min(1e-12).log()
 		active_frac = float((scaled_dist_sq < geom_margin).float().mean().item())
 		return spread + buffer, active_frac
+
+	def _uses_exact_chunked_uniformity(self, x: torch.Tensor) -> bool:
+		"""True when Monte Carlo would still request the full i<j pair set."""
+
+		x_probe = x if x.size(0) < 2 else x
+		num_rows = x_probe.size(0)
+		full_pairs = num_rows * (num_rows - 1) // 2
+		if full_pairs <= 0:
+			return False
+		return self._max_uniformity_pair_count(num_rows, x_probe.size(-1)) >= full_pairs
 
 	def _block_alignment_loss(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
 		"""Squared-L2 alignment on per-block L2-normalized vectors (eval-consistent).

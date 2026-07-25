@@ -4,6 +4,7 @@ import math
 from typing import Iterable
 
 import torch
+from torch.utils.checkpoint import checkpoint
 
 from models.builder import (
 	apply_kge_regularization,
@@ -27,6 +28,9 @@ from models.rotate import normalize_rotate_phases
 from utils.device import get_model_obj
 from utils.logger import logger
 from utils.training_cadence import init_step_cadence_state, maybe_decay_lr_at_step, uses_step_cadence
+
+# Shared with AllNeg / KGAU chunk heuristics: cap peak [B, C, D] float32 (+ mul intermediates).
+_NEG_CHUNK_BYTES_BUDGET = 512 * 1024 * 1024
 
 
 class NegSampStrategy:
@@ -71,18 +75,47 @@ class NegSampStrategy:
 		if self.train_triples is not None and torch.cuda.is_available():
 			self.train_triples = self.train_triples.pin_memory()
 
-	def _neg_score_chunk_size(self, num_neg: int) -> int | None:
-		raw = config_int(self.args, 'neg_score_chunk_size', None)
-		if raw is not None and int(raw) <= 0:
+	def _entity_embedding_dim(self, model_obj=None) -> int:
+		model_obj = model_obj or get_model_obj(self.model)
+		ent = getattr(model_obj, 'ent_embedder', None)
+		if ent is not None:
+			dim = getattr(ent, 'dim', None)
+			if dim is not None:
+				return max(int(dim), 1)
+			weight = getattr(getattr(ent, 'embedding', None), 'weight', None)
+			if weight is not None:
+				return max(int(weight.size(-1)), 1)
+		return max(int(getattr(self.args, 'dim', 1) or 1), 1)
+
+	def _resolve_negative_chunk_size(self, batch_size: int, n_neg: int, entity_dim: int) -> int:
+		"""Return C such that scoring uses at most ~512MiB for [B, C, D], unless overridden.
+
+		``negative_chunk_size`` / ``neg_score_chunk_size``:
+		- ``None`` or ``0`` → auto
+		- ``>0`` → forced max negatives per chunk
+		When ``C >= N`` the caller skips chunking.
+		"""
+
+		if n_neg <= 0:
+			return 0
+		explicit = config_int(self.args, 'negative_chunk_size', None)
+		if explicit is None:
+			explicit = config_int(self.args, 'neg_score_chunk_size', None)
+		explicit = int(explicit or 0)
+		if explicit > 0:
+			return min(explicit, n_neg)
+		per_neg = max(batch_size * max(entity_dim, 1) * 4 * 2, 1)
+		auto = max(256, _NEG_CHUNK_BYTES_BUDGET // per_neg)
+		return min(int(auto), n_neg)
+
+	def _neg_score_chunk_size(self, num_neg: int, *, batch_size: int | None = None) -> int | None:
+		"""Chunk width for negative scoring, or ``None`` when a single forward is enough."""
+
+		bs = int(batch_size if batch_size is not None else (getattr(self.args, 'batch_size', 1) or 1))
+		chunk = self._resolve_negative_chunk_size(bs, num_neg, self._entity_embedding_dim())
+		if chunk <= 0 or chunk >= num_neg:
 			return None
-		model_obj = get_model_obj(self.model)
-		uses_batched = self._supports_batched_candidate_scoring(model_obj)
-		if raw is None:
-			return None if uses_batched else 128
-		chunk_size = int(raw)
-		if num_neg <= chunk_size:
-			return None
-		return chunk_size
+		return chunk
 
 	def _uses_adversarial_bce(self) -> bool:
 		path = str(getattr(self.args, 'model_loss_path', '') or '').lower()
@@ -223,7 +256,10 @@ class NegSampStrategy:
 					loss = loss + dabr_reg
 				self._backward_loss(loss)
 			else:
-				chunk_size = self._neg_score_chunk_size(int(neg_batch.size(1)))
+				chunk_size = self._neg_score_chunk_size(
+					int(neg_batch.size(1)),
+					batch_size=int(pos_batch.size(0)),
+				)
 				if chunk_size is None:
 					pos_scores, neg_scores = self._score_filtered_negatives(pos_batch, neg_batch, mode)
 					loss = self._compute_loss(pos_scores, neg_scores, weights)
@@ -420,31 +456,70 @@ class NegSampStrategy:
 		col_end: int,
 		*,
 		context=None,
+		use_checkpoint: bool = False,
 	) -> torch.Tensor:
 		neg_slice = neg_entity_ids[:, col_start:col_end]
 		chunk_neg = neg_slice.size(1)
+		do_ckpt = bool(use_checkpoint and self.model.training and torch.is_grad_enabled())
+
 		if context is not None:
 			model_obj = get_model_obj(self.model)
 			scorer = model_obj.get_scorer()
 			batch_size = h.size(0)
 			if mode == 'tail-batch':
 				t_emb = model_obj.embed_t(neg_slice.reshape(-1)).view(batch_size, chunk_neg, -1)
-				return scorer.score_emb(context['h_emb'], context['r_emb'], t_emb, 'hr_c')
+
+				def _forward_hr(h_emb, r_emb, cand_emb):
+					return scorer.score_emb(h_emb, r_emb, cand_emb, 'hr_c')
+
+				if do_ckpt:
+					return checkpoint(
+						_forward_hr,
+						context['h_emb'],
+						context['r_emb'],
+						t_emb,
+						use_reentrant=False,
+					)
+				return _forward_hr(context['h_emb'], context['r_emb'], t_emb)
 			if mode == 'head-batch':
 				h_emb = model_obj.embed_h(neg_slice.reshape(-1)).view(batch_size, chunk_neg, -1)
-				return scorer.score_emb(h_emb, context['r_emb'], context['t_emb'], '_rt_c')
+
+				def _forward_rt(cand_emb, r_emb, t_emb):
+					return scorer.score_emb(cand_emb, r_emb, t_emb, '_rt_c')
+
+				if do_ckpt:
+					return checkpoint(
+						_forward_rt,
+						h_emb,
+						context['r_emb'],
+						context['t_emb'],
+						use_reentrant=False,
+					)
+				return _forward_rt(h_emb, context['r_emb'], context['t_emb'])
 			raise ValueError(f'Unsupported negative-sampling mode: {mode}')
 
 		if mode == 'tail-batch':
 			h_exp = h.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
 			r_exp = r.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
 			t_neg = neg_slice.reshape(-1)
-			return self.model.score_hrt(h_exp, r_exp, t_neg).view(h.size(0), chunk_neg)
+
+			def _forward_hrt(h_ids, r_ids, t_ids):
+				return self.model.score_hrt(h_ids, r_ids, t_ids).view(h.size(0), chunk_neg)
+
+			if do_ckpt:
+				return checkpoint(_forward_hrt, h_exp, r_exp, t_neg, use_reentrant=False)
+			return _forward_hrt(h_exp, r_exp, t_neg)
 		if mode == 'head-batch':
 			h_neg = neg_slice.reshape(-1)
 			r_exp = r.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
 			t_exp = t.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
-			return self.model.score_rt(r_exp, t_exp, h=h_neg).view(h.size(0), chunk_neg)
+
+			def _forward_rt_ids(r_ids, t_ids, h_ids):
+				return self.model.score_rt(r_ids, t_ids, h=h_ids).view(h.size(0), chunk_neg)
+
+			if do_ckpt:
+				return checkpoint(_forward_rt_ids, r_exp, t_exp, h_neg, use_reentrant=False)
+			return _forward_rt_ids(r_exp, t_exp, h_neg)
 		raise ValueError(f'Unsupported negative-sampling mode: {mode}')
 
 	def _filtered_negsamp_loss_parts_chunked(
@@ -475,6 +550,7 @@ class NegSampStrategy:
 				start,
 				end,
 				context=context,
+				use_checkpoint=True,
 			)
 
 		if self._uses_adversarial_bce():
