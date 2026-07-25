@@ -26,7 +26,7 @@
   "max_num_tokens": 50,
   "use_link_graph": true,
   "rerank_n_hop": 0,
-  "batch_size": 8192,
+  "batch_size": 4096,
   "epochs": 50,
   "lr": 5e-05,
   "weight_decay": 0.0001,
