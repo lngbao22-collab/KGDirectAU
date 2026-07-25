@@ -25,6 +25,8 @@
   "pre_batch_weight": 0.5,
   "grad_clip": 10.0,
   "max_num_tokens": 50,
+  "encode_micro_batch_size": 64,
+  "encode_checkpoint": true,
   "use_link_graph": true,
   "neighbor_weight": 0.05,
   "rerank_n_hop": 0,

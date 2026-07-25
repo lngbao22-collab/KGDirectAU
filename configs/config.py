@@ -91,7 +91,8 @@ def build_parser() -> argparse.ArgumentParser:
     # Hyperparameters and settings.
     parser.add_argument('--additive-margin', default=None, type=float,
                         help='additive margin for contrastive loss and AU loss')
-    parser.add_argument('-b', '--batch-size', default=None, type=int,
+    parser.add_argument('-b', '--batch-size', '--batch_size', default=None, type=int,
+                        dest='batch_size',
                         help='mini-batch size')
     parser.add_argument('--dim', default=None, type=int,
                         help='embedding dimension for non-text KG models')

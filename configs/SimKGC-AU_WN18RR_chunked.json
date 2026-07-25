@@ -25,6 +25,8 @@
   "pre_batch_weight": 0.5,
   "grad_clip": 10.0,
   "max_num_tokens": 50,
+  "encode_micro_batch_size": 64,
+  "encode_checkpoint": true,
   "use_link_graph": true,
   "rerank_n_hop": 0,
   "batch_size": 1024,
@@ -41,5 +43,5 @@
   "max_to_keep": 0,
   "output_dir_prefix": "logs/SimKGC-AU_WN18RR_chunked",
   "normalize_lp_scores": true,
-  "uniform_pair_chunk_size": 128
+  "uniform_pair_chunk_size": 256
 }
