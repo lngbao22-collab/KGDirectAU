@@ -624,7 +624,10 @@ class KGAUStrategy(Evaluator):
 			)
 		logger.info('KGAU au_deduplicate: %s', self.au_deduplicate)
 		if config_bool(args, 'entity_uniformity_batch', False):
-			logger.info('KGAU entity_uniformity_batch: batch cat(head, tail) (GB-Magic au style)')
+			logger.info(
+				'KGAU entity_uniformity_batch: gamma_ent = cat(embed_h, embed_t) '
+				'on triple endpoints (GB-Magic; mode-independent)',
+			)
 		if self.kgau_bidirectional:
 			logger.info(
 				'KGAU kgau_bidirectional: alternating tail/head each step '
@@ -998,11 +1001,16 @@ class KGAUStrategy(Evaluator):
 		n_uq = 0
 		n_ut = 0
 		margin_sum = 0.0
-		for q_raw, t_raw, h_raw in components:
-			ent_raw = self._entity_uniformity_vectors_for_loss(
-				model, h_raw, t_raw, h_keys, t_keys,
-				q_raw=q_raw, head_indices=ss, tail_indices=ts, predict_head=predict_head,
-			)
+		for part_idx, (q_raw, t_raw, h_raw) in enumerate(components):
+			# GB-Magic applies gamma_ent once per step on cat(head, tail). For
+			# multi-component DaBR-AU, attach entity uniformity only to the first
+			# part so the entity term is not double-counted.
+			ent_raw = None
+			if part_idx == 0:
+				ent_raw = self._entity_uniformity_vectors_for_loss(
+					model, h_raw, t_raw, h_keys, t_keys,
+					q_raw=q_raw, head_indices=ss, tail_indices=ts, predict_head=predict_head,
+				)
 			part_loss, l_align, l_unif, _, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
 				q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys,
 				batch_triples=batch_triples,
@@ -1063,10 +1071,11 @@ class KGAUStrategy(Evaluator):
 		h_keys: torch.Tensor,
 		t_keys: torch.Tensor,
 	) -> torch.Tensor | None:
-		"""Build entity-uniformity inputs from batch heads and tails (SimKGC-style).
+		"""Pool batch head/tail entity vectors for ``gamma_ent`` (GB-Magic ``cat``).
 
-		When ``au_deduplicate`` is enabled, keeps one vector per unique entity id.
-		Otherwise pools all batch head/tail rows (DirectAU-style batch uniformity).
+		``h_raw`` / ``t_raw`` must be the triple's head and tail entity vectors
+		(not alignment query/target). When ``au_deduplicate`` is enabled, keeps one
+		vector per unique entity id; otherwise concatenates all rows.
 		"""
 
 		if not self.criterion.gamma_active('ent') or h_raw is None or t_raw is None or h_raw.size(0) == 0:
@@ -1110,6 +1119,30 @@ class KGAUStrategy(Evaluator):
 			ent = model._normalize_au_vector(ent)
 		return ent
 
+	def _triple_endpoint_entity_vectors(
+		self,
+		model,
+		head_indices: torch.Tensor,
+		tail_indices: torch.Tensor,
+	) -> tuple[torch.Tensor, torch.Tensor]:
+		"""Lookup batch head/tail entity embeddings (GB-Magic ``cat([head, tail])`` inputs).
+
+		Always uses the triple endpoints, independent of head-batch vs tail-batch mode.
+		Optional ``au_entity_embeddings`` (e.g. pRotatE) remaps catalog rows into AU space.
+		"""
+
+		model_obj = get_model_obj(model)
+		h_ent = model_obj.embed_h(head_indices)
+		t_ent = model_obj.embed_t(tail_indices)
+		scorer = model_obj.get_scorer()
+		if scorer is not None and hasattr(scorer, 'au_entity_embeddings'):
+			h_ent = scorer.au_entity_embeddings(h_ent)
+			t_ent = scorer.au_entity_embeddings(t_ent)
+		if hasattr(model_obj, '_normalize_au_vector'):
+			h_ent = model_obj._normalize_au_vector(h_ent)
+			t_ent = model_obj._normalize_au_vector(t_ent)
+		return h_ent, t_ent
+
 	def _entity_uniformity_vectors_for_loss(
 		self,
 		model,
@@ -1123,49 +1156,35 @@ class KGAUStrategy(Evaluator):
 		tail_indices: torch.Tensor | None = None,
 		predict_head: bool = False,
 	) -> torch.Tensor | None:
-		"""Entity vectors for ``gamma_ent``: batch dedup (text) or full table (embedding encoders)."""
+		"""Entity vectors for ``gamma_ent``.
+
+		GB-Magic KGAU: ``torch.cat([head, tail], dim=0)`` over the positive triple's
+		entity embeddings, for both head-batch and tail-batch steps. Alignment
+		query/target vectors must not be reused here — on head-batch the alignment
+		target is the head, which would incorrectly yield ``cat([head, head])``.
+
+		* Index KGE + ``entity_uniformity_batch``: lookup ``embed_h`` / ``embed_t``.
+		* Text encoders: pool batch head/tail encoder outputs.
+		* Otherwise: full entity table (catalog) uniformity.
+		"""
+
+		del q_raw, predict_head  # entity term is mode-independent (GB-Magic)
 
 		if config_bool(self.args, 'entity_uniformity_batch', False) or self.uses_text_inputs:
-			# DaBR-AU per-component AU: keep entity uniformity in the SAME per-component
-			# cosine space as alignment. Pool the component query/target AU vectors
-			# (semantic h⊗r / t⊗r⁻¹, distance h+dr / t) instead of widening raw entities
-			# via ``au_entity_embeddings`` (cat(e, e)), which lives in a different space
-			# and mismatches the per-component (L_sem + L_dist) objective.
-			if self._dabr_component_au and q_raw is not None and t_raw is not None:
-				head_vecs = t_raw if predict_head else q_raw
-				tail_vecs = q_raw if predict_head else t_raw
-				return self._batch_entity_uniformity_vectors(head_vecs, tail_vecs, h_keys, t_keys)
 			if (
 				not self.uses_text_inputs
 				and head_indices is not None
 				and tail_indices is not None
-				and config_bool(self.args, 'entity_uniformity_batch', False)
 			):
-				model_obj = get_model_obj(model)
-				scorer = model_obj.get_scorer()
-				# Only map catalog entity rows when the scorer exposes a static AU entity
-				# table (pRotatE-AU). Relation-composed encoders (DaBR-AU, TransERR-AU)
-				# must reuse batch q/t AU vectors so uniformity matches alignment space.
-				if scorer is not None and hasattr(scorer, 'au_entity_embeddings'):
-					h_ent = model_obj.embed_h(head_indices)
-					t_ent = model_obj.embed_t(tail_indices)
-					h_ent = scorer.au_entity_embeddings(h_ent)
-					t_ent = scorer.au_entity_embeddings(t_ent)
-					if hasattr(model_obj, '_normalize_au_vector'):
-						h_ent = model_obj._normalize_au_vector(h_ent)
-						t_ent = model_obj._normalize_au_vector(t_ent)
-					return self._batch_entity_uniformity_vectors(h_ent, t_ent, h_keys, t_keys)
-			# DaBR-AU returns raw entity embeddings as ``h_raw`` but relation-aware AU
-			# vectors as ``q_raw``/``t_raw``; pool heads/tails from the AU side only.
-			if (
-				q_raw is not None
-				and h_raw is not None
-				and t_raw is not None
-				and h_raw.size(-1) != t_raw.size(-1)
-			):
-				head_vecs = t_raw if predict_head else q_raw
-				tail_vecs = q_raw if predict_head else t_raw
-				return self._batch_entity_uniformity_vectors(head_vecs, tail_vecs, h_keys, t_keys)
+				h_ent, t_ent = self._triple_endpoint_entity_vectors(
+					model, head_indices, tail_indices,
+				)
+				# Dedup keys must be the triple endpoints, not alignment target keys
+				# (on head-batch alignment ``t_keys`` are heads).
+				return self._batch_entity_uniformity_vectors(
+					h_ent, t_ent, head_indices, tail_indices,
+				)
+			# Text / token path: caller passes true head and tail batch vectors.
 			return self._batch_entity_uniformity_vectors(h_raw, t_raw, h_keys, t_keys)
 		return self._catalog_entity_uniformity_vectors(model)
 

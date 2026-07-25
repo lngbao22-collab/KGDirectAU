@@ -345,7 +345,8 @@ def build_parser() -> argparse.ArgumentParser:
         dest='entity_uniformity_batch',
         action='store_true',
         default=None,
-        help='KGAU: entity uniformity on batch cat(head, tail) instead of full entity table',
+        help='KGAU: gamma_ent on batch cat(embed_h, embed_t) of triple endpoints '
+             '(GB-Magic; independent of head/tail-batch mode) instead of full entity table',
     )
     entity_uniformity_batch_group.add_argument(
         '--no-entity-uniformity-batch', '--no_entity_uniformity_batch',
