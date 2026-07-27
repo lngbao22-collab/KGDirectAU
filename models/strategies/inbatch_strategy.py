@@ -265,7 +265,7 @@ class InBatchStrategy(Evaluator):
 			'valid_time': valid_time,
 			'total_time': self.total_time,
 			'num_train_epochs': self.num_train_epochs,
-			'best_epoch': None if self.best_metric is None else self.best_metric.get('epoch'),
+			'best_epoch': None if self.best_metric is None else self.best_metric.get('epoch', 0) + 1,
 			'best_mrr': None if self.best_metric is None else self.best_metric.get('score'),
 			'best_metric': self.best_metric,
 			'best_checkpoint_path': self.best_checkpoint_path,
@@ -432,7 +432,7 @@ class InBatchStrategy(Evaluator):
 		if is_best:
 			self.best_metric = {'mrr': valid_mrr, 'score': valid_mrr, 'metrics': metric_dict, 'epoch': epoch}
 			self.best_epoch = epoch
-			logger.info('[BEST] epoch=%d valid_mrr=%s', epoch, valid_mrr)
+			logger.info('[BEST] epoch=%d valid_mrr=%s', epoch + 1, valid_mrr)
 
 		saved_checkpoint_path = save_checkpoint({
 			'epoch': epoch,

@@ -100,7 +100,7 @@ class Trainer(ABC):
         logger.info('[Memory] Peak memory: %s', format_memory(self.memory_tracker.peak_memory_mb))
 
         return {
-            'best_epoch': None if self.best_metric is None else self.best_metric.get('epoch'),
+            'best_epoch': None if self.best_metric is None else self.best_metric.get('epoch', 0) + 1,
             'best_mrr': None if self.best_metric is None else self.best_metric.get('score'),
             'train_time': self.train_time,
             'valid_time': self.valid_time,

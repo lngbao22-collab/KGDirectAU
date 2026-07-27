@@ -1988,7 +1988,7 @@ class KGAUStrategy(Evaluator):
 		logger.info('[Memory] Peak memory: %s', format_memory(self.memory_tracker.peak_memory_mb))
 
 		return {
-			'best_epoch': None if self.best_metric is None else self.best_metric.get('epoch'),
+			'best_epoch': None if self.best_metric is None else self.best_metric.get('epoch', 0) + 1,
 			'best_mrr': None if self.best_metric is None else self.best_metric.get('score'),
 			'best_monitor_metric': None if self.best_metric is None else self.best_metric.get('metric'),
 			'best_monitor_score': None if self.best_metric is None else self.best_metric.get('score'),

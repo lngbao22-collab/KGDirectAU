@@ -1084,7 +1084,7 @@ def run_kge_train_loop(trainer) -> dict:
 	logger.info('[Memory] Peak memory: %s', format_memory(trainer.memory_tracker.peak_memory_mb))
 
 	return {
-		'best_epoch': None if trainer.best_metric is None else trainer.best_metric.get('epoch'),
+		'best_epoch': None if trainer.best_metric is None else trainer.best_metric.get('epoch', 0) + 1,
 		'best_mrr': None if trainer.best_metric is None else trainer.best_metric.get('score'),
 		'best_monitor_metric': None if trainer.best_metric is None else trainer.best_metric.get('metric'),
 		'best_monitor_score': None if trainer.best_metric is None else trainer.best_metric.get('score'),
