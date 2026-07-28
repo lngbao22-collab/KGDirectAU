@@ -25,7 +25,7 @@
   "lmbda": 0.5,
   "lmbda_two": 0.01,
   "dabr_distance_norm": 2,
-  "batch_size": 8192,
+  "batch_size": 512,
   "epochs": 2000,
   "optim": "adagrad",
   "lr": 0.1,

@@ -22,7 +22,7 @@
   "margin": 6.0,
   "epsilon": 2.0,
   "add_reciprocal_relations": true,
-  "batch_size": 8192,
+  "batch_size": 512,
   "epochs": 400,
   "optim": "adam",
   "lr": 5e-05,

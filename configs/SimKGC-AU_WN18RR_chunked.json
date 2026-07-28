@@ -28,7 +28,7 @@
   "encode_checkpoint": true,
   "use_link_graph": true,
   "rerank_n_hop": 0,
-  "batch_size": 1024,
+  "batch_size": 512,
   "epochs": 50,
   "lr": 5e-05,
   "weight_decay": 0.0001,

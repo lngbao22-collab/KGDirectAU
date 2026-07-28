@@ -22,7 +22,7 @@
   "adversarial_training": true,
   "margin": 6,
   "add_reciprocal_relations": true,
-  "batch_size": 2048,
+  "batch_size": 1024,
   "epochs": 400,
   "optim": "adam",
   "lr": 5e-05,
