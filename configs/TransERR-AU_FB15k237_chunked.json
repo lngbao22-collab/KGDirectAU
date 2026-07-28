@@ -25,7 +25,7 @@
   "margin": 20.0,
   "epsilon": 2.0,
   "add_reciprocal_relations": true,
-  "batch_size": 8192,
+  "batch_size": 2048,
   "training_cadence": "epoch",
   "epochs": 376,
   "warm_up_ratio": [
@@ -43,7 +43,6 @@
   "test_eval_best": true,
   "n_sample": 0,
   "regularization": 0.4,
-  "regularization_p": 3,
   "valid_steps": 2000,
   "save_checkpoint_steps": 2000,
   "test_batch_size": 32,
