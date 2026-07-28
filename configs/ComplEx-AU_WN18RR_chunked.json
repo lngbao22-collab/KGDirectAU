@@ -19,7 +19,7 @@
   "alpha": 1.0,
   "average_uniformity_terms": true,
   "entity_uniformity_batch": true,
-  "au_deduplicate": false,
+  "au_deduplicate": true,
   "tuni": 4,
   "dim": 128,
   "double_entity_embedding": true,
