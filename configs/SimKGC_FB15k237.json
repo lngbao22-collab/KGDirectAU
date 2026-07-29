@@ -1,14 +1,11 @@
 {
   "model": "SimKGC",
   "dataset": "FB15k237",
-
   "model_loss_path": "models/losses/infonce_loss.py",
   "model_strategy_path": "models/strategies/inbatch_strategy.py",
   "model_sampler_path": "models/samplers/masking_sampler.py",
-
   "dim": 768,
   "dropout": 0.1,
-
   "bert_encoder": "distilbert-base-uncased",
   "pooling": "mean",
   "additive_margin": 0.02,
@@ -22,7 +19,6 @@
   "use_link_graph": true,
   "neighbor_weight": 0.05,
   "rerank_n_hop": 0,
-
   "batch_size": 512,
   "shared_encoder": false,
   "epochs": 10,
@@ -30,7 +26,6 @@
   "weight_decay": 0.0001,
   "lr_scheduler": "linear",
   "use_amp": true,
-
   "eval_batch_size": 128,
   "eval_every_n_step": 10000,
   "eval_interval_epochs": 5,
@@ -39,12 +34,11 @@
   "warmup": 400,
   "workers": 2,
   "print_freq": 20,
-
   "max_to_keep": 5,
   "output_dir_prefix": "logs/SimKGC_FB15k237",
-
   "epoch_per_eval": 1,
   "early_stopping_patience": 5,
   "early_stopping_min_epochs": 10,
-  "early_stopping_min_metric": 0.05
+  "early_stopping_min_metric": 0.05,
+  "uniform_pair_chunk_size": 256
 }
