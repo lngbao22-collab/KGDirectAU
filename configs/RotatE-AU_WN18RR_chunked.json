@@ -18,7 +18,7 @@
   "au_deduplicate": false,
   "gamma_cross": 0,
   "tuni": 4,
-  "dim": 500,
+  "dim": 256,
   "adversarial_training": true,
   "margin": 6,
   "add_reciprocal_relations": true,
