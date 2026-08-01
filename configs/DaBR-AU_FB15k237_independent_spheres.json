@@ -42,7 +42,7 @@
   "test_eval_best": true,
   "test_eval_last": true,
   "max_to_keep": 0,
-  "output_dir_prefix": "logs/DaBR-AU_FB15k237_independent_spheres_chunked",
+  "output_dir_prefix": "logs/DaBR-AU_FB15k237_independent_spheres",
   "tie_handling": "rounded_mean_rank",
   "tie_rtol": 0.0001,
   "tie_atol": 1e-05,

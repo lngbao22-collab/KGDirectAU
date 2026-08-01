@@ -41,7 +41,7 @@
   "epoch_per_eval": 5,
   "test_batch_size": 8,
   "max_to_keep": 0,
-  "output_dir_prefix": "logs/ComplEx-AU_WN18RR_chunked",
+  "output_dir_prefix": "logs/ComplEx-AU_WN18RR",
   "tie_handling": "rounded_mean_rank",
   "tie_rtol": 0.0001,
   "tie_atol": 1e-05
