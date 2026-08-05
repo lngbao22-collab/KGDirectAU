@@ -19,6 +19,7 @@
   "shuffle_train": true,
   "use_amp": true,
   "n_sample": 1024,
+  "neg_score_chunk_size": 0,
   "regularization": 2e-06,
   "training_cadence": "epoch",
   "epoch_per_eval": 5,
@@ -31,6 +32,5 @@
   "tie_handling": "rounded_mean_rank",
   "tie_rtol": 0.0001,
   "tie_atol": 1e-05,
-  "normalize_lp_scores": false,
-  "uniform_pair_chunk_size": 256
+  "normalize_lp_scores": false
 }
