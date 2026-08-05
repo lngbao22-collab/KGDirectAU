@@ -1241,6 +1241,14 @@ def _strategy_init_kwargs(args, strategy_path: str, model: nn.Module, train_trip
 		sampler_path = (getattr(args, 'model_sampler_path', '') or '').replace('\\', '/')
 		if sampler_path.endswith('uniform_pointwise_sampler.py'):
 			kwargs['train_dataloader'] = _prepare_pointwise_dataloader(args)
+		elif sampler_path.endswith('filtered_1_to_n_sampler.py'):
+			from models.samplers.filtered_1_to_n_sampler import build_filtered_negsamp_dataloaders
+
+			triples = train_triples if train_triples is not None else _prepare_train_triples(args, model)
+			kwargs['train_triples'] = triples
+			kwargs['train_dataloader'] = build_filtered_negsamp_dataloaders(
+				args, triples, _resolve_nentity(args, model),
+			)
 		else:
 			kwargs['train_triples'] = train_triples if train_triples is not None else _prepare_train_triples(args, model)
 	elif paradigm == 'kvsall':

@@ -42,6 +42,14 @@ class NegSampStrategy:
 		init_index_kge_trainer(self, model, args)
 		self.train_triples = train_triples.long() if train_triples is not None else None
 		self.train_dataloader = train_dataloader
+		# Dict {"head","tail"} = workerized filtered NegSamp loaders (GB-Magic-style).
+		self._presampled_loaders = (
+			train_dataloader
+			if isinstance(train_dataloader, dict)
+			and 'head' in train_dataloader
+			and 'tail' in train_dataloader
+			else None
+		)
 		self.sampler = sampler if sampler is not None else load_sampler(args, self.train_triples, model)
 		self.loss_fn = loss_fn if loss_fn is not None else load_loss_fn_for_paradigm(args, 'negsamp')
 
@@ -187,33 +195,50 @@ class NegSampStrategy:
 		maybe_decay_lr_at_step(self, self.global_step)
 
 	def iter_training_batches(self, epoch: int, dataloader=None):
-		if dataloader is not None:
+		if dataloader is not None and not isinstance(dataloader, dict):
 			yield from dataloader
+			return
+		loaders = self._presampled_loaders
+		if loaders is None and isinstance(dataloader, dict) and 'head' in dataloader:
+			loaders = dataloader
+		if loaders is not None:
+			from models.samplers.filtered_1_to_n_sampler import iter_bidirectional_presampled_batches
+
+			del epoch  # DataLoader shuffle handles epoch randomness
+			yield from iter_bidirectional_presampled_batches(loaders['head'], loaders['tail'])
 			return
 		if self._pointwise_mode or self.train_triples is None:
 			yield from self._iter_train_batches(epoch)
 			return
 		yield from self._iter_bidirectional_train_batches(epoch)
 
+	@staticmethod
+	def _is_presampled_negsamp_batch(batch) -> bool:
+		return (
+			isinstance(batch, (tuple, list))
+			and len(batch) == 4
+			and torch.is_tensor(batch[0])
+			and torch.is_tensor(batch[1])
+			and isinstance(batch[3], str)
+		)
+
 	def train_batch(self, batch, epoch: int, *, mode: str | None = None) -> float:
 		del epoch
-		batch, mode = self._unpack_training_batch(batch, mode)
-		if not self._pointwise_mode and mode is None:
-			raise ValueError('Filtered negative-sampling requires an explicit head-batch or tail-batch mode')
+		if self._is_presampled_negsamp_batch(batch):
+			pos_batch, neg_batch, weights, mode = batch
+		else:
+			batch, mode = self._unpack_training_batch(batch, mode)
+			if not self._pointwise_mode and mode is None:
+				raise ValueError('Filtered negative-sampling requires an explicit head-batch or tail-batch mode')
+			sample_result = self.sampler.sample(batch, mode)
+			if len(sample_result) == 4:
+				pos_batch, neg_batch, weights, sampled_mode = sample_result
+				mode = sampled_mode
+			else:
+				pos_batch, neg_batch, weights = sample_result
+
 		self.model.train()
 		self.optimizer.zero_grad(set_to_none=True)
-
-		sample_result = self.sampler.sample(batch, mode)
-		if len(sample_result) == 4:
-			pos_batch, neg_batch, weights, sampled_mode = sample_result
-			mode = sampled_mode
-		else:
-			pos_batch, neg_batch, weights = sample_result
-
-		if isinstance(batch, dict):
-			for key in batch:
-				if torch.is_tensor(batch[key]):
-					batch[key] = batch[key].to(self.device)
 
 		if torch.is_tensor(pos_batch):
 			pos_batch = pos_batch.to(self.device, non_blocking=True)

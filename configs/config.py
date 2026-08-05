@@ -180,7 +180,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--wd', '--weight-decay', default=None, type=float,
                         dest='weight_decay', help='weight decay')
     parser.add_argument('-j', '--workers', default=None, type=int,
-                        help='number of data loading workers')
+                        help='DataLoader workers (default 4; 0 = in-process). '
+                             'Filtered NegSamp uses workers so CPU negative sampling overlaps GPU.')
     parser.add_argument('--warmup', default=None, type=int,
                         help='warmup steps')
 
@@ -1069,7 +1070,8 @@ if _model_name in {'transerr', 'transerr-au'} and getattr(args, 'triple_relation
     args.triple_relation_embedding = True
 
 if getattr(args, 'workers', None) is None:
-    args.workers = 0
+
+    args.workers = 2
 
 
 def _infer_data_paths_from_dataset() -> None:

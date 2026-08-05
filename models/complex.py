@@ -1,4 +1,4 @@
-"""ComplEx scorer and model (Hadamard ``score_emb``)."""
+"""ComplEx scorer and model (Hermitian ``score_emb``, GB-Magic-aligned)."""
 
 import torch
 
@@ -10,9 +10,10 @@ def build_scorer(args) -> 'ComplExScorer':
 
 
 class ComplExScorer(KGEScorer):
-	"""ComplEx score function via a single Hadamard ``score_emb`` (Eq. 11).
+	"""ComplEx via complex product + Hermitian product (no 2×-dim expansion).
 
 	``combine`` modes: ``hrt``, ``hr_``, ``_rt``, ``hr_c``, ``_rt_c``.
+	Matches GB-Magic ``ComplEx.score`` / ``_hermitian_dot``.
 	"""
 
 	bidirectional_score_batch = True
@@ -24,6 +25,42 @@ class ComplExScorer(KGEScorer):
 	def supports_candidate_scoring(self) -> bool:
 		return True
 
+	@staticmethod
+	def _complex_mult(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+		re_a, im_a = torch.chunk(a, 2, dim=-1)
+		re_b, im_b = torch.chunk(b, 2, dim=-1)
+		return torch.cat([re_a * re_b - im_a * im_b, re_a * im_b + im_a * re_b], dim=-1)
+
+	@staticmethod
+	def _complex_conj_mult(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+		"""``conj(a) ∘ b`` (head-batch query: ``conj(r) ∘ t``)."""
+
+		re_a, im_a = torch.chunk(a, 2, dim=-1)
+		re_b, im_b = torch.chunk(b, 2, dim=-1)
+		return torch.cat([re_a * re_b + im_a * im_b, re_a * im_b - im_a * re_b], dim=-1)
+
+	@staticmethod
+	def _hermitian_dot(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+		re_a, im_a = torch.chunk(a, 2, dim=-1)
+		re_b, im_b = torch.chunk(b, 2, dim=-1)
+		return (re_a * re_b + im_a * im_b).sum(dim=-1)
+
+	@staticmethod
+	def _hermitian_mm(query: torch.Tensor, entities: torch.Tensor) -> torch.Tensor:
+		"""Hermitian products of queries ``[B, D]`` against entity table ``[E, D]`` → ``[B, E]``."""
+
+		re_q, im_q = torch.chunk(query, 2, dim=-1)
+		re_e, im_e = torch.chunk(entities, 2, dim=-1)
+		return re_q.mm(re_e.transpose(0, 1)) + im_q.mm(im_e.transpose(0, 1))
+
+	@staticmethod
+	def _hermitian_bc(query: torch.Tensor, candidates: torch.Tensor) -> torch.Tensor:
+		"""Hermitian products of queries ``[B, D]`` against candidates ``[B, C, D]`` → ``[B, C]``."""
+
+		re_q, im_q = torch.chunk(query, 2, dim=-1)
+		re_c, im_c = torch.chunk(candidates, 2, dim=-1)
+		return (re_q.unsqueeze(1) * re_c + im_q.unsqueeze(1) * im_c).sum(dim=-1)
+
 	def score_emb(
 		self,
 		h_emb: torch.Tensor,
@@ -32,33 +69,28 @@ class ComplExScorer(KGEScorer):
 		combine: str,
 		**kwargs,
 	) -> torch.Tensor:
-		"""Fast ComplEx scores via Hadamard products (Trouillon et al. Eq. 11)."""
+		"""ComplEx scores via ``query = h∘r`` / ``conj(r)∘t`` then Hermitian product."""
 
 		del kwargs
 		n = r_emb.size(0)
 
-		# Split relation and object into real (first half) and imaginary (second half).
-		r_emb_re, r_emb_im = (part.contiguous() for part in r_emb.chunk(2, dim=-1))
-		t_emb_re, t_emb_im = (part.contiguous() for part in t_emb.chunk(2, dim=-1))
-
-		# Column blocks for each required combination.
-		h_all = torch.cat((h_emb, h_emb), dim=-1)  # re, im, re, im
-		r_all = torch.cat((r_emb_re, r_emb, -r_emb_im), dim=-1)  # re, re, im, -im
-		t_all = torch.cat((t_emb, t_emb_im, t_emb_re), dim=-1)  # re, im, im, re
-
 		if combine == 'hrt':
-			out = (h_all * t_all * r_all).sum(dim=-1)
-			return out.view(n, -1)
+			query = self._complex_mult(h_emb, r_emb)
+			return self._hermitian_dot(query, t_emb).view(n, -1)
 		if combine == 'hr_':
-			return (h_all * r_all).mm(t_all.transpose(0, 1))
+			query = self._complex_mult(h_emb, r_emb)
+			return self._hermitian_mm(query, t_emb)
 		if combine == '_rt':
-			return (r_all * t_all).mm(h_all.transpose(0, 1))
+			query = self._complex_conj_mult(r_emb, t_emb)
+			return self._hermitian_mm(query, h_emb)
 		if combine == 'hr_c':
 			# t_emb is [B, C, D]
-			return (h_all * r_all).unsqueeze(1).bmm(t_all.transpose(1, 2)).squeeze(1)
+			query = self._complex_mult(h_emb, r_emb)
+			return self._hermitian_bc(query, t_emb)
 		if combine == '_rt_c':
 			# h_emb is [B, C, D]
-			return (r_all * t_all).unsqueeze(1).bmm(h_all.transpose(1, 2)).squeeze(1)
+			query = self._complex_conj_mult(r_emb, t_emb)
+			return self._hermitian_bc(query, h_emb)
 		raise ValueError(f'cannot handle combine="{combine}"')
 
 
@@ -96,17 +128,13 @@ class ComplExModel(KGEModel):
 		"""Tail-prediction query: ``h ∘ r`` in the concatenated complex space."""
 
 		del kwargs
-		h_re, h_im = torch.chunk(self.embed_h(h), 2, dim=-1)
-		r_re, r_im = torch.chunk(self.embed_r(r), 2, dim=-1)
-		return torch.cat([h_re * r_re - h_im * r_im, h_re * r_im + h_im * r_re], dim=-1)
+		return ComplExScorer._complex_mult(self.embed_h(h), self.embed_r(r))
 
 	def inverse_query_encoder(self, r: torch.Tensor, t: torch.Tensor, **kwargs) -> torch.Tensor:
 		"""Head-prediction query: ``conj(r) ∘ t``."""
 
 		del kwargs
-		r_re, r_im = torch.chunk(self.embed_r(r), 2, dim=-1)
-		t_re, t_im = torch.chunk(self.embed_t(t), 2, dim=-1)
-		return torch.cat([r_re * t_re + r_im * t_im, r_re * t_im - r_im * t_re], dim=-1)
+		return ComplExScorer._complex_conj_mult(self.embed_r(r), self.embed_t(t))
 
 	def target_encoder(
 		self,
