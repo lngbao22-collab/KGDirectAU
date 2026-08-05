@@ -30,5 +30,5 @@
   "tie_rtol": 0.0001,
   "tie_atol": 1e-05,
   "normalize_lp_scores": false,
-  "uniform_pair_chunk_size": 256
+  "neg_score_chunk_size": 256
 }

@@ -40,5 +40,5 @@
   "early_stopping_patience": 5,
   "early_stopping_min_epochs": 10,
   "early_stopping_min_metric": 0.05,
-  "uniform_pair_chunk_size": 256
+  "neg_score_chunk_size": 256
 }

@@ -26,8 +26,6 @@
   "shuffle_train": true,
   "use_amp": false,
   "n_sample": 128,
-  "neg_score_chunk_size": 128,
-  "neg_weight_chunk_size": 256,
   "regularization": 0.4,
   "valid_steps": 2000,
   "save_checkpoint_steps": 2000,
@@ -47,5 +45,5 @@
   "early_stopping_min_epochs": 376,
   "early_stopping_min_metric": 0.05,
   "normalize_lp_scores": false,
-  "uniform_pair_chunk_size": 256
+  "neg_score_chunk_size": 256
 }
