@@ -9,6 +9,7 @@ from typing import Iterator
 import torch
 from torch import optim
 from torch.optim import Adam
+from torch.utils.checkpoint import checkpoint as grad_checkpoint
 
 from utils.relations import use_reciprocal_relations
 from contextlib import nullcontext
@@ -29,7 +30,7 @@ from models.builder import (
 	load_attr_from_path,
 	step_lr_scheduler,
 )
-from models.losses.loss_utilities import compute_adversarial_negsamp_losses_chunked
+from models.losses.adversarial_bce_loss import compute_adversarial_bce_loss
 from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, last_model_path, save_checkpoint
 from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
 from utils.logger import AverageMeter, ProgressMeter, logger, log_run_timing
@@ -1298,28 +1299,31 @@ class KGAUStrategy(Evaluator):
 			or 1.0
 		)
 
-	def _hybrid_neg_score_chunk_size(self, num_neg: int, *, batch_size: int | None = None) -> int | None:
-		"""NegSamp-style auto chunk width (0/None = ~512MiB budget, soft floor 256)."""
+	def _hybrid_resolve_negative_chunk_size(self, batch_size: int, n_neg: int, entity_dim: int) -> int:
+		"""Return configured chunk width C (default 256). C<=0 disables chunking (use all N)."""
 
-		if num_neg <= 0:
-			return None
+		del batch_size, entity_dim
+		if n_neg <= 0:
+			return 0
 		explicit = config_int(self.args, 'negative_chunk_size', None)
 		if explicit is None:
 			explicit = config_int(self.args, 'neg_score_chunk_size', None)
-		explicit = int(explicit or 0)
-		bs = int(batch_size if batch_size is not None else (getattr(self.args, 'batch_size', 1) or 1))
+		if explicit is None:
+			chunk = 256
+		else:
+			chunk = int(explicit)
+		if chunk <= 0:
+			return n_neg
+		return min(chunk, n_neg)
+
+	def _hybrid_entity_embedding_dim(self) -> int:
 		model_obj = get_model_obj(self.model)
 		ent = getattr(model_obj, 'ent_embedder', None)
-		entity_dim = int(getattr(ent, 'dim', 0) or getattr(self.args, 'dim', 1) or 1)
-		if explicit > 0:
-			chunk = min(explicit, num_neg)
-		else:
-			bytes_budget = 512 * 1024 * 1024
-			per_neg = max(bs * max(entity_dim, 1) * 4 * 2, 1)
-			chunk = min(max(256, bytes_budget // per_neg), num_neg)
-		if chunk >= num_neg:
-			return None
-		return int(chunk)
+		if ent is not None:
+			dim = getattr(ent, 'dim', None)
+			if dim is not None:
+				return max(int(dim), 1)
+		return max(int(getattr(self.args, 'dim', 1) or 1), 1)
 
 	def _hybrid_candidate_scoring_context(
 		self,
@@ -1353,32 +1357,110 @@ class KGAUStrategy(Evaluator):
 		col_end: int,
 		*,
 		context=None,
+		use_checkpoint: bool = False,
 	) -> torch.Tensor:
 		neg_slice = neg_entity_ids[:, col_start:col_end]
 		chunk_neg = neg_slice.size(1)
+		do_ckpt = bool(use_checkpoint and self.model.training and torch.is_grad_enabled())
+
 		if context is not None:
 			model_obj = get_model_obj(self.model)
 			scorer = model_obj.get_scorer()
 			batch_size = h.size(0)
 			if mode == 'tail-batch':
-				t_emb = model_obj.embed_t(neg_slice.reshape(-1)).view(batch_size, chunk_neg, -1)
-				return scorer.score_emb(context['h_emb'], context['r_emb'], t_emb, 'hr_c')
+				def _forward_hr(h_emb, r_emb, neg_ids):
+					cand_emb = model_obj.embed_t(neg_ids.reshape(-1)).view(batch_size, chunk_neg, -1)
+					return scorer.score_emb(h_emb, r_emb, cand_emb, 'hr_c')
+
+				if do_ckpt:
+					return grad_checkpoint(
+						_forward_hr,
+						context['h_emb'],
+						context['r_emb'],
+						neg_slice,
+						use_reentrant=False,
+					)
+				return _forward_hr(context['h_emb'], context['r_emb'], neg_slice)
 			if mode == 'head-batch':
-				h_emb = model_obj.embed_h(neg_slice.reshape(-1)).view(batch_size, chunk_neg, -1)
-				return scorer.score_emb(h_emb, context['r_emb'], context['t_emb'], '_rt_c')
+				def _forward_rt(neg_ids, r_emb, t_emb):
+					cand_emb = model_obj.embed_h(neg_ids.reshape(-1)).view(batch_size, chunk_neg, -1)
+					return scorer.score_emb(cand_emb, r_emb, t_emb, '_rt_c')
+
+				if do_ckpt:
+					return grad_checkpoint(
+						_forward_rt,
+						neg_slice,
+						context['r_emb'],
+						context['t_emb'],
+						use_reentrant=False,
+					)
+				return _forward_rt(neg_slice, context['r_emb'], context['t_emb'])
 			raise ValueError(f'Unsupported hybrid negative-sampling mode: {mode}')
 
 		if mode == 'tail-batch':
 			h_exp = h.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
 			r_exp = r.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
 			t_neg = neg_slice.reshape(-1)
-			return self.model.score_hrt(h_exp, r_exp, t_neg).view(h.size(0), chunk_neg)
+
+			def _forward_hrt(h_ids, r_ids, t_ids):
+				return self.model.score_hrt(h_ids, r_ids, t_ids).view(h.size(0), chunk_neg)
+
+			if do_ckpt:
+				return grad_checkpoint(_forward_hrt, h_exp, r_exp, t_neg, use_reentrant=False)
+			return _forward_hrt(h_exp, r_exp, t_neg)
 		if mode == 'head-batch':
 			h_neg = neg_slice.reshape(-1)
 			r_exp = r.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
 			t_exp = t.unsqueeze(1).expand(-1, chunk_neg).reshape(-1)
-			return self.model.score_rt(r_exp, t_exp, h=h_neg).view(h.size(0), chunk_neg)
+
+			def _forward_rt_ids(r_ids, t_ids, h_ids):
+				return self.model.score_rt(r_ids, t_ids, h=h_ids).view(h.size(0), chunk_neg)
+
+			if do_ckpt:
+				return grad_checkpoint(_forward_rt_ids, r_exp, t_exp, h_neg, use_reentrant=False)
+			return _forward_rt_ids(r_exp, t_exp, h_neg)
 		raise ValueError(f'Unsupported hybrid negative-sampling mode: {mode}')
+
+	def _hybrid_score_negatives(
+		self,
+		h: torch.Tensor,
+		r: torch.Tensor,
+		t: torch.Tensor,
+		neg_entity_ids: torch.Tensor,
+		mode: str,
+		*,
+		context=None,
+	) -> tuple[torch.Tensor, torch.Tensor]:
+		"""Score [B, N] negatives with strategy-aligned chunking + gradient checkpointing."""
+
+		n_neg = int(neg_entity_ids.size(1))
+		if context is None:
+			context = self._hybrid_candidate_scoring_context(h, r, t, mode)
+		pos_scores = context['pos_scores']
+		if n_neg == 0:
+			return pos_scores, pos_scores.new_zeros((h.size(0), 0))
+
+		chunk_size = self._hybrid_resolve_negative_chunk_size(
+			h.size(0),
+			n_neg,
+			self._hybrid_entity_embedding_dim(),
+		)
+		if chunk_size >= n_neg:
+			neg_scores = self._hybrid_score_negatives_slice(
+				h, r, t, neg_entity_ids, mode, 0, n_neg, context=context, use_checkpoint=False,
+			)
+			return pos_scores, neg_scores
+
+		score_chunks = []
+		for start in range(0, n_neg, chunk_size):
+			end = min(start + chunk_size, n_neg)
+			score_chunks.append(
+				self._hybrid_score_negatives_slice(
+					h, r, t, neg_entity_ids, mode, start, end,
+					context=context, use_checkpoint=True,
+				)
+			)
+		return pos_scores, torch.cat(score_chunks, dim=1)
 
 	def _hybrid_adversarial_bce_loss_parts(
 		self,
@@ -1388,6 +1470,8 @@ class KGAUStrategy(Evaluator):
 		*,
 		predict_head: bool = False,
 	) -> list[torch.Tensor]:
+		"""Return a single full adversarial BCE loss (list for hybrid backward helper)."""
+
 		mode = 'head-batch' if predict_head else 'tail-batch'
 		batch_triples = torch.stack([ss, rs, ts], dim=1)
 		pos_triples, neg_entity_ids, weights, _ = self.hybrid_sampler.sample(batch_triples, mode)
@@ -1399,30 +1483,14 @@ class KGAUStrategy(Evaluator):
 		h = pos_triples[:, 0]
 		r = pos_triples[:, 1]
 		t = pos_triples[:, 2]
-		context = self._hybrid_candidate_scoring_context(h, r, t, mode)
-		pos_scores = context['pos_scores']
-		num_neg = int(neg_entity_ids.size(1))
-		chunk_size = self._hybrid_neg_score_chunk_size(num_neg, batch_size=int(h.size(0)))
-		if chunk_size is None:
-			chunk_size = num_neg
-
-		def score_neg_columns(start: int, end: int) -> torch.Tensor:
-			return self._hybrid_score_negatives_slice(
-				h, r, t, neg_entity_ids, mode, start, end, context=context,
-			)
-
-		weight_chunk_size = config_int(self.args, 'neg_weight_chunk_size', None)
-		if weight_chunk_size is not None and int(weight_chunk_size) <= 0:
-			weight_chunk_size = None
-		return compute_adversarial_negsamp_losses_chunked(
+		pos_scores, neg_scores = self._hybrid_score_negatives(h, r, t, neg_entity_ids, mode)
+		loss = compute_adversarial_bce_loss(
 			pos_scores,
-			score_neg_columns,
-			num_neg=num_neg,
-			adversarial_temp=self._hybrid_adversarial_temperature(),
-			weights=weights,
-			chunk_size=chunk_size,
-			weight_chunk_size=weight_chunk_size,
+			neg_scores,
+			self._hybrid_adversarial_temperature(),
+			weights,
 		)
+		return [loss]
 
 	def _backward_hybrid_losses(
 		self,

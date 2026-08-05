@@ -191,14 +191,14 @@ def build_parser() -> argparse.ArgumentParser:
                         help='number of negative samples per positive')
     parser.add_argument('--neg-score-chunk-size', '--neg_score_chunk_size', default=None, type=int,
                         dest='neg_score_chunk_size',
-                        help='NegSamp: max negatives scored per chunk (None/0=auto ~512MiB [B,C,D]; '
+                        help='NegSamp: max negatives scored per chunk (default 256; <=0 disables chunking; '
                              'when chunking, uses gradient checkpointing). Alias: --negative-chunk-size')
     parser.add_argument('--negative-chunk-size', '--negative_chunk_size', default=None, type=int,
                         dest='negative_chunk_size',
-                        help='Alias of --neg-score-chunk-size (GB-Magic name; 0=auto)')
+                        help='Alias of --neg-score-chunk-size (default 256; <=0 disables chunking)')
     parser.add_argument('--neg-weight-chunk-size', '--neg_weight_chunk_size', default=None, type=int,
                         dest='neg_weight_chunk_size',
-                        help='Optional chunk size for no-grad adversarial weight scoring (default: one full pass)')
+                        help='Deprecated/unused (kept for config compatibility; adversarial weights use full scores)')
     parser.add_argument('--uniform-pair-chunk-size', '--uniform_pair_chunk_size', default=None, type=int,
                         dest='uniform_pair_chunk_size',
                         help='KGAU: pairwise block size for exact i<j uniformity (0/None=auto, soft-cap 256)')

@@ -18,19 +18,11 @@ from models.builder import (
 	load_sampler,
 	run_index_kge_train_loop,
 )
-from models.losses.bce_loss import bce_logit_offset, uses_bce_logit_offset
-from models.losses.loss_utilities import (
-	compute_adversarial_negsamp_losses_chunked,
-	compute_standard_negsamp_losses_chunked,
-)
 from models.protate import normalize_protate_phases
 from models.rotate import normalize_rotate_phases
 from utils.device import get_model_obj
 from utils.logger import logger
 from utils.training_cadence import init_step_cadence_state, maybe_decay_lr_at_step, uses_step_cadence
-
-# Shared with AllNeg / KGAU chunk heuristics: cap peak [B, C, D] float32 (+ mul intermediates).
-_NEG_CHUNK_BYTES_BUDGET = 512 * 1024 * 1024
 
 
 class NegSampStrategy:
@@ -88,38 +80,28 @@ class NegSampStrategy:
 		return max(int(getattr(self.args, 'dim', 1) or 1), 1)
 
 	def _resolve_negative_chunk_size(self, batch_size: int, n_neg: int, entity_dim: int) -> int:
-		"""Return C such that scoring uses at most ~512MiB for [B, C, D], unless overridden.
+		"""Return configured chunk width C (default 256). C<=0 disables chunking (use all N).
 
+		Matches GB-Magic ``NegSampStrategy.resolve_negative_chunk_size``.
 		``negative_chunk_size`` / ``neg_score_chunk_size``:
-		- ``None`` or ``0`` → auto
-		- ``>0`` → forced max negatives per chunk
-		When ``C >= N`` the caller skips chunking.
+		- unset / ``None`` → 256
+		- ``<=0`` → no chunking (score all N at once)
+		- ``>0`` → max negatives per chunk
 		"""
 
+		del batch_size, entity_dim  # kept for call-site parity with the reference strategy
 		if n_neg <= 0:
 			return 0
 		explicit = config_int(self.args, 'negative_chunk_size', None)
 		if explicit is None:
 			explicit = config_int(self.args, 'neg_score_chunk_size', None)
-		explicit = int(explicit or 0)
-		if explicit > 0:
-			return min(explicit, n_neg)
-		per_neg = max(batch_size * max(entity_dim, 1) * 4 * 2, 1)
-		auto = max(256, _NEG_CHUNK_BYTES_BUDGET // per_neg)
-		return min(int(auto), n_neg)
-
-	def _neg_score_chunk_size(self, num_neg: int, *, batch_size: int | None = None) -> int | None:
-		"""Chunk width for negative scoring, or ``None`` when a single forward is enough."""
-
-		bs = int(batch_size if batch_size is not None else (getattr(self.args, 'batch_size', 1) or 1))
-		chunk = self._resolve_negative_chunk_size(bs, num_neg, self._entity_embedding_dim())
-		if chunk <= 0 or chunk >= num_neg:
-			return None
-		return chunk
-
-	def _uses_adversarial_bce(self) -> bool:
-		path = str(getattr(self.args, 'model_loss_path', '') or '').lower()
-		return 'adversarial_bce' in path
+		if explicit is None:
+			chunk = 256
+		else:
+			chunk = int(explicit)
+		if chunk <= 0:
+			return n_neg
+		return min(chunk, n_neg)
 
 	def _supports_batched_candidate_scoring(self, model_obj) -> bool:
 		scorer = model_obj.get_scorer()
@@ -182,13 +164,6 @@ class NegSampStrategy:
 			't_emb': t_emb,
 			'pos_scores': pos_scores,
 		}
-
-	def _adversarial_temperature(self) -> float:
-		return float(
-			getattr(self.args, 'adversarial_temp', None)
-			or getattr(self.args, 'adversarial_temperature', 1.0)
-			or 1.0
-		)
 
 	def _backward_loss(self, loss: torch.Tensor, *, retain_graph: bool = False) -> None:
 		if self.use_amp:
@@ -256,51 +231,19 @@ class NegSampStrategy:
 					loss = loss + dabr_reg
 				self._backward_loss(loss)
 			else:
-				chunk_size = self._neg_score_chunk_size(
-					int(neg_batch.size(1)),
-					batch_size=int(pos_batch.size(0)),
+				# Strategy-aligned: chunk+checkpoint score → full [B,N] → one loss/backward.
+				pos_scores, neg_scores = self._score_negatives(pos_batch, neg_batch, mode)
+				loss = self._compute_loss(pos_scores, neg_scores, weights)
+				loss = apply_kge_regularization(
+					loss,
+					self.model,
+					self.args,
+					batch_triples=pos_batch,
 				)
-				if chunk_size is None:
-					pos_scores, neg_scores = self._score_filtered_negatives(pos_batch, neg_batch, mode)
-					loss = self._compute_loss(pos_scores, neg_scores, weights)
-					loss = apply_kge_regularization(
-						loss,
-						self.model,
-						self.args,
-						batch_triples=pos_batch,
-					)
-					reg_term = self._regularization_term()
-					if reg_term is not None:
-						loss = loss + reg_term
-					self._backward_loss(loss)
-				else:
-					loss_parts = self._filtered_negsamp_loss_parts_chunked(
-						pos_batch,
-						neg_batch,
-						mode,
-						weights,
-						chunk_size,
-					)
-					reg_term = self._regularization_term()
-					if reg_term is not None:
-						loss_parts[-1] = loss_parts[-1] + reg_term
-					for idx, loss_part in enumerate(loss_parts):
-						self._backward_loss(
-							loss_part,
-							retain_graph=idx < len(loss_parts) - 1,
-						)
-					anchor = loss_parts[0].new_zeros(())
-					kge_reg = apply_kge_regularization(
-						anchor,
-						self.model,
-						self.args,
-						batch_triples=pos_batch,
-					)
-					if kge_reg is not anchor:
-						self._backward_loss(kge_reg)
-					loss = sum((part.detach() for part in loss_parts), start=anchor)
-					if kge_reg is not anchor:
-						loss = loss + kge_reg.detach()
+				reg_term = self._regularization_term()
+				if reg_term is not None:
+					loss = loss + reg_term
+				self._backward_loss(loss)
 
 		self._optimizer_step()
 
@@ -467,9 +410,8 @@ class NegSampStrategy:
 			scorer = model_obj.get_scorer()
 			batch_size = h.size(0)
 			if mode == 'tail-batch':
-				t_emb = model_obj.embed_t(neg_slice.reshape(-1)).view(batch_size, chunk_neg, -1)
-
-				def _forward_hr(h_emb, r_emb, cand_emb):
+				def _forward_hr(h_emb, r_emb, neg_ids):
+					cand_emb = model_obj.embed_t(neg_ids.reshape(-1)).view(batch_size, chunk_neg, -1)
 					return scorer.score_emb(h_emb, r_emb, cand_emb, 'hr_c')
 
 				if do_ckpt:
@@ -477,25 +419,24 @@ class NegSampStrategy:
 						_forward_hr,
 						context['h_emb'],
 						context['r_emb'],
-						t_emb,
+						neg_slice,
 						use_reentrant=False,
 					)
-				return _forward_hr(context['h_emb'], context['r_emb'], t_emb)
+				return _forward_hr(context['h_emb'], context['r_emb'], neg_slice)
 			if mode == 'head-batch':
-				h_emb = model_obj.embed_h(neg_slice.reshape(-1)).view(batch_size, chunk_neg, -1)
-
-				def _forward_rt(cand_emb, r_emb, t_emb):
+				def _forward_rt(neg_ids, r_emb, t_emb):
+					cand_emb = model_obj.embed_h(neg_ids.reshape(-1)).view(batch_size, chunk_neg, -1)
 					return scorer.score_emb(cand_emb, r_emb, t_emb, '_rt_c')
 
 				if do_ckpt:
 					return checkpoint(
 						_forward_rt,
-						h_emb,
+						neg_slice,
 						context['r_emb'],
 						context['t_emb'],
 						use_reentrant=False,
 					)
-				return _forward_rt(h_emb, context['r_emb'], context['t_emb'])
+				return _forward_rt(neg_slice, context['r_emb'], context['t_emb'])
 			raise ValueError(f'Unsupported negative-sampling mode: {mode}')
 
 		if mode == 'tail-batch':
@@ -522,14 +463,35 @@ class NegSampStrategy:
 			return _forward_rt_ids(r_exp, t_exp, h_neg)
 		raise ValueError(f'Unsupported negative-sampling mode: {mode}')
 
-	def _filtered_negsamp_loss_parts_chunked(
+	def _score_negatives(
 		self,
 		pos_triples: torch.Tensor,
 		neg_entity_ids: torch.Tensor,
 		mode: str,
-		weights,
-		chunk_size: int,
-	) -> list[torch.Tensor]:
+	) -> tuple[torch.Tensor, torch.Tensor]:
+		"""Score [B, N] negatives, chunking (+ checkpoint) when N exceeds the configured width.
+
+		Matches GB-Magic ``NegSampStrategy.score_negatives``: materialize full scores, then
+		one loss (adversarial BCE weights via detached softmax in the loss fn).
+		"""
+
+		n_neg = int(neg_entity_ids.size(1))
+		if n_neg == 0:
+			h = pos_triples[:, 0]
+			r = pos_triples[:, 1]
+			t = pos_triples[:, 2]
+			pos_scores = self._positive_scores(h, r, t, mode=mode)
+			empty = pos_scores.new_zeros((pos_triples.size(0), 0))
+			return pos_scores, empty
+
+		chunk_size = self._resolve_negative_chunk_size(
+			pos_triples.size(0),
+			n_neg,
+			self._entity_embedding_dim(),
+		)
+		if chunk_size >= n_neg:
+			return self._score_filtered_negatives(pos_triples, neg_entity_ids, mode)
+
 		h = pos_triples[:, 0]
 		r = pos_triples[:, 1]
 		t = pos_triples[:, 2]
@@ -538,44 +500,24 @@ class NegSampStrategy:
 			pos_scores = context['pos_scores']
 		else:
 			pos_scores = self._positive_scores(h, r, t, mode=mode)
-		num_neg = int(neg_entity_ids.size(1))
 
-		def score_neg_columns(start: int, end: int) -> torch.Tensor:
-			return self._score_negatives_slice(
-				h,
-				r,
-				t,
-				neg_entity_ids,
-				mode,
-				start,
-				end,
-				context=context,
-				use_checkpoint=True,
+		score_chunks = []
+		for start in range(0, n_neg, chunk_size):
+			end = min(start + chunk_size, n_neg)
+			score_chunks.append(
+				self._score_negatives_slice(
+					h,
+					r,
+					t,
+					neg_entity_ids,
+					mode,
+					start,
+					end,
+					context=context,
+					use_checkpoint=True,
+				)
 			)
-
-		if self._uses_adversarial_bce():
-			weight_chunk_size = config_int(self.args, 'neg_weight_chunk_size', None)
-			if weight_chunk_size is not None and int(weight_chunk_size) <= 0:
-				weight_chunk_size = None
-			return compute_adversarial_negsamp_losses_chunked(
-				pos_scores,
-				score_neg_columns,
-				num_neg=num_neg,
-				adversarial_temp=self._adversarial_temperature(),
-				weights=weights,
-				chunk_size=chunk_size,
-				weight_chunk_size=weight_chunk_size,
-			)
-
-		offset = bce_logit_offset(self.args) if uses_bce_logit_offset(self.args) else 0.0
-		return compute_standard_negsamp_losses_chunked(
-			pos_scores,
-			score_neg_columns,
-			num_neg=num_neg,
-			weights=weights,
-			chunk_size=chunk_size,
-			offset=offset,
-		)
+		return pos_scores, torch.cat(score_chunks, dim=1)
 
 	def _score_pointwise_batch(
 		self,

@@ -19,7 +19,6 @@
   "shuffle_train": true,
   "use_amp": true,
   "n_sample": 1024,
-  "neg_score_chunk_size": 0,
   "regularization": 2e-06,
   "training_cadence": "epoch",
   "epoch_per_eval": 5,
