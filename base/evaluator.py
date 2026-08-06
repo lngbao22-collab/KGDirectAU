@@ -18,7 +18,7 @@ from data.dataset import Example, load_data
 from data.dataloader import collate
 from metrics.ranking import ranking_metrics_from_ranks, ranks_from_score_matrix
 from metrics.classification import classification_metrics, find_global_threshold
-from models.losses.bce_loss import bce_logit_offset
+from models.losses.bce_loss import bce_logit_offset, uses_logit_classification_scores
 
 from utils.eval_modes import resolve_head_eval_mode, uses_forward_examples_for_backward_eval
 from utils.relations import build_forward_to_inverse_index_tensor
@@ -695,10 +695,17 @@ def _resolve_label_split_path(args, split: str) -> str:
 
 
 def _scores_to_classification_probs(scores: torch.Tensor, args) -> torch.Tensor:
-	"""Map raw KGE logits to calibrated positive-class probabilities."""
+	"""Map KGE scores to values used for TC thresholding and ranking AUCs.
+
+	BCE / logistic losses: apply optional logit offset then ``sigmoid`` (true probs).
+	Margin-ranking / AU / other ranking losses: return raw scores so threshold search
+	is not crushed by sigmoid saturation on large ``margin - distance`` values.
+	"""
 
 	if not isinstance(scores, torch.Tensor):
 		scores = torch.as_tensor(scores, dtype=torch.float32)
+	if not uses_logit_classification_scores(args):
+		return scores
 	offset = bce_logit_offset(args)
 	if offset != 0.0:
 		scores = scores + offset
@@ -712,7 +719,7 @@ def _collect_index_triple_classification_probs(
 	batch_size: int,
 	tc_args,
 ) -> List[float]:
-	"""Score labeled triples and return positive-class probabilities."""
+	"""Score labeled triples for classification (sigmoid probs or raw ranking scores)."""
 
 	y_prob: List[float] = []
 	for i in range(0, len(examples), batch_size):
