@@ -20,7 +20,7 @@
   "workers": 4,
   "use_amp": true,
   "n_sample": 1024,
-  "regularization": 2e-06,
+  "regularization": 5e-06,
   "training_cadence": "epoch",
   "epoch_per_eval": 5,
   "test_batch_size": 8,
