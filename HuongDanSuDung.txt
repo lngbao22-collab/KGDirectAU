@@ -47,6 +47,39 @@ kết quả. Giả định bạn đã hoàn tất cài đặt theo HuongDanCaiDa
 
   Bảng đầy đủ config và thành phần: xem README.md (mục "Shipped configs").
 
+  --- Siêu tham số chính các config *-AU_WN18RR.json ---
+
+  Cột KGAU = (tuni, gamma_q, gamma_t, gamma_ent). Giá trị lấy từ file JSON
+  hiện có trong configs/
+
+  +-------------+-----+---------------+------------+--------+
+  | Model       | Dim | KGAU          | Batch size | Epochs |
+  +-------------+-----+---------------+------------+--------+
+  | TransE-AU   |  64 | (2, 1, 1, 1)  |        512 |    400 |
+  | DistMult-AU | 128 | (4, 1, 1, 1)  |        512 |    400 |
+  | ComplEx-AU  | 128 | (4, 1, 1, 1.5)|       8192 |    400 |
+  | RotatE-AU   | 256 | (4, 1, 1, 1)  |       1024 |    400 |
+  | pRotatE-AU  | 256 | (4, 1, 1, 1)  |        512 |    400 |
+  | SimKGC-AU   | 768 | (6, 0, 0, 0.5)|        512 |     50 |
+  | TransERR-AU | 128 | (5, 1, 1, 1)  |       2048 |   1200 |
+  | DaBR-AU     | 128 | (4, 0, 0, 1)  |        512 |   2000 |
+  +-------------+-----+---------------+------------+--------+
+
+  --- Siêu tham số chính các config *-AU_FB15k237.json ---
+
+  +-------------+-----+-------------------+------------+--------+
+  | Model       | Dim | KGAU              | Batch size | Epochs |
+  +-------------+-----+-------------------+------------+--------+
+  | TransE-AU   | 128 | (2, 1, 1, 1)      |       1024 |    400 |
+  | DistMult-AU | 128 | (4, 0.5, 0.5, 0.5)|        100 |    400 |
+  | ComplEx-AU  | 256 | (4, 1, 1, 1)      |       1024 |    400 |
+  | RotatE-AU   | 256 | (2, 1, 1, 1)      |       1024 |    400 |
+  | pRotatE-AU  | 256 | (2, 1, 1, 1)      |       1024 |    400 |
+  | SimKGC-AU   | 768 | (5, 0, 0, 0.5)    |        512 |     10 |
+  | TransERR-AU | 128 | (4, 1, 1, 1)      |       2048 |    376 |
+  | DaBR-AU     | 128 | (2, 0, 0, 1)      |       1024 |   2000 |
+  +-------------+-----+-------------------+------------+--------+
+
 
 4. CHẠY TRAIN
 
@@ -96,6 +129,11 @@ kết quả. Giả định bạn đã hoàn tất cài đặt theo HuongDanCaiDa
     --batch-size N     Kích thước mini-batch
     --epochs N         Số epoch train
     --lr X             Learning rate
+    --dim N            Số chiều embedding
+    --tuni X           Nhiệt độ / hệ số uniformity (KGAU)
+    --gamma-q X        Trọng số uniformity cho query
+    --gamma-t X        Trọng số uniformity cho target
+    --gamma-ent X      Trọng số uniformity cho entity
 
   Danh sách đầy đủ:
     python main.py --help

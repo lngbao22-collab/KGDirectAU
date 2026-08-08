@@ -17,7 +17,7 @@
   "average_uniformity_terms": true,
   "entity_uniformity_batch": true,
   "au_deduplicate": false,
-  "tuni": 4,
+  "tuni": 5,
   "dim": 128,
   "triple_relation_embedding": true,
   "adversarial_training": true,
