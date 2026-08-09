@@ -400,11 +400,11 @@ class KGAULoss(nn.Module):
 			self._tuni = float(value)
 
 	def alignment_loss(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-		"""Expected squared L2 distance between paired positive query and target embeddings."""
+		"""Expected L3^3 distance between paired positive query and target embeddings."""
 
 		q = self._l2_normalize_if_needed(q)
 		t = self._l2_normalize_if_needed(t)
-		return (q - t).pow(2).sum(dim=-1).mean()
+		return (q - t).abs().pow(3).sum(dim=-1).mean()
 
 	def sin_phase_alignment_loss(self, phase_query: torch.Tensor, phase_target: torch.Tensor) -> torch.Tensor:
 		"""Alignment in native pRotatE geometry: mean sum of |sin(phase residual)| per dimension.
@@ -636,7 +636,7 @@ class KGAULoss(nn.Module):
 		return self._max_uniformity_pair_count(num_rows, x_probe.size(-1)) >= full_pairs
 
 	def _block_alignment_loss(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-		"""Squared-L2 alignment on per-block L2-normalized vectors (eval-consistent).
+		"""L3^3 alignment on per-block L2-normalized vectors (eval-consistent).
 
 		Unlike ``alignment_loss``, this always normalizes each block even when
 		``assume_unit_norm`` is set, because a global AU normalization does not make
@@ -645,7 +645,7 @@ class KGAULoss(nn.Module):
 
 		q = F.normalize(q, p=2, dim=-1)
 		t = F.normalize(t, p=2, dim=-1)
-		return (q - t).pow(2).sum(dim=-1).mean()
+		return (q - t).abs().pow(3).sum(dim=-1).mean()
 
 	def _raw_alignment_loss(
 		self,
@@ -658,7 +658,7 @@ class KGAULoss(nn.Module):
 		if self.alignment_mode == 'sin_phase':
 			return self.sin_phase_alignment_loss(q, t)
 		if self.alignment_mode == 'phase_residual':
-			return (q - t).pow(2).sum(dim=-1).mean()
+			return (q - t).abs().pow(3).sum(dim=-1).mean()
 		if self.alignment_mode == 'dabr_blocks':
 			mid = q.size(-1) // 2
 			if mid <= 0 or mid * 2 != q.size(-1):

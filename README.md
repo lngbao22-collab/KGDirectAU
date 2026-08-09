@@ -11,7 +11,7 @@ KGDirectAU_root/
 │   └── trainer.py          # Training loop
 ├── configs/
 │   ├── config.py           # Argument parser and config resolution
-│   └── *.json              # Per-experiment hyperparameters (32 configs)
+│   └── *.json              # Per-experiment hyperparameters (32 configs: 8 models × base/AU × WN18RR/FB15k237)
 ├── data/
 │   ├── WN18RR/             # Raw WN18RR splits (download separately; see below)
 │   ├── FB15k237/           # Raw FB15k-237 splits (download separately)
@@ -57,9 +57,13 @@ KGDirectAU_root/
 │       ├── best_model.mdl
 │       └── last_model.mdl
 ├── main.py
+├── HuongDanCaiDat.txt      # Setup guide (Vietnamese)
+├── HuongDanSuDung.txt      # Training / usage guide (Vietnamese)
 ├── README.md
 └── requirements.txt
 ```
+
+Vietnamese setup and usage notes: `HuongDanCaiDat.txt`, `HuongDanSuDung.txt`.
 
 ## Quickstart
 
@@ -175,7 +179,7 @@ Each model is assembled from five composable pieces (`models/builder.py`):
 
 - **embedder** (`models/embedders/`): entity/relation embedding modules.
   - `lookup_embedder.py` for index-based KGE models; `text_embedder.py` for SimKGC.
-- **scorer** (`models/`): model-specific scoring function.
+- **scorer** (`models/scorers/`): model-specific scoring function.
   - Example: `distmult_scorer.py`, `simkgc_scorer.py`
 - **loss** (`models/losses/`): training objective.
   - Example: `adversarial_bce_loss.py`, `au_loss.py`, `infonce_loss.py`
@@ -214,3 +218,33 @@ Each row reflects the **WN18RR config file** in `configs/`. FB15k-237 variants f
 > Additional loss modules (`kl_loss.py`, `ce_loss.py`, `bce_loss.py`, etc.) and strategies (`kvsall_strategy.py`, `1vsall_strategy.py`) are available for custom configs but are not used by the shipped JSON files above.
 >
 > Loss definitions are documented in `models/losses/LOSS_README.mdx`.
+
+## AU hyperparameter reference
+
+KGAU column is `(tuni, gamma_q, gamma_t, gamma_ent)`. Values match the shipped JSON files under `configs/`.
+
+### `*-AU_WN18RR.json`
+
+| Model | Dim | KGAU | Batch size | Epochs |
+| :--- | ---: | :--- | ---: | ---: |
+| TransE-AU | 64 | (2, 1, 1, 1) | 512 | 400 |
+| DistMult-AU | 128 | (4, 1, 1, 1) | 512 | 400 |
+| ComplEx-AU | 128 | (4, 1, 1, 1.5) | 8192 | 400 |
+| RotatE-AU | 256 | (4, 1, 1, 1) | 1024 | 400 |
+| pRotatE-AU | 256 | (4, 1, 1, 1) | 512 | 400 |
+| SimKGC-AU | 768 | (6, 0, 0, 0.5) | 512 | 50 |
+| TransERR-AU | 128 | (5, 1, 1, 1) | 2048 | 1200 |
+| DaBR-AU | 128 | (4, 0, 0, 1) | 512 | 2000 |
+
+### `*-AU_FB15k237.json`
+
+| Model | Dim | KGAU | Batch size | Epochs |
+| :--- | ---: | :--- | ---: | ---: |
+| TransE-AU | 128 | (2, 1, 1, 1) | 1024 | 400 |
+| DistMult-AU | 128 | (4, 0.5, 0.5, 0.5) | 100 | 400 |
+| ComplEx-AU | 256 | (4, 1, 1, 1) | 1024 | 400 |
+| RotatE-AU | 256 | (2, 1, 1, 1) | 1024 | 400 |
+| pRotatE-AU | 256 | (2, 1, 1, 1) | 1024 | 400 |
+| SimKGC-AU | 768 | (5, 0, 0, 0.5) | 512 | 10 |
+| TransERR-AU | 128 | (4, 1, 1, 1) | 2048 | 376 |
+| DaBR-AU | 128 | (2, 0, 0, 1) | 1024 | 2000 |
