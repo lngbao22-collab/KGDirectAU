@@ -57,5 +57,8 @@
   "tie_rtol": 0.0001,
   "tie_atol": 1e-05,
 
-  "normalize_lp_scores": false
+  "normalize_lp_scores": false,
+  "rank_weight": 1.0,
+  "rank_margin": 0.2,
+  "filter_false_negatives": true
 }
