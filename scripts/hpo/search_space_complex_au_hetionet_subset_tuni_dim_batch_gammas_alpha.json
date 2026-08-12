@@ -1,0 +1,34 @@
+{
+  "description": "Full grid: tuni, dim, batch_size, gamma_q/t/ent, alpha for ComplEx-AU on hetionet_subset (gamma_cross fixed at 0).",
+  "sampler": "grid",
+  "base_config": "configs/ComplEx-AU_hetionet_subset.json",
+  "study_dir": "ComplEx-AU_hetionet_subset_tuni_dim_batch_gammas_alpha",
+  "study_name": "complex_au_hetionet_subset_tuni_dim_batch_gammas_alpha",
+  "objective": "maximize_valid_mrr",
+  "fixed_overrides": {
+    "epochs": 240,
+    "epoch_per_eval": 5,
+    "early_stopping_patience": 10,
+    "early_stopping_min_epochs": 50,
+    "early_stopping_min_metric": 0.05,
+    "gamma_cross": 0.0,
+    "test_eval_last": false,
+    "test_eval_best": false,
+    "max_to_keep": 0
+  },
+  "screening_overrides": {
+    "epochs": 240,
+    "early_stopping_patience": 10,
+    "early_stopping_min_epochs": 50,
+    "early_stopping_min_metric": 0.05
+  },
+  "parameters": {
+    "tuni": {"type": "categorical", "choices": [0.5, 1.0, 2.0, 3.0, 4.0]},
+    "dim": {"type": "categorical", "choices": [32, 64, 128, 256]},
+    "batch_size": {"type": "categorical", "choices": [128, 256, 512, 1024]},
+    "gamma_q": {"type": "categorical", "choices": [0.0, 0.5, 1.0, 1.5]},
+    "gamma_t": {"type": "categorical", "choices": [0.0, 0.5, 1.0, 1.5]},
+    "gamma_ent": {"type": "categorical", "choices": [0.0, 0.5, 1.0, 1.5]},
+    "alpha": {"type": "categorical", "choices": [0.5, 1.0, 2.0, 3.0, 4.0]}
+  }
+}

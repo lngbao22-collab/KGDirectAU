@@ -117,12 +117,12 @@ def _build_optimizer(args, parameters, weight_decay: float):
 
 
 def _resolve_learnable_au_flags(args) -> tuple[bool, bool]:
-	"""Return (learnable_au_alpha, learnable_au_gammas); ``learnable_au_scales`` enables both."""
+	"""Return (learnable_au_theta, learnable_au_gammas); ``learnable_au_scales`` enables both."""
 
 	if config_bool(args, 'learnable_au_scales', False):
 		return True, True
 	return (
-		config_bool(args, 'learnable_au_alpha', False),
+		config_bool(args, 'learnable_au_theta', False),
 		config_bool(args, 'learnable_au_gammas', False),
 	)
 
@@ -133,7 +133,7 @@ def _build_kgau_optimizer(args, model, criterion: KGAULoss, weight_decay: float)
 	lr = float(getattr(args, 'lr', getattr(args, 'learning_rate', 2e-5)))
 	base_params = [p for p in model.parameters() if p.requires_grad]
 	log_tuni_param = None
-	log_alpha_param = None
+	log_theta_param = None
 	log_gamma_params = []
 	aux_other_params = []
 	for name, param in criterion.named_parameters():
@@ -141,8 +141,8 @@ def _build_kgau_optimizer(args, model, criterion: KGAULoss, weight_decay: float)
 			continue
 		if name == 'log_tuni' or name.endswith('.log_tuni'):
 			log_tuni_param = param
-		elif name == 'log_alpha_adj' or name.endswith('.log_alpha_adj'):
-			log_alpha_param = param
+		elif name == 'log_theta_adj' or name.endswith('.log_theta_adj'):
+			log_theta_param = param
 		elif name.startswith('log_gamma_adj_'):
 			log_gamma_params.append(param)
 		else:
@@ -155,9 +155,9 @@ def _build_kgau_optimizer(args, model, criterion: KGAULoss, weight_decay: float)
 	if log_tuni_param is not None:
 		log_tuni_lr = _config_float(args, 'log_uniformity_lr', lr)
 		param_groups.append({'params': [log_tuni_param], 'lr': log_tuni_lr, 'weight_decay': 0.0})
-	if log_alpha_param is not None:
-		log_alpha_lr = _config_float(args, 'log_au_alpha_lr', lr)
-		param_groups.append({'params': [log_alpha_param], 'lr': log_alpha_lr, 'weight_decay': 0.0})
+	if log_theta_param is not None:
+		log_theta_lr = _config_float(args, 'log_au_theta_lr', lr)
+		param_groups.append({'params': [log_theta_param], 'lr': log_theta_lr, 'weight_decay': 0.0})
 	if log_gamma_params:
 		log_gamma_lr = _config_float(args, 'log_au_gamma_lr', lr)
 		param_groups.append({
@@ -220,11 +220,11 @@ def _gamma_schedule_enabled(args) -> bool:
 	)
 
 
-def _alpha_schedule_enabled(args) -> bool:
-	if getattr(args, 'alpha_linear_schedule', None) is not None:
-		return bool(args.alpha_linear_schedule)
+def _theta_schedule_enabled(args) -> bool:
+	if getattr(args, 'theta_linear_schedule', None) is not None:
+		return bool(args.theta_linear_schedule)
 	return (
-		config_bool(args, 'learnable_au_alpha', False)
+		config_bool(args, 'learnable_au_theta', False)
 		or config_bool(args, 'learnable_au_scales', False)
 	)
 
@@ -287,12 +287,12 @@ def _set_log_au_gamma_lr(optimizer, lr: float) -> bool:
 	return False
 
 
-def _scheduled_alpha_mult(args, epoch: int) -> float:
-	"""Linear alpha multiplier: 1.0 at start, ``alpha_schedule_end`` at the last scheduled epoch."""
+def _scheduled_theta_mult(args, epoch: int) -> float:
+	"""Linear theta multiplier: 1.0 at start, ``theta_schedule_end`` at the last scheduled epoch."""
 
-	start_epoch = int(getattr(args, 'alpha_schedule_start_epoch', 0) or 0)
-	end_mult = float(getattr(args, 'alpha_schedule_end', 10.0))
-	schedule_epochs = int(getattr(args, 'alpha_schedule_epochs', 0) or 0)
+	start_epoch = int(getattr(args, 'theta_schedule_start_epoch', 0) or 0)
+	end_mult = float(getattr(args, 'theta_schedule_end', 10.0))
+	schedule_epochs = int(getattr(args, 'theta_schedule_epochs', 0) or 0)
 	if schedule_epochs <= 0:
 		schedule_span = max(1, int(getattr(args, 'epochs', 1)) - 1 - start_epoch)
 	else:
@@ -307,13 +307,13 @@ def _scheduled_alpha_mult(args, epoch: int) -> float:
 def _gamma_log_suffix(criterion: KGAULoss) -> str:
 	parts = []
 	if (
-		criterion.tuni_as_alpha
-		or criterion.learnable_au_alpha
-		or criterion.alpha_schedule_mult_value() != 1.0
+		criterion.tuni_as_theta
+		or criterion.learnable_au_theta
+		or criterion.theta_schedule_mult_value() != 1.0
 	):
-		parts.append(f'alpha={criterion.alpha_value():.4f}')
-		if criterion.alpha_schedule_mult_value() != 1.0:
-			parts.append(f'alpha_mult={criterion.alpha_schedule_mult_value():.4f}')
+		parts.append(f'theta={criterion.theta_value():.4f}')
+		if criterion.theta_schedule_mult_value() != 1.0:
+			parts.append(f'theta_mult={criterion.theta_schedule_mult_value():.4f}')
 	if criterion.learnable_au_gammas or criterion.gamma_schedule_mult_value() != 1.0:
 		parts.append(f'mult={criterion.gamma_schedule_mult_value():.4f}')
 	for name in _GAMMA_NAMES:
@@ -435,11 +435,11 @@ class KGAUStrategy(Evaluator):
 
 		tuni_val = _config_float(args, 'tuni', _config_float(args, 'temperature', _config_float(args, 't', 2.0)))
 		learnable_tuni = config_bool(args, 'learnable_uniformity_scale', False)
-		tuni_as_alpha = config_bool(args, 'tuni_as_alpha', False)
-		learnable_au_alpha, learnable_au_gammas = _resolve_learnable_au_flags(args)
-		if tuni_as_alpha and learnable_au_alpha:
-			logger.warning('tuni_as_alpha is enabled; ignoring learnable_au_alpha')
-			learnable_au_alpha = False
+		tuni_as_theta = config_bool(args, 'tuni_as_theta', False)
+		learnable_au_theta, learnable_au_gammas = _resolve_learnable_au_flags(args)
+		if tuni_as_theta and learnable_au_theta:
+			logger.warning('tuni_as_theta is enabled; ignoring learnable_au_theta')
+			learnable_au_theta = False
 
 		# Alignment mode is opt-in: cosine by default for all encoders; only pRotatE-AU sets
 		# ``sin_phase`` (via config and/or encoder ``kgau_alignment_mode``).
@@ -500,18 +500,20 @@ class KGAUStrategy(Evaluator):
 			)
 		if assume_unit_norm:
 			logger.info('KGAU assume_unit_norm: loss skips redundant L2 normalize (vectors normalized in model)')
+		alpha_val = _config_float(args, 'alpha', 2.0)
 		self.criterion = KGAULoss(
 			gamma_q=_config_float(args, 'gamma_q', 1.0),
 			gamma_t=_config_float(args, 'gamma_t', 1.0),
 			gamma_h=_config_float(args, 'gamma_h', 0.0),
 			gamma_ent=_config_float(args, 'gamma_ent', 0.0),
 			gamma_cross=_config_float(args, 'gamma_cross', 0.0),
-			alpha=_config_float(args, 'alpha', 1.0),
+			theta=_config_float(args, 'theta', 1.0),
+			alpha=alpha_val,
 			tuni=tuni_val,
 			learnable_tuni=learnable_tuni,
-			learnable_au_alpha=learnable_au_alpha,
+			learnable_au_theta=learnable_au_theta,
 			learnable_au_gammas=learnable_au_gammas,
-			tuni_as_alpha=tuni_as_alpha,
+			tuni_as_theta=tuni_as_theta,
 			max_uniformity_samples=int(_config_float(args, 'max_uniformity_samples', 1024)),
 			additive_margin=_config_float(args, 'additive_margin', 0.0),
 			alignment_mode=alignment_mode,
@@ -522,6 +524,7 @@ class KGAUStrategy(Evaluator):
 			uniformity_pdist_gb=getattr(args, 'uniformity_pdist_gb', None),
 			uniform_pair_chunk_size=int(_config_float(args, 'uniform_pair_chunk_size', 0) or 0),
 		).to(self.device)
+		logger.info('KGAU alignment degree alpha=%.4f (feature |q-t|^alpha)', alpha_val)
 		if config_bool(args, 'average_uniformity_terms', False):
 			logger.info('KGAU average_uniformity_terms: enabled (sum active terms / count)')
 		if config_bool(args, 'uniformity_full_pdist', False):
@@ -532,7 +535,7 @@ class KGAUStrategy(Evaluator):
 				pair_chunk if pair_chunk > 0 else 'auto',
 			)
 		if learnable_tuni:
-			if tuni_as_alpha:
+			if tuni_as_theta:
 				logger.info(
 					'Learnable tuni (alignment scale + uniformity temperature): initial=%.4f, '
 					'log_uniformity_lr=%.2e',
@@ -545,7 +548,7 @@ class KGAUStrategy(Evaluator):
 					tuni_val,
 					_config_float(args, 'log_uniformity_lr', _config_float(args, 'lr', 2e-5)),
 				)
-		elif tuni_as_alpha:
+		elif tuni_as_theta:
 			logger.info('tuni scales alignment and uniformity (fixed): %.4f', tuni_val)
 		elif config_bool(args, 'tuni_linear_schedule', False):
 			start_scale = _scheduled_tuni_value(args, 0)
@@ -558,12 +561,12 @@ class KGAUStrategy(Evaluator):
 			)
 		if learnable_tuni and config_bool(args, 'tuni_linear_schedule', False):
 			logger.warning('tuni_linear_schedule is ignored when learnable_uniformity_scale is enabled')
-		if learnable_au_alpha or config_bool(args, 'learnable_au_scales', False):
+		if learnable_au_theta or config_bool(args, 'learnable_au_scales', False):
 			logger.info(
-				'Learnable AU alpha: init=%.4f, schedule mult 1.0 -> %.4f, log_au_alpha_lr=%.2e',
-				self.criterion.alpha_value(),
-				float(getattr(args, 'alpha_schedule_end', 10.0)),
-				_config_float(args, 'log_au_alpha_lr', _config_float(args, 'lr', 2e-5)),
+				'Learnable AU theta: init=%.4f, schedule mult 1.0 -> %.4f, log_au_theta_lr=%.2e',
+				self.criterion.theta_value(),
+				float(getattr(args, 'theta_schedule_end', 10.0)),
+				_config_float(args, 'log_au_theta_lr', _config_float(args, 'lr', 2e-5)),
 			)
 		if learnable_au_gammas:
 			logger.info(
@@ -593,12 +596,12 @@ class KGAUStrategy(Evaluator):
 				end_lr,
 				int(getattr(args, 'gamma_schedule_start_epoch', 0) or 0),
 			)
-		if _alpha_schedule_enabled(args):
-			end_mult = float(getattr(args, 'alpha_schedule_end', 10.0))
+		if _theta_schedule_enabled(args):
+			end_mult = float(getattr(args, 'theta_schedule_end', 10.0))
 			logger.info(
-				'Alpha linear schedule: multiplier epoch 0=1.0000 -> last=%.4f (start_epoch=%d)',
+				'Theta linear schedule: multiplier epoch 0=1.0000 -> last=%.4f (start_epoch=%d)',
 				end_mult,
-				int(getattr(args, 'alpha_schedule_start_epoch', 0) or 0),
+				int(getattr(args, 'theta_schedule_start_epoch', 0) or 0),
 			)
 		self.optimizer = _build_kgau_optimizer(args, self.model, self.criterion, self.weight_decay)
 		self.lr_scheduler = build_lr_scheduler(args, self.optimizer)
@@ -1241,7 +1244,7 @@ class KGAUStrategy(Evaluator):
 				torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
 			self.optimizer.step()
 		self.criterion.clamp_learnable_gamma_adj()
-		self.criterion.clamp_learnable_alpha_adj()
+		self.criterion.clamp_learnable_theta_adj()
 		self.criterion.clamp_learnable_tuni()
 		if self._normalize_phases_fn is not None:
 			self._normalize_phases_fn(self.model)
@@ -1786,7 +1789,7 @@ class KGAUStrategy(Evaluator):
 		if self._should_log_tuni():
 			tuni_suffix = f' | tuni: {_tuni_scalar(self.criterion):.4f}'
 		gamma_suffix = _gamma_log_suffix(self.criterion) if (
-			self._should_log_gammas() or self._should_log_alpha()
+			self._should_log_gammas() or self._should_log_theta()
 		) else ''
 		micro_suffix = self._micro_batch_epoch_suffix(batch_size)
 		if float(self.criterion.additive_margin) > 0.0:
@@ -1824,28 +1827,28 @@ class KGAUStrategy(Evaluator):
 		if float(self.criterion.additive_margin) > 0.0:
 			self.train_component_losses['margin_buffer_pair_frac'] = avg_margin_active
 		if hasattr(self.criterion, 'log_tuni') or config_bool(self.args, 'tuni_linear_schedule', False):
-			if not config_bool(self.args, 'tuni_as_alpha', False):
+			if not config_bool(self.args, 'tuni_as_theta', False):
 				self.train_component_losses['tuni'] = _tuni_scalar(self.criterion)
 		if self._should_log_gammas():
 			for name in _GAMMA_NAMES:
 				if self.criterion.gamma_active(name):
 					self.train_component_losses[f'gamma_{name}'] = self.criterion.gamma_value(name)
-		if self._should_log_alpha():
-			self.train_component_losses['alpha'] = self.criterion.alpha_value()
+		if self._should_log_theta():
+			self.train_component_losses['theta'] = self.criterion.theta_value()
 		return avg_loss
 
-	def _maybe_update_alpha_schedule(self, epoch: int) -> None:
-		"""Apply linear alpha multiplier growth before each training epoch."""
+	def _maybe_update_theta_schedule(self, epoch: int) -> None:
+		"""Apply linear theta multiplier growth before each training epoch."""
 
-		if not _alpha_schedule_enabled(self.args):
+		if not _theta_schedule_enabled(self.args):
 			return
 
-		mult = _scheduled_alpha_mult(self.args, epoch)
+		mult = _scheduled_theta_mult(self.args, epoch)
 		if mult <= 0.0:
-			logger.warning('Scheduled alpha multiplier <= 0 (%.6f) at epoch %d; skip update', mult, epoch)
+			logger.warning('Scheduled theta multiplier <= 0 (%.6f) at epoch %d; skip update', mult, epoch)
 			return
 
-		self.criterion.set_alpha_schedule_mult(mult)
+		self.criterion.set_theta_schedule_mult(mult)
 
 	def _maybe_update_gamma_schedule(self, epoch: int) -> None:
 		"""Apply linear gamma multiplier decay before each training epoch."""
@@ -1879,10 +1882,10 @@ class KGAUStrategy(Evaluator):
 	def _should_log_gammas(self) -> bool:
 		return self.criterion.learnable_au_gammas or _gamma_schedule_enabled(self.args)
 
-	def _should_log_alpha(self) -> bool:
-		if config_bool(self.args, 'tuni_as_alpha', False):
+	def _should_log_theta(self) -> bool:
+		if config_bool(self.args, 'tuni_as_theta', False):
 			return hasattr(self.criterion, 'log_tuni') or config_bool(self.args, 'tuni_linear_schedule', False)
-		return self.criterion.learnable_au_alpha or _alpha_schedule_enabled(self.args)
+		return self.criterion.learnable_au_theta or _theta_schedule_enabled(self.args)
 
 	def _maybe_update_tuni_schedule(self, epoch: int) -> None:
 		"""Apply linear tuni schedule before each training epoch (fixed scale only)."""
@@ -1902,7 +1905,7 @@ class KGAUStrategy(Evaluator):
 		logger.info('Linear tuni schedule at epoch %d: %.6f', epoch + 1, scale_value)
 
 	def _should_log_tuni(self) -> bool:
-		if config_bool(self.args, 'tuni_as_alpha', False):
+		if config_bool(self.args, 'tuni_as_theta', False):
 			return False
 		return hasattr(self.criterion, 'log_tuni') or config_bool(self.args, 'tuni_linear_schedule', False)
 
@@ -1974,7 +1977,7 @@ class KGAUStrategy(Evaluator):
 		total_start_time = time.time()
 		num_train_epochs = 0
 		for epoch in range(self.args.epochs):
-			self._maybe_update_alpha_schedule(epoch)
+			self._maybe_update_theta_schedule(epoch)
 			self._maybe_update_gamma_schedule(epoch)
 			self._maybe_update_log_au_gamma_lr_schedule(epoch)
 			self._maybe_update_tuni_schedule(epoch)

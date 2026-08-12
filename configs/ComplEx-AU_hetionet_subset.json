@@ -32,7 +32,7 @@
   "batch_size": 256,
   "epochs": 400,
   "optim": "adam",
-  "lr": 0.005,
+  "lr": 0.05,
   "weight_decay": 0,
   "warm_up_epochs": 50,
   "lr_decay_factor": 0.1,

@@ -207,8 +207,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help='L2 regularization strength (kgau/softmax; overrides weight_decay when set)')
 
     # KGAU alignment-uniformity hyperparameters (DistMult-AU, ComplEx-AU, etc.).
-    parser.add_argument('--alpha', default=None, type=float,
+    parser.add_argument('--theta', default=None, type=float,
                         help='alignment loss scale (default 1.0)')
+    parser.add_argument('--alpha', default=None, type=float,
+                        help='alignment degree: mean sum_i |q_i - t_i|^alpha (default 2.0)')
     parser.add_argument('--gamma-q', '--gamma_q', default=None, type=float,
                         help='uniformity weight for query embeddings')
     parser.add_argument('--gamma-t', '--gamma_t', default=None, type=float,
@@ -221,28 +223,28 @@ def build_parser() -> argparse.ArgumentParser:
                         help='uniformity weight on pooled query+tail vectors (joint LP space)')
     parser.add_argument('--learnable-au-scales', '--learnable_au_scales',
                         dest='learnable_au_scales', action='store_true', default=False,
-                        help='learnable alpha + independent learnable gammas with opposing epoch schedules')
-    parser.add_argument('--learnable-au-alpha', '--learnable_au_alpha',
-                        dest='learnable_au_alpha', action='store_true', default=False,
-                        help='make AU alignment scale alpha learnable (log re-parameterization)')
-    parser.add_argument('--log-au-alpha-lr', '--log_au_alpha_lr', default=None, type=float,
-                        dest='log_au_alpha_lr',
-                        help='learning rate for learnable log-alpha parameter')
-    parser.add_argument('--alpha-linear-schedule', '--alpha_linear_schedule',
-                        dest='alpha_linear_schedule', action='store_true', default=False,
-                        help='linearly increase AU alpha multiplier from 1.0 to alpha_schedule_end')
-    parser.add_argument('--no-alpha-linear-schedule', dest='alpha_linear_schedule',
+                        help='learnable theta + independent learnable gammas with opposing epoch schedules')
+    parser.add_argument('--learnable-au-theta', '--learnable_au_theta',
+                        dest='learnable_au_theta', action='store_true', default=False,
+                        help='make AU alignment scale theta learnable (log re-parameterization)')
+    parser.add_argument('--log-au-theta-lr', '--log_au_theta_lr', default=None, type=float,
+                        dest='log_au_theta_lr',
+                        help='learning rate for learnable log-theta parameter')
+    parser.add_argument('--theta-linear-schedule', '--theta_linear_schedule',
+                        dest='theta_linear_schedule', action='store_true', default=False,
+                        help='linearly increase AU theta multiplier from 1.0 to theta_schedule_end')
+    parser.add_argument('--no-theta-linear-schedule', dest='theta_linear_schedule',
                         action='store_false',
-                        help='disable alpha linear schedule (even with learnable_au_alpha)')
-    parser.add_argument('--alpha-schedule-end', '--alpha_schedule_end', default=None, type=float,
-                        dest='alpha_schedule_end',
-                        help='alpha schedule multiplier at the last scheduled epoch')
-    parser.add_argument('--alpha-schedule-start-epoch', '--alpha_schedule_start_epoch', default=None, type=int,
-                        dest='alpha_schedule_start_epoch',
-                        help='epoch index (0-based) to begin alpha linear schedule')
-    parser.add_argument('--alpha-schedule-epochs', '--alpha_schedule_epochs', default=None, type=int,
-                        dest='alpha_schedule_epochs',
-                        help='epochs over which to schedule alpha multiplier (0: full training)')
+                        help='disable theta linear schedule (even with learnable_au_theta)')
+    parser.add_argument('--theta-schedule-end', '--theta_schedule_end', default=None, type=float,
+                        dest='theta_schedule_end',
+                        help='theta schedule multiplier at the last scheduled epoch')
+    parser.add_argument('--theta-schedule-start-epoch', '--theta_schedule_start_epoch', default=None, type=int,
+                        dest='theta_schedule_start_epoch',
+                        help='epoch index (0-based) to begin theta linear schedule')
+    parser.add_argument('--theta-schedule-epochs', '--theta_schedule_epochs', default=None, type=int,
+                        dest='theta_schedule_epochs',
+                        help='epochs over which to schedule theta multiplier (0: full training)')
     parser.add_argument('--learnable-au-gammas', '--learnable_au_gammas',
                         dest='learnable_au_gammas', action='store_true', default=False,
                         help='make AU uniformity gammas learnable (log re-parameterization)')
@@ -276,24 +278,24 @@ def build_parser() -> argparse.ArgumentParser:
                         dest='gamma_schedule_epochs',
                         help='epochs over which to schedule gamma multiplier (0: full training)')
     parser.add_argument('--tuni', default=None, type=float,
-                        help='AU temperature: uniformity potential scale; also alignment scale with tuni_as_alpha')
-    tuni_as_alpha_group = parser.add_mutually_exclusive_group()
-    tuni_as_alpha_group.add_argument(
-        '--tuni-as-alpha', '--tuni_as_alpha',
-        dest='tuni_as_alpha',
+                        help='AU temperature: uniformity potential scale; also alignment scale with tuni_as_theta')
+    tuni_as_theta_group = parser.add_mutually_exclusive_group()
+    tuni_as_theta_group.add_argument(
+        '--tuni-as-theta', '--tuni_as_theta',
+        dest='tuni_as_theta',
         action='store_true',
         default=None,
-        help='use the same tuni for alignment (replaces alpha) and uniformity temperature',
+        help='use the same tuni for alignment (replaces theta) and uniformity temperature',
     )
-    tuni_as_alpha_group.add_argument(
-        '--no-tuni-as-alpha', '--no_tuni_as_alpha',
-        dest='tuni_as_alpha',
+    tuni_as_theta_group.add_argument(
+        '--no-tuni-as-theta', '--no_tuni_as_theta',
+        dest='tuni_as_theta',
         action='store_false',
-        help='use alpha for alignment and tuni for uniformity only (default)',
+        help='use theta for alignment and tuni for uniformity only (default)',
     )
     parser.add_argument('--learnable-uniformity-scale', '--learnable_uniformity_scale',
                         dest='learnable_uniformity_scale', action='store_true', default=False,
-                        help='make tuni learnable (uniformity temp; alignment too when tuni_as_alpha)')
+                        help='make tuni learnable (uniformity temp; alignment too when tuni_as_theta)')
     parser.add_argument('--log-uniformity-lr', '--log_uniformity_lr', default=None, type=float,
                         dest='log_uniformity_lr',
                         help='learning rate for learnable log-tuni')

@@ -16,7 +16,7 @@
   "gamma_t": 1.0,
   "gamma_ent": 1.5,
   "gamma_cross": 0.0,
-  "alpha": 1.0,
+  "theta": 1.0,
   "average_uniformity_terms": true,
   "entity_uniformity_batch": true,
   "au_deduplicate": false,

@@ -199,12 +199,13 @@ class KGAULoss(nn.Module):
 		gamma_h=0.0,
 		gamma_ent=0.0,
 		gamma_cross=0.0,
-		alpha: float = 1.0,
+		theta: float = 1.0,
+		alpha: float = 2.0,
 		tuni=2.0,
 		learnable_tuni: bool = False,
-		learnable_au_alpha: bool = False,
+		learnable_au_theta: bool = False,
 		learnable_au_gammas: bool = False,
-		tuni_as_alpha: bool = False,
+		tuni_as_theta: bool = False,
 		max_uniformity_samples: int = 1024,
 		additive_margin: float = 0.0,
 		alignment_mode: str = 'cosine',
@@ -222,18 +223,20 @@ class KGAULoss(nn.Module):
 		# 0 = auto (~512MiB / soft-cap 256); >0 forces pair-block width. Always used
 		# instead of torch.pdist when computing full i<j uniformity.
 		self.uniform_pair_chunk_size = int(uniform_pair_chunk_size or 0)
-		self.tuni_as_alpha = bool(tuni_as_alpha)
-		self.learnable_au_alpha = bool(learnable_au_alpha)
+		self.tuni_as_theta = bool(tuni_as_theta)
+		self.learnable_au_theta = bool(learnable_au_theta)
 		self.learnable_au_gammas = bool(learnable_au_gammas)
-		alpha_init = _coalesce_float(alpha, 1.0)
-		self.register_buffer('alpha_init', torch.tensor(alpha_init))
-		if not self.learnable_au_alpha:
-			self._alpha = alpha_init
+		# Alignment degree: E[sum_i |q_i - t_i|^alpha]; alpha=2 recovers squared L2.
+		self.alpha = float(_coalesce_float(alpha, 2.0))
+		theta_init = _coalesce_float(theta, 1.0)
+		self.register_buffer('theta_init', torch.tensor(theta_init))
+		if not self.learnable_au_theta:
+			self._theta = theta_init
 		else:
 			# Bounded upward adjustment only: exp(adj) in [1, inf), init at 0.
-			# Unconstrained log-scale alpha falls under alignment loss minimization.
-			self.log_alpha_adj = nn.Parameter(torch.zeros(()))
-		self.register_buffer('alpha_schedule_mult', torch.tensor(1.0))
+			# Unconstrained log-scale theta falls under alignment loss minimization.
+			self.log_theta_adj = nn.Parameter(torch.zeros(()))
+		self.register_buffer('theta_schedule_mult', torch.tensor(1.0))
 		gamma_inits = {
 			'q': _coalesce_float(gamma_q, 1.0),
 			't': _coalesce_float(gamma_t, 1.0),
@@ -252,7 +255,7 @@ class KGAULoss(nn.Module):
 				# Unconstrained log-scale gammas rise under AU loss because uniformity is negative.
 				setattr(self, f'log_gamma_adj_{name}', nn.Parameter(torch.zeros(())))
 		self.register_buffer('gamma_schedule_mult', torch.tensor(1.0))
-		# `tuni` is the uniformity temperature; with ``tuni_as_alpha`` it also replaces alpha.
+		# `tuni` is the uniformity temperature; with ``tuni_as_theta`` it also replaces theta.
 		tuni_val = _coalesce_float(tuni, 2.0)
 		self.register_buffer('tuni_init_log', torch.tensor(math.log(tuni_val)))
 		if learnable_tuni:
@@ -263,7 +266,7 @@ class KGAULoss(nn.Module):
 		# InfoNCE additive margin gamma; geometric threshold m = 2 * gamma on squared L2.
 		self.additive_margin = _coalesce_float(additive_margin, 0.0)
 		# `cosine`: L2-normalize paired vectors (DistMult/ComplEx/SimKGC).
-		# `phase_residual`: element-wise squared phase residual without global normalization.
+		# `phase_residual`: element-wise |phase residual|^alpha without global normalization.
 		# `sin_phase`: pRotatE link-pred term sum_i |sin(theta_q,i - theta_t,i)| (no global normalize).
 		self.alignment_mode = alignment_mode or 'cosine'
 		self.normalize_uniformity = normalize_uniformity
@@ -283,8 +286,8 @@ class KGAULoss(nn.Module):
 	def gamma_schedule_mult_value(self) -> float:
 		return float(self.gamma_schedule_mult.detach().cpu().item())
 
-	def alpha_schedule_mult_value(self) -> float:
-		return float(self.alpha_schedule_mult.detach().cpu().item())
+	def theta_schedule_mult_value(self) -> float:
+		return float(self.theta_schedule_mult.detach().cpu().item())
 
 	def _learnable_gamma_factor(self, name: str) -> torch.Tensor:
 		adj = getattr(self, f'log_gamma_adj_{name}')
@@ -296,19 +299,19 @@ class KGAULoss(nn.Module):
 	def set_gamma_schedule_mult(self, mult: float) -> None:
 		self.gamma_schedule_mult.fill_(float(mult))
 
-	def set_alpha_schedule_mult(self, mult: float) -> None:
-		self.alpha_schedule_mult.fill_(float(mult))
+	def set_theta_schedule_mult(self, mult: float) -> None:
+		self.theta_schedule_mult.fill_(float(mult))
 
-	def _learnable_alpha_factor(self) -> torch.Tensor:
-		return torch.exp(torch.clamp(self.log_alpha_adj, min=0.0))
+	def _learnable_theta_factor(self) -> torch.Tensor:
+		return torch.exp(torch.clamp(self.log_theta_adj, min=0.0))
 
-	def clamp_learnable_alpha_adj(self) -> None:
-		"""Keep learnable alpha adjustments at or above 0 (effective factor in [1, inf))."""
+	def clamp_learnable_theta_adj(self) -> None:
+		"""Keep learnable theta adjustments at or above 0 (effective factor in [1, inf))."""
 
-		if not self.learnable_au_alpha:
+		if not self.learnable_au_theta:
 			return
 		with torch.no_grad():
-			self.log_alpha_adj.clamp_(min=0.0)
+			self.log_theta_adj.clamp_(min=0.0)
 
 	def clamp_learnable_gamma_adj(self) -> None:
 		"""Keep learnable gamma adjustments at or below 0 (effective factor in (0, 1])."""
@@ -322,9 +325,9 @@ class KGAULoss(nn.Module):
 				getattr(self, f'log_gamma_adj_{name}').clamp_(max=0.0)
 
 	def clamp_learnable_tuni(self) -> None:
-		"""When ``tuni_as_alpha``, keep learnable tuni at or above its initial value."""
+		"""When ``tuni_as_theta``, keep learnable tuni at or above its initial value."""
 
-		if not self.tuni_as_alpha or not hasattr(self, 'log_tuni'):
+		if not self.tuni_as_theta or not hasattr(self, 'log_tuni'):
 			return
 		with torch.no_grad():
 			self.log_tuni.clamp_(min=float(self.tuni_init_log.item()))
@@ -338,18 +341,18 @@ class KGAULoss(nn.Module):
 			return init * mult * self._learnable_gamma_factor(name)
 		return float(getattr(self, f'_gamma_{name}')) * float(mult)
 
-	def _effective_alpha(self) -> torch.Tensor | float:
-		if self.tuni_as_alpha:
+	def _effective_theta(self) -> torch.Tensor | float:
+		if self.tuni_as_theta:
 			return self.tuni
-		mult = self.alpha_schedule_mult
-		if self.learnable_au_alpha:
-			return self.alpha_init * mult * self._learnable_alpha_factor()
-		return float(self._alpha) * float(mult)
+		mult = self.theta_schedule_mult
+		if self.learnable_au_theta:
+			return self.theta_init * mult * self._learnable_theta_factor()
+		return float(self._theta) * float(mult)
 
-	def alpha_value(self) -> float:
+	def theta_value(self) -> float:
 		"""Scalar effective alignment scale for logging and control flow."""
 
-		value = self._effective_alpha()
+		value = self._effective_theta()
 		if torch.is_tensor(value):
 			return float(value.detach().cpu().item())
 		return float(value)
@@ -399,12 +402,18 @@ class KGAULoss(nn.Module):
 		else:
 			self._tuni = float(value)
 
+	def _feature_alignment(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+		"""Mean feature-wise |q - t|^alpha over positive pairs (alpha=2 => squared L2)."""
+
+		# abs() keeps fractional alpha well-defined for negative residuals.
+		return (q - t).abs().pow(self.alpha).sum(dim=-1).mean()
+
 	def alignment_loss(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-		"""Expected squared L2 distance between paired positive query and target embeddings."""
+		"""Expected |q - t|^alpha feature distance between paired positive embeddings."""
 
 		q = self._l2_normalize_if_needed(q)
 		t = self._l2_normalize_if_needed(t)
-		return (q - t).pow(2).sum(dim=-1).mean()
+		return self._feature_alignment(q, t)
 
 	def sin_phase_alignment_loss(self, phase_query: torch.Tensor, phase_target: torch.Tensor) -> torch.Tensor:
 		"""Alignment in native pRotatE geometry: mean sum of |sin(phase residual)| per dimension.
@@ -636,7 +645,7 @@ class KGAULoss(nn.Module):
 		return self._max_uniformity_pair_count(num_rows, x_probe.size(-1)) >= full_pairs
 
 	def _block_alignment_loss(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-		"""Squared-L2 alignment on per-block L2-normalized vectors (eval-consistent).
+		"""|q - t|^alpha alignment on per-block L2-normalized vectors (eval-consistent).
 
 		Unlike ``alignment_loss``, this always normalizes each block even when
 		``assume_unit_norm`` is set, because a global AU normalization does not make
@@ -645,7 +654,7 @@ class KGAULoss(nn.Module):
 
 		q = F.normalize(q, p=2, dim=-1)
 		t = F.normalize(t, p=2, dim=-1)
-		return (q - t).pow(2).sum(dim=-1).mean()
+		return self._feature_alignment(q, t)
 
 	def _raw_alignment_loss(
 		self,
@@ -658,7 +667,7 @@ class KGAULoss(nn.Module):
 		if self.alignment_mode == 'sin_phase':
 			return self.sin_phase_alignment_loss(q, t)
 		if self.alignment_mode == 'phase_residual':
-			return (q - t).pow(2).sum(dim=-1).mean()
+			return self._feature_alignment(q, t)
 		if self.alignment_mode == 'dabr_blocks':
 			mid = q.size(-1) // 2
 			if mid <= 0 or mid * 2 != q.size(-1):
@@ -693,7 +702,7 @@ class KGAULoss(nn.Module):
 		fall inside the margin buffer (only meaningful when ``additive_margin`` > 0).
 		"""
 
-		l_align = self._effective_alpha() * self._raw_alignment_loss(q, t, external_align=external_align)
+		l_align = self._effective_theta() * self._raw_alignment_loss(q, t, external_align=external_align)
 
 		l_unif = q.new_zeros(())
 		uniform_count = 0
