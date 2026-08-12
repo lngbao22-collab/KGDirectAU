@@ -126,8 +126,22 @@ class EntityDict:
 
 	def __init__(self, entity_dict_dir: str, inductive_test_path: str = None):
 		path = os.path.join(entity_dict_dir, 'entities.json')
-		assert os.path.exists(path)
-		self.entity_exs = [EntityExample(**obj) for obj in json.load(open(path, 'r', encoding='utf-8'))]
+		from configs.config import args as current_args
+
+		if os.path.exists(path):
+			self.entity_exs = [EntityExample(**obj) for obj in json.load(open(path, 'r', encoding='utf-8'))]
+			source = path
+		else:
+			# Index KGE can proceed from split entity IDs when preprocess was not run yet.
+			self.entity_exs = []
+			source = f'splits beside {entity_dict_dir} (missing entities.json)'
+			dataset_name = getattr(current_args, 'dataset', None) or '<dataset>'
+			logger.warning(
+				'entities.json not found under %s; building entity vocabulary from train/valid/test. '
+				'Run `python data/preprocess.py --dataset %s` to generate the full preprocessed layout.',
+				entity_dict_dir,
+				dataset_name,
+			)
 		self._ensure_entity_coverage(entity_dict_dir)
 
 		if inductive_test_path:
@@ -138,9 +152,17 @@ class EntityDict:
 				valid_entity_ids.add(ex['tail_id'])
 			self.entity_exs = [ex for ex in self.entity_exs if ex.entity_id in valid_entity_ids]
 
+		if not self.entity_exs:
+			raise FileNotFoundError(
+				f'No entities found (looked for {path}). '
+				'Generate preprocessed data, e.g. '
+				'`python data/preprocess.py --dataset hetionet_subset`, '
+				'or ensure train/valid/test paths exist.'
+			)
+
 		self.id2entity = {ex.entity_id: ex for ex in self.entity_exs}
 		self.entity2idx = {ex.entity_id: i for i, ex in enumerate(self.entity_exs)}
-		logger.info('Load {} entities from {}'.format(len(self.id2entity), path))
+		logger.info('Load {} entities from {}'.format(len(self.id2entity), source))
 
 	def _ensure_entity_coverage(self, entity_dict_dir: str) -> None:
 		"""Backfill entities that appear in raw split files but are missing from entities.json."""

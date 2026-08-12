@@ -1,0 +1,24 @@
+0	Anatomy:downregulates:Gene
+1	Anatomy:expresses:Gene
+2	Anatomy:upregulates:Gene
+3	Compound:resembles:Compound
+4	Compound:palliates:Disease
+5	Compound:treats:Disease
+6	Compound:binds:Gene
+7	Compound:downregulates:Gene
+8	Compound:upregulates:Gene
+9	Compound:causes:Side Effect
+10	Disease:localizes:Anatomy
+11	Disease:resembles:Disease
+12	Disease:associates:Gene
+13	Disease:downregulates:Gene
+14	Disease:upregulates:Gene
+15	Disease:presents:Symptom
+16	Gene:participates:Biological Process
+17	Gene:participates:Cellular Component
+18	Gene:covaries:Gene
+19	Gene:interacts:Gene
+20	Gene:regulates:Gene
+21	Gene:participates:Molecular Function
+22	Gene:participates:Pathway
+23	Pharmacologic Class:includes:Compound

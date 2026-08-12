@@ -15,24 +15,65 @@ relation_id_map = None
 tokenizer: AutoTokenizer = None
 
 
+def _split_parent_dirs() -> list[str]:
+    """Parent directories of configured train/valid/test paths (deduplicated, order preserved)."""
+
+    dirs: list[str] = []
+    seen: set[str] = set()
+    for source_path in [args.valid_path, args.test_path, args.train_path]:
+        if not source_path:
+            continue
+        candidate_dir = os.path.dirname(source_path)
+        if not candidate_dir or candidate_dir in seen:
+            continue
+        seen.add(candidate_dir)
+        dirs.append(candidate_dir)
+    return dirs
+
+
 def _resolve_preprocessed_dir() -> str:
     """Resolve the directory that contains preprocessed JSON artifacts when available."""
 
-    candidate_dirs = [
-        os.path.dirname(args.valid_path),
-        os.path.dirname(args.test_path),
-        os.path.dirname(args.train_path),
-    ]
+    candidate_dirs = _split_parent_dirs()
     for candidate_dir in candidate_dirs:
-        if not candidate_dir:
-            continue
         candidate_path = os.path.join(candidate_dir, 'train.txt.json')
         if os.path.exists(candidate_path):
             return candidate_dir
     for candidate_dir in candidate_dirs:
-        if candidate_dir:
-            return candidate_dir
+        return candidate_dir
     return os.getcwd()
+
+
+def _resolve_entity_dict_dir() -> str:
+    """Prefer a directory that already contains ``entities.json`` (preprocessed or dataset root)."""
+
+    dataset = getattr(args, 'dataset', None) or ''
+    candidate_dirs: list[str] = []
+    seen: set[str] = set()
+
+    def _add(path: str) -> None:
+        if not path or path in seen:
+            return
+        seen.add(path)
+        candidate_dirs.append(path)
+
+    for parent in _split_parent_dirs():
+        _add(parent)
+        _add(os.path.join(parent, 'preprocessed'))
+        # When splits resolve to raw ``data/<ds>/train.txt``, also check sibling preprocessed/.
+        _add(os.path.join(os.path.dirname(parent), 'preprocessed'))
+        _add(os.path.dirname(parent))
+
+    if dataset:
+        _add(os.path.join('data', dataset, 'preprocessed'))
+        _add(os.path.join('data', dataset))
+
+    for candidate_dir in candidate_dirs:
+        if os.path.exists(os.path.join(candidate_dir, 'entities.json')):
+            return candidate_dir
+
+    # Fall back to the best split/preprocessed dir so EntityDict can synthesize from splits.
+    return _resolve_preprocessed_dir()
 
 
 def _init_entity_dict() -> None:
@@ -41,8 +82,7 @@ def _init_entity_dict() -> None:
     global entity_dict
     if not entity_dict:
         from data.dataset import EntityDict
-        entity_dict_dir = os.path.dirname(args.valid_path) or os.path.dirname(args.train_path) or os.getcwd()
-        entity_dict = EntityDict(entity_dict_dir=entity_dict_dir)
+        entity_dict = EntityDict(entity_dict_dir=_resolve_entity_dict_dir())
 
 
 def _init_relation_id_map():
