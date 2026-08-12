@@ -16,6 +16,7 @@
   "gamma_t": 1.0,
   "gamma_ent": 1.0,
   "gamma_cross": 0.0,
+
   "average_uniformity_terms": true,
   "entity_uniformity_batch": true,
   "au_deduplicate": false,
@@ -31,7 +32,7 @@
   "batch_size": 256,
   "epochs": 400,
   "optim": "adam",
-  "lr": 0.5,
+  "lr": 0.005,
   "weight_decay": 0,
   "warm_up_epochs": 50,
   "lr_decay_factor": 0.1,
