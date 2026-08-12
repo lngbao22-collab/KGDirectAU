@@ -1,0 +1,31 @@
+{
+  "description": "Grid search gamma_q / gamma_t / gamma_ent / tuni for ComplEx-AU on hetionet_subset (gamma_cross fixed at 0).",
+  "sampler": "grid",
+  "base_config": "configs/ComplEx-AU_hetionet_subset.json",
+  "study_dir": "ComplEx-AU_hetionet_subset_gammas",
+  "study_name": "complex_au_hetionet_subset_gammas",
+  "objective": "maximize_valid_mrr",
+  "fixed_overrides": {
+    "epochs": 240,
+    "epoch_per_eval": 5,
+    "early_stopping_patience": 10,
+    "early_stopping_min_epochs": 50,
+    "early_stopping_min_metric": 0.05,
+    "gamma_cross": 0.0,
+    "test_eval_last": false,
+    "test_eval_best": false,
+    "max_to_keep": 0
+  },
+  "screening_overrides": {
+    "epochs": 240,
+    "early_stopping_patience": 10,
+    "early_stopping_min_epochs": 50,
+    "early_stopping_min_metric": 0.05
+  },
+  "parameters": {
+    "gamma_q": {"type": "categorical", "choices": [0.0, 0.5, 1.0, 2.0]},
+    "gamma_t": {"type": "categorical", "choices": [0.0, 0.5, 1.0, 2.0]},
+    "gamma_ent": {"type": "categorical", "choices": [0.0, 0.5, 1.0, 2.0]},
+    "tuni": {"type": "categorical", "choices": [2.0, 4.0, 6.0, 8.0]}
+  }
+}

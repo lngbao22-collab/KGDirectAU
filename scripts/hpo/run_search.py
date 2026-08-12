@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any
 
 import optuna
-from optuna.samplers import TPESampler
+from optuna.samplers import GridSampler, TPESampler
 
 
 def _repo_root() -> str:
@@ -26,6 +26,31 @@ def _save_json(path: str, payload: dict) -> None:
 	os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
 	with open(path, 'w', encoding='utf-8') as handle:
 		json.dump(payload, handle, indent=2, sort_keys=True)
+
+
+def _grid_from_param_specs(param_specs: dict) -> dict[str, list[Any]]:
+	"""Build an Optuna GridSampler search space from categorical parameter specs."""
+
+	grid: dict[str, list[Any]] = {}
+	for name, spec in param_specs.items():
+		if spec.get('when'):
+			raise ValueError(f'Grid sampler does not support conditional parameter {name!r}')
+		if spec.get('type') != 'categorical':
+			raise ValueError(
+				f'Grid sampler requires categorical parameters; got {name!r} type={spec.get("type")!r}'
+			)
+		choices = list(spec['choices'])
+		if not choices:
+			raise ValueError(f'Grid parameter {name!r} has empty choices')
+		grid[name] = choices
+	return grid
+
+
+def _grid_size(grid: dict[str, list[Any]]) -> int:
+	size = 1
+	for choices in grid.values():
+		size *= len(choices)
+	return size
 
 
 def _suggest_from_spec(trial: optuna.Trial, name: str, spec: dict, sampled: dict) -> Any:
@@ -124,15 +149,20 @@ def main() -> int:
 		default='scripts/hpo/search_space_complex_au_wn18rr.json',
 		help='Search space JSON (relative to repo root)',
 	)
-	parser.add_argument('--n-trials', type=int, default=30, help='Number of Optuna trials')
+	parser.add_argument(
+		'--n-trials',
+		type=int,
+		default=None,
+		help='Number of Optuna trials (grid: default = full grid size; TPE: default = 30)',
+	)
 	parser.add_argument('--n-startup-trials', type=int, default=10, help='Random trials before TPE')
-	parser.add_argument('--study-name', default='complex_au_wn18rr', help='Optuna study name')
+	parser.add_argument('--study-name', default='', help='Optuna study name (default from search space)')
 	parser.add_argument(
 		'--storage',
 		default='',
 		help='Optuna storage URL (default: sqlite under logs/hpo/)',
 	)
-	parser.add_argument('--screening-epochs', type=int, default=30, help='Epoch cap when --screening is enabled')
+	parser.add_argument('--screening-epochs', type=int, default=None, help='Epoch cap when --screening is enabled')
 	parser.add_argument('--no-screening', dest='screening', action='store_false', help='Full-epoch search')
 	parser.set_defaults(screening=True)
 	parser.add_argument('--smoke-test', action='store_true', help='Run a single quick trial to verify pipeline')
@@ -151,19 +181,53 @@ def main() -> int:
 	base_cfg = _load_json(base_config_path)
 
 	study_dir = search_space.get('study_dir', 'ComplEx-AU_WN18RR')
+	study_name = args.study_name or search_space.get('study_name') or study_dir
 	study_root = os.path.join(repo_root, 'logs', 'hpo', study_dir)
 	os.makedirs(study_root, exist_ok=True)
 	storage = args.storage or f'sqlite:///{os.path.join(study_root, "optuna.db")}'
+
+	param_specs = search_space['parameters']
+	sampler_name = str(search_space.get('sampler', 'tpe')).lower()
+	grid: dict[str, list[Any]] | None = None
+	if sampler_name == 'grid':
+		grid = _grid_from_param_specs(param_specs)
+		sampler = GridSampler(grid, seed=42)
+		default_trials = _grid_size(grid)
+	else:
+		sampler = TPESampler(n_startup_trials=args.n_startup_trials, seed=42)
+		default_trials = 30
+
 	study = optuna.create_study(
-		study_name=args.study_name,
+		study_name=study_name,
 		storage=storage,
 		direction='maximize',
 		load_if_exists=True,
-		sampler=TPESampler(n_startup_trials=args.n_startup_trials, seed=42),
+		sampler=sampler,
 	)
 
-	n_trials = 1 if args.smoke_test else args.n_trials
-	param_specs = search_space['parameters']
+	if args.smoke_test:
+		n_trials = 1
+	elif args.n_trials is not None:
+		n_trials = args.n_trials
+	else:
+		n_trials = default_trials
+
+	if grid is not None and not args.smoke_test:
+		remaining = max(default_trials - len(study.trials), 0)
+		if args.n_trials is None:
+			n_trials = remaining
+		else:
+			n_trials = min(args.n_trials, remaining)
+		print(
+			f'Grid search: {default_trials} combinations '
+			f'({", ".join(f"{k}={len(v)}" for k, v in grid.items())}); '
+			f'running {n_trials} trial(s)',
+			flush=True,
+		)
+
+	screening_epochs = args.screening_epochs
+	if screening_epochs is None:
+		screening_epochs = int(search_space.get('screening_overrides', {}).get('epochs', 30))
 
 	def objective(trial: optuna.Trial) -> float:
 		sampled: dict[str, Any] = {}
@@ -184,7 +248,7 @@ def main() -> int:
 			sampled,
 			output_dir=trial_dir,
 			screening=args.screening,
-			screening_epochs=args.screening_epochs if args.screening else None,
+			screening_epochs=screening_epochs if args.screening else None,
 		)
 		_save_json(trial_config_path, trial_cfg)
 
@@ -214,7 +278,15 @@ def main() -> int:
 		)
 		return best_mrr
 
-	study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
+	if n_trials <= 0:
+		print('No remaining trials to run.', flush=True)
+	else:
+		study.optimize(objective, n_trials=n_trials, show_progress_bar=True)
+
+	completed = [trial for trial in study.trials if trial.state == optuna.trial.TrialState.COMPLETE]
+	if not completed:
+		print('No completed trials; skip best-config export.', flush=True)
+		return 1
 
 	best = study.best_trial
 	best_params = dict(best.params)
@@ -229,14 +301,17 @@ def main() -> int:
 	_save_json(best_config_path, best_config)
 
 	summary = {
-		'study_name': args.study_name,
+		'study_name': study_name,
+		'sampler': sampler_name,
 		'n_trials': len(study.trials),
+		'n_completed': len(completed),
 		'best_trial': best.number,
 		'best_mrr': best.value,
 		'best_params': best_params,
 		'best_config_path': best_config_path,
 		'screening': args.screening,
-		'screening_epochs': args.screening_epochs if args.screening else None,
+		'screening_epochs': screening_epochs if args.screening else None,
+		'grid_size': default_trials if grid is not None else None,
 	}
 	_save_json(os.path.join(study_root, 'study_summary.json'), summary)
 	print(json.dumps(summary, indent=2))

@@ -20,7 +20,7 @@ def main() -> int:
 		default='scripts/hpo/search_space_complex_au_wn18rr.json',
 		help='Search space JSON (relative to repo root; used for study_dir)',
 	)
-	parser.add_argument('--study-name', default='complex_au_wn18rr')
+	parser.add_argument('--study-name', default='', help='Optuna study name (default from search space)')
 	parser.add_argument(
 		'--storage',
 		default='',
@@ -36,9 +36,10 @@ def main() -> int:
 	with open(search_space_path, 'r', encoding='utf-8') as handle:
 		search_space = json.load(handle)
 	study_dir = search_space.get('study_dir', 'ComplEx-AU_WN18RR')
+	study_name = args.study_name or search_space.get('study_name') or study_dir
 	study_root = os.path.join(repo_root, 'logs', 'hpo', study_dir)
 	storage = args.storage or f'sqlite:///{os.path.join(study_root, "optuna.db")}'
-	study = optuna.load_study(study_name=args.study_name, storage=storage)
+	study = optuna.load_study(study_name=study_name, storage=storage)
 
 	rows = []
 	for trial in study.trials:
