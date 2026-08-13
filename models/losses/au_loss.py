@@ -200,6 +200,7 @@ class KGAULoss(nn.Module):
 		gamma_ent=0.0,
 		gamma_cross=0.0,
 		alpha: float = 1.0,
+		align_alpha: float = 2.0,
 		tuni=2.0,
 		learnable_tuni: bool = False,
 		learnable_au_alpha: bool = False,
@@ -226,6 +227,8 @@ class KGAULoss(nn.Module):
 		self.learnable_au_alpha = bool(learnable_au_alpha)
 		self.learnable_au_gammas = bool(learnable_au_gammas)
 		alpha_init = _coalesce_float(alpha, 1.0)
+		# Exponent on element-wise (q-t) in alignment; 2.0 recovers squared L2.
+		self.align_alpha = _coalesce_float(align_alpha, 2.0)
 		self.register_buffer('alpha_init', torch.tensor(alpha_init))
 		if not self.learnable_au_alpha:
 			self._alpha = alpha_init
@@ -399,12 +402,16 @@ class KGAULoss(nn.Module):
 		else:
 			self._tuni = float(value)
 
-	def alignment_loss(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-		"""Expected squared L2 distance between paired positive query and target embeddings."""
+	def alignment_loss(self, q: torch.Tensor, t: torch.Tensor, align_alpha: float | None = None) -> torch.Tensor:
+		"""Expected L2^p distance between paired positive query and target embeddings.
+
+		``align_alpha`` is the element-wise exponent (default ``self.align_alpha``, 2.0 = squared L2).
+		"""
 
 		q = self._l2_normalize_if_needed(q)
 		t = self._l2_normalize_if_needed(t)
-		return (q - t).pow(2).sum(dim=-1).mean()
+		exponent = self.align_alpha if align_alpha is None else float(align_alpha)
+		return (q - t).pow(exponent).sum(dim=-1).mean()
 
 	def sin_phase_alignment_loss(self, phase_query: torch.Tensor, phase_target: torch.Tensor) -> torch.Tensor:
 		"""Alignment in native pRotatE geometry: mean sum of |sin(phase residual)| per dimension.
@@ -636,16 +643,16 @@ class KGAULoss(nn.Module):
 		return self._max_uniformity_pair_count(num_rows, x_probe.size(-1)) >= full_pairs
 
 	def _block_alignment_loss(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-		"""Squared-L2 alignment on per-block L2-normalized vectors (eval-consistent).
+		"""Alignment on per-block L2-normalized vectors (eval-consistent).
 
 		Unlike ``alignment_loss``, this always normalizes each block even when
 		``assume_unit_norm`` is set, because a global AU normalization does not make
-		individual ``dabr_blocks`` sub-vectors unit norm.
+		individual ``dabr_blocks`` sub-vectors unit norm. Uses ``self.align_alpha``.
 		"""
 
 		q = F.normalize(q, p=2, dim=-1)
 		t = F.normalize(t, p=2, dim=-1)
-		return (q - t).pow(2).sum(dim=-1).mean()
+		return (q - t).pow(self.align_alpha).sum(dim=-1).mean()
 
 	def _raw_alignment_loss(
 		self,
@@ -658,7 +665,7 @@ class KGAULoss(nn.Module):
 		if self.alignment_mode == 'sin_phase':
 			return self.sin_phase_alignment_loss(q, t)
 		if self.alignment_mode == 'phase_residual':
-			return (q - t).pow(2).sum(dim=-1).mean()
+			return (q - t).pow(self.align_alpha).sum(dim=-1).mean()
 		if self.alignment_mode == 'dabr_blocks':
 			mid = q.size(-1) // 2
 			if mid <= 0 or mid * 2 != q.size(-1):

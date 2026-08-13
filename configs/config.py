@@ -209,6 +209,9 @@ def build_parser() -> argparse.ArgumentParser:
     # KGAU alignment-uniformity hyperparameters (DistMult-AU, ComplEx-AU, etc.).
     parser.add_argument('--alpha', default=None, type=float,
                         help='alignment loss scale (default 1.0)')
+    parser.add_argument('--align-alpha', '--align_alpha', default=None, type=float,
+                        dest='align_alpha',
+                        help='alignment loss exponent on (q-t); 2.0 = squared L2 (default)')
     parser.add_argument('--gamma-q', '--gamma_q', default=None, type=float,
                         help='uniformity weight for query embeddings')
     parser.add_argument('--gamma-t', '--gamma_t', default=None, type=float,

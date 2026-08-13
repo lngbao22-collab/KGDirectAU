@@ -29,7 +29,7 @@ KEY_ORDER = [
     'save_checkpoint_steps', 'epoch_per_eval', 'warm_up_steps', 'warm_up_ratio', 'lr_decay_factor', 'shuffle_train',
     'lr_scheduler', 'lr_scheduler_mode', 'lr_scheduler_factor',
     'lr_scheduler_patience', 'lr_scheduler_threshold', 'lr_scheduler_step_size', 'warmup',
-    'alpha', 'gamma_q', 'gamma_t', 'gamma_h', 'gamma_ent', 'gamma_cross', 'tuni',
+    'alpha', 'align_alpha', 'gamma_q', 'gamma_t', 'gamma_h', 'gamma_ent', 'gamma_cross', 'tuni',
     'au_deduplicate', 'normalize_au_vectors', 'normalize_lp_scores',
     'learnable_au_scales', 'learnable_au_alpha', 'learnable_au_gammas', 'learnable_uniformity_scale',
     'log_au_alpha_lr', 'log_au_gamma_lr', 'log_uniformity_lr',

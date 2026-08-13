@@ -507,6 +507,7 @@ class KGAUStrategy(Evaluator):
 			gamma_ent=_config_float(args, 'gamma_ent', 0.0),
 			gamma_cross=_config_float(args, 'gamma_cross', 0.0),
 			alpha=_config_float(args, 'alpha', 1.0),
+			align_alpha=_config_float(args, 'align_alpha', 2.0),
 			tuni=tuni_val,
 			learnable_tuni=learnable_tuni,
 			learnable_au_alpha=learnable_au_alpha,
@@ -522,6 +523,7 @@ class KGAUStrategy(Evaluator):
 			uniformity_pdist_gb=getattr(args, 'uniformity_pdist_gb', None),
 			uniform_pair_chunk_size=int(_config_float(args, 'uniform_pair_chunk_size', 0) or 0),
 		).to(self.device)
+		logger.info('KGAU align_alpha (alignment exponent): %.4f', self.criterion.align_alpha)
 		if config_bool(args, 'average_uniformity_terms', False):
 			logger.info('KGAU average_uniformity_terms: enabled (sum active terms / count)')
 		if config_bool(args, 'uniformity_full_pdist', False):
