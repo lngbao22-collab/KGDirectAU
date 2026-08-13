@@ -226,12 +226,10 @@ class KGAULoss(nn.Module):
 		self.tuni_as_theta = bool(tuni_as_theta)
 		self.learnable_au_theta = bool(learnable_au_theta)
 		self.learnable_au_gammas = bool(learnable_au_gammas)
-		# Alignment degree: E[sum_i |q_i - t_i|^alpha]; alpha=2 recovers squared L2.
-		self.alpha = float(_coalesce_float(alpha, 2.0))
-		theta_init = _coalesce_float(theta, 1.0)
-		self.register_buffer('theta_init', torch.tensor(theta_init))
-		if not self.learnable_au_theta:
-			self._theta = theta_init
+		alpha_init = _coalesce_float(alpha, 1.0)
+		self.register_buffer('alpha_init', torch.tensor(alpha_init))
+		if not self.learnable_au_alpha:
+			self._alpha = alpha_init
 		else:
 			# Bounded upward adjustment only: exp(adj) in [1, inf), init at 0.
 			# Unconstrained log-scale theta falls under alignment loss minimization.
@@ -402,18 +400,12 @@ class KGAULoss(nn.Module):
 		else:
 			self._tuni = float(value)
 
-	def _feature_alignment(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-		"""Mean feature-wise |q - t|^alpha over positive pairs (alpha=2 => squared L2)."""
-
-		# abs() keeps fractional alpha well-defined for negative residuals.
-		return (q - t).abs().pow(self.alpha).sum(dim=-1).mean()
-
 	def alignment_loss(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-		"""Expected |q - t|^alpha feature distance between paired positive embeddings."""
+		"""Expected squared L2 distance between paired positive query and target embeddings."""
 
 		q = self._l2_normalize_if_needed(q)
 		t = self._l2_normalize_if_needed(t)
-		return self._feature_alignment(q, t)
+		return (q - t).pow(2).sum(dim=-1).mean()
 
 	def sin_phase_alignment_loss(self, phase_query: torch.Tensor, phase_target: torch.Tensor) -> torch.Tensor:
 		"""Alignment in native pRotatE geometry: mean sum of |sin(phase residual)| per dimension.
@@ -645,16 +637,16 @@ class KGAULoss(nn.Module):
 		return self._max_uniformity_pair_count(num_rows, x_probe.size(-1)) >= full_pairs
 
 	def _block_alignment_loss(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-		"""|q - t|^alpha alignment on per-block L2-normalized vectors (eval-consistent).
+		"""Squared-L2 alignment on per-block L2-normalized vectors (eval-consistent).
 
 		Unlike ``alignment_loss``, this always normalizes each block even when
 		``assume_unit_norm`` is set, because a global AU normalization does not make
-		individual ``dabr_blocks`` sub-vectors unit norm.
+		individual ``dabr_blocks`` sub-vectors unit norm. Uses ``self.align_alpha``.
 		"""
 
 		q = F.normalize(q, p=2, dim=-1)
 		t = F.normalize(t, p=2, dim=-1)
-		return self._feature_alignment(q, t)
+		return (q - t).pow(2).sum(dim=-1).mean()
 
 	def _raw_alignment_loss(
 		self,
@@ -667,7 +659,7 @@ class KGAULoss(nn.Module):
 		if self.alignment_mode == 'sin_phase':
 			return self.sin_phase_alignment_loss(q, t)
 		if self.alignment_mode == 'phase_residual':
-			return self._feature_alignment(q, t)
+			return (q - t).pow(2).sum(dim=-1).mean()
 		if self.alignment_mode == 'dabr_blocks':
 			mid = q.size(-1) // 2
 			if mid <= 0 or mid * 2 != q.size(-1):

@@ -524,7 +524,6 @@ class KGAUStrategy(Evaluator):
 			uniformity_pdist_gb=getattr(args, 'uniformity_pdist_gb', None),
 			uniform_pair_chunk_size=int(_config_float(args, 'uniform_pair_chunk_size', 0) or 0),
 		).to(self.device)
-		logger.info('KGAU alignment degree alpha=%.4f (feature |q-t|^alpha)', alpha_val)
 		if config_bool(args, 'average_uniformity_terms', False):
 			logger.info('KGAU average_uniformity_terms: enabled (sum active terms / count)')
 		if config_bool(args, 'uniformity_full_pdist', False):
