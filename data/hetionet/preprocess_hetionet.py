@@ -1,4 +1,4 @@
-"""Filter Hetionet to Disease:presents:Symptom and Disease:resembles:Disease."""
+"""Filter Hetionet to Disease:presents:Symptom triples only."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 PRESENT_RELATION = "Disease:presents:Symptom"
 RESEMBLE_RELATION = "Disease:resembles:Disease"
-KEEP_RELATIONS = {PRESENT_RELATION, RESEMBLE_RELATION}
+KEEP_RELATIONS = {PRESENT_RELATION}
 
 SPLIT_FILES = (
     "train.txt",
@@ -130,8 +130,8 @@ def _write_statistics(
         "Tập xác thực có nhãn",
         "Tập kiểm thử",
         "Tập kiểm thử có nhãn",
-        "present relations",
-        "resemble relations",
+        "Số bộ ba present",
+        "Số bộ ba resemble",
     ]
     row = {
         "Tập dữ liệu": "hetionet_subset",
@@ -145,8 +145,8 @@ def _write_statistics(
         "Tập xác thực có nhãn": valid_w_label_size,
         "Tập kiểm thử": test_size,
         "Tập kiểm thử có nhãn": test_w_label_size,
-        "present relations": present_count,
-        "resemble relations": resemble_count,
+        "Số bộ ba present": present_count,
+        "Số bộ ba resemble": resemble_count,
     }
     with open(path, "w", encoding="utf-8", newline="") as writer:
         csv_writer = csv.DictWriter(writer, fieldnames=fieldnames)
@@ -215,8 +215,7 @@ def preprocess_hetionet(input_dir: str, output_dir: str) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Create hetionet_subset keeping only Disease:presents:Symptom "
-            "and Disease:resembles:Disease triples."
+            "Create hetionet_subset keeping only Disease:presents:Symptom triples."
         )
     )
     parser.add_argument(
