@@ -6,6 +6,7 @@ import argparse
 import csv
 import logging
 import os
+import random
 from typing import Dict, Iterable, List, Sequence, Set, Tuple
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -85,6 +86,58 @@ def _count_relations(splits: Dict[str, Sequence[Tuple[str, str, str, str]]]) -> 
             elif relation == RESEMBLE_RELATION:
                 resemble += 1
     return present, resemble
+
+
+def _rewrite_labeled_negatives(
+    triples: Sequence[Tuple[str, str, str, str]],
+    *,
+    vocab: Sequence[str],
+    rng: random.Random,
+) -> List[Tuple[str, str, str, str]]:
+    """Replace out-of-vocab corrupted tails with in-vocab entities."""
+
+    vocab_set = set(vocab)
+    rewritten: List[Tuple[str, str, str, str]] = []
+    true_tail = ""
+    for head, relation, tail, label in triples:
+        if label != "0":
+            true_tail = tail
+            rewritten.append((head, relation, tail, label))
+            continue
+        if tail in vocab_set and tail != true_tail:
+            rewritten.append((head, relation, tail, label))
+            continue
+        candidates = [entity for entity in vocab if entity != true_tail]
+        if not candidates:
+            raise ValueError("No in-vocab entities available to corrupt labeled negatives")
+        rewritten.append((head, relation, rng.choice(candidates), label))
+    return rewritten
+
+
+def _filter_tsv_to_entities(path: str, keep_ids: Set[str]) -> None:
+    if not os.path.exists(path):
+        return
+    with open(path, "r", encoding="utf-8") as reader:
+        lines = reader.readlines()
+    if not lines:
+        return
+    kept = [lines[0]]
+    body_count = 0
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        body_count += 1
+        entity_id = line.split("\t", 1)[0]
+        if entity_id in keep_ids:
+            kept.append(line)
+    with open(path, "w", encoding="utf-8") as writer:
+        writer.writelines(kept)
+    logger.info(
+        "Kept %d / %d rows with in-triple entities in %s",
+        len(kept) - 1,
+        body_count,
+        path,
+    )
 
 
 def _write_dict(path: str, values: Iterable[str]) -> None:
@@ -183,10 +236,18 @@ def preprocess_hetionet(input_dir: str, output_dir: str) -> None:
     logger.info("Wrote %d disease / %d symptom entities", len(diseases), len(symptoms))
     logger.info("Wrote %d relations to %s", len(relations), relations_path)
 
+    rng = random.Random(42)
     for split_name, triples in filtered_splits.items():
+        if split_name.endswith("_w_label.txt"):
+            triples = _rewrite_labeled_negatives(triples, vocab=symptoms, rng=rng)
+            filtered_splits[split_name] = triples
         out_path = os.path.join(output_dir, split_name)
         _write_split(out_path, triples, with_label=split_name.endswith("_w_label.txt"))
         logger.info("Wrote %d triples to %s", len(triples), out_path)
+
+    keep_ids = set(entities)
+    _filter_tsv_to_entities(os.path.join(output_dir, "hetionet-v1.0-nodes.tsv"), keep_ids)
+    _filter_tsv_to_entities(os.path.join(output_dir, "disease_metadata.tsv"), keep_ids)
 
     train_size = len(filtered_splits["train.txt"])
     valid_size = len(filtered_splits["valid.txt"])

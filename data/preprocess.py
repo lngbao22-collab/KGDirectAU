@@ -442,6 +442,9 @@ def preprocess_dataset(args) -> None:
 
     split_examples: List[Tuple[str, str, List[TripleExample]]] = []
     all_triples: List[Tuple[str, str, str, str]] = []
+    vocab_triples: List[Tuple[str, str, str, str]] = []
+    vocab_examples: List[TripleExample] = []
+    vocab_split_names = {"train", "valid", "test"}
 
     for split_name, path in split_paths:
         if not os.path.exists(path):
@@ -458,13 +461,22 @@ def preprocess_dataset(args) -> None:
         )
         split_examples.append((split_name, path, examples))
         all_triples.extend(triples)
+        if split_name in vocab_split_names:
+            vocab_triples.extend(triples)
+            vocab_examples.extend(examples)
 
-    entity2id = _build_id_map([head_id for head_id, _, _, _ in all_triples] + [tail_id for _, _, tail_id, _ in all_triples])
-    relation2id = _build_id_map([relation_id for _, relation_id, _, _ in all_triples])
+    if not vocab_triples:
+        vocab_triples = all_triples
+        vocab_examples = [ex for _, _, examples in split_examples for ex in examples]
+
+    entity2id = _build_id_map(
+        [head_id for head_id, _, _, _ in vocab_triples] + [tail_id for _, _, tail_id, _ in vocab_triples]
+    )
+    relation2id = _build_id_map([relation_id for _, relation_id, _, _ in vocab_triples])
 
     os.makedirs(output_dir, exist_ok=True)
 
-    metadata_entities, metadata_relations = _collect_metadata([ex for _, _, examples in split_examples for ex in examples])
+    metadata_entities, metadata_relations = _collect_metadata(vocab_examples)
 
     _save_json(os.path.join(output_dir, "entity2id.json"), entity2id)
     _save_json(os.path.join(output_dir, "relation2id.json"), relation2id)

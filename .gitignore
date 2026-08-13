@@ -1,7 +1,5 @@
 *.pyc
 __pycache__/
-*.csv
-*.tsv
 .idea/
 logs/
 entities.json
