@@ -2,17 +2,13 @@
 
 import os
 import glob
-from transformers import AutoTokenizer
 
 from configs.config import args
-from utils.logger import logger
 
 train_triplet_dict = None
 all_triplet_dict = None
-link_graph = None
 entity_dict = None
 relation_id_map = None
-tokenizer: AutoTokenizer = None
 
 
 def _split_parent_dirs() -> list[str]:
@@ -120,19 +116,6 @@ def _init_all_triplet_dict() -> None:
         all_triplet_dict = TripletDict(path_list=glob.glob(path_pattern))
 
 
-def _init_link_graph() -> None:
-    """Initialize the link graph if it hasn't been loaded yet."""
-
-    global link_graph
-    if not link_graph:
-        from data.dataset import LinkGraph
-        data_dir = _resolve_preprocessed_dir()
-        train_path = os.path.join(data_dir, 'train.txt.json')
-        if not os.path.exists(train_path):
-            train_path = args.train_path
-        link_graph = LinkGraph(train_path=train_path)
-
-
 def get_entity_dict() -> 'EntityDict':
     """Get the entity dictionary, initializing it if necessary."""
 
@@ -161,20 +144,11 @@ def get_all_triplet_dict() -> 'TripletDict':
     return all_triplet_dict
 
 
-def get_link_graph() -> 'LinkGraph':
-    """Get the link graph, initializing it if necessary."""
-
-    _init_link_graph()
-    return link_graph
-
-
 def init_dataloader_worker(_worker_id: int = 0) -> None:
     """Pre-load read-only caches in DataLoader worker processes (spawn-safe)."""
 
     _init_entity_dict()
     _init_train_triplet_dict()
-    if getattr(args, 'use_link_graph', False):
-        _init_link_graph()
 
 
 def warmup_data_structures() -> None:
@@ -182,27 +156,3 @@ def warmup_data_structures() -> None:
 
     _init_entity_dict()
     _init_train_triplet_dict()
-    if getattr(args, 'use_link_graph', False):
-        _init_link_graph()
-
-
-def build_tokenizer(args) -> None:
-    """Build the tokenizer from the specified pretrained model, caching it for future use."""
-
-    global tokenizer
-    if tokenizer is None:
-        encoder = str(getattr(args, 'bert_encoder', '') or '').strip()
-        if not encoder:
-            raise RuntimeError(
-                'bert_encoder is not configured; text tokenization is only required for SimKGC-style models.'
-            )
-        tokenizer = AutoTokenizer.from_pretrained(encoder)
-        logger.info('Build tokenizer from %s', encoder)
-
-
-def get_tokenizer() -> AutoTokenizer:
-    """Get the tokenizer, initializing it if necessary."""
-
-    if tokenizer is None:
-        build_tokenizer(args)
-    return tokenizer

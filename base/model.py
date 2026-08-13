@@ -11,7 +11,6 @@ in ``utils.eval_modes``; lookup init in ``LookupEmbedder``.
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from typing import Any, List, Mapping, Sequence
 
 import torch
@@ -110,46 +109,11 @@ class KGEEmbedder(KGEBase):
 		raise NotImplementedError
 
 
-class ParameterEmbedder(KGEEmbedder):
-	"""Wrap a shared ``nn.Parameter`` matrix as a lookup embedder."""
-
-	def __init__(self, weight: nn.Parameter):
-		dim = int(weight.size(-1)) if weight.dim() >= 1 else None
-		super().__init__(dim=dim)
-		self.register_parameter('weight', weight)
-
-	def forward(self, indices: torch.Tensor) -> torch.Tensor:
-		return self.weight.index_select(0, indices.long())
-
-	def embed(self, indices: torch.Tensor) -> torch.Tensor:
-		return self.forward(indices)
-
-	def get_all(self) -> torch.Tensor:
-		return self.weight
-
-	def embed_all(self) -> torch.Tensor:
-		return self.weight
-
-
-class BaseModel(nn.Module, ABC):
-	"""Abstract base for text encoders (e.g. SimKGC) with dict-based forward passes."""
-
-	@abstractmethod
-	def forward(self, *args, **kwargs) -> dict:
-		"""Run a forward pass and return model-specific outputs."""
-
-	@abstractmethod
-	def compute_logits(self, output_dict: dict, batch_dict: dict) -> dict:
-		"""Convert model outputs into logits/labels for the training objective."""
-
-
 class KGEModel(KGEBase):
 	"""Binder that ties entity/relation embedders to relational scorers.
 
-	``scorers`` is a non-empty list of ``KGEScorer`` modules. Single-score models use
-	length 1; hybrid models (e.g. DaBR) may register multiple component scorers.
-	Default LP / AU math delegates to ``scorers[0]`` (the primary scorer); subclasses
-	may combine several entries.
+	``scorers`` is a non-empty list of ``KGEScorer`` modules. ComplEx uses a
+	single Hermitian scorer. Default LP / AU math delegates to ``scorers[0]``.
 	"""
 
 	def __init__(
@@ -223,8 +187,6 @@ class KGEModel(KGEBase):
 			return bool(value)
 		model = str(getattr(args, 'model', '') or '')
 		if not model.endswith('-AU'):
-			return False
-		if 'protate' in model.lower():
 			return False
 		return True
 
@@ -838,7 +800,7 @@ class KGEModel(KGEBase):
 	def query_encoder(self, h: torch.Tensor, r: torch.Tensor, **kwargs: Any) -> torch.Tensor:
 		"""Encode the tail-prediction query from head and relation indices.
 
-		Default (DistMult-style): ``embed(h) * embed(r)``. Subclasses override.
+		Default (ComplEx-style): ``embed(h) * embed(r)``. Subclasses override.
 		"""
 
 		del kwargs
@@ -847,7 +809,7 @@ class KGEModel(KGEBase):
 	def inverse_query_encoder(self, r: torch.Tensor, t: torch.Tensor, **kwargs: Any) -> torch.Tensor:
 		"""Encode the head-prediction query from relation and tail indices.
 
-		Default (DistMult-style): ``embed(t) * embed(r)``. Subclasses override.
+		Default (ComplEx-style): ``embed(t) * embed(r)``. Subclasses override.
 		"""
 
 		del kwargs
@@ -866,7 +828,7 @@ class KGEModel(KGEBase):
 
 		Default (most bilinear models): raw entity embedding — tail when predicting
 		tails, head when predicting heads.  Subclasses whose score function aligns
-		against a relation-conditioned target (DaBR, TransERR, …) should override
+		against a relation-conditioned target should override
 		this and set ``target_uses_relation = True``.
 		"""
 
@@ -895,342 +857,3 @@ class KGEModel(KGEBase):
 
 	def forward(self, src: torch.Tensor, rel: torch.Tensor, dst: torch.Tensor) -> torch.Tensor:
 		return self.score_hrt(src, rel, dst)
-
-
-class TextKGEModel(KGEModel):
-	"""KGEModel binder for token-input encoders with joint (head, relation) queries."""
-
-	training_input_mode = 'tokens'
-
-	def __init__(
-		self,
-		ent_embedder: nn.Module,
-		query_embedder: nn.Module,
-		scorers: Sequence[nn.Module] | nn.Module,
-		args: Any | None = None,
-		contrastive_state: nn.Module | None = None,
-	):
-		super().__init__(ent_embedder, query_embedder, scorers, args)
-		if contrastive_state is not None:
-			self.contrastive_state = contrastive_state
-		elif args is not None:
-			from models.simkgc import build_contrastive_state
-
-			hidden_size = int(getattr(getattr(ent_embedder, 'config', None), 'hidden_size', getattr(args, 'dim', 768)))
-			self.contrastive_state = build_contrastive_state(args, hidden_size)
-		else:
-			self.contrastive_state = None
-
-	@property
-	def query_embedder(self) -> nn.Module:
-		return self.rel_embedder
-
-	@property
-	def log_inv_t(self) -> torch.Tensor:
-		return self.contrastive_state.log_inv_t
-
-	@property
-	def add_margin(self) -> float:
-		return self.contrastive_state.add_margin
-
-	@property
-	def batch_size(self) -> int:
-		return self.contrastive_state.batch_size
-
-	@property
-	def pre_batch(self) -> int:
-		return self.contrastive_state.pre_batch
-
-	@property
-	def pre_batch_vectors(self) -> torch.Tensor:
-		return self.contrastive_state.pre_batch_vectors
-
-	@property
-	def pre_batch_exs(self) -> list:
-		return self.contrastive_state.pre_batch_exs
-
-	@property
-	def offset(self) -> int:
-		return self.contrastive_state.offset
-
-	@offset.setter
-	def offset(self, value: int) -> None:
-		self.contrastive_state.offset = value
-
-	def _tail_query_vectors(self, h: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
-		return self.query_embedder.embed_hr(h, r)
-
-	def score_hrt(
-		self,
-		h: torch.Tensor,
-		r: torch.Tensor,
-		t: torch.Tensor,
-		**kwargs: Any,
-	) -> torch.Tensor:
-		query = self._tail_query_vectors(h, r)
-		tail = self._lp_entity_vectors(self.embed_t(t))
-		if self._uses_distance_lp_scores():
-			distance_degree = float(getattr(self, 'lp_distance_degree', 2.0) or 2.0)
-			return -torch.linalg.vector_norm(query - tail, ord=distance_degree, dim=-1)
-		if self._uses_cosine_lp_scores():
-			return self._cosine_similarity_scores(query, tail).diag()
-		return self.get_scorer().score_emb(
-			query, r, tail, 'hrt', **{**self._scorer_kwargs(r), **kwargs}
-		).view(-1)
-
-	def score_hr_(
-		self,
-		h: torch.Tensor,
-		r: torch.Tensor,
-		all_t_embs: torch.Tensor | None = None,
-		**kwargs: Any,
-	) -> torch.Tensor:
-		if all_t_embs is None:
-			all_t_embs = self.embed_all_entities()
-		query = self._tail_query_vectors(h, r)
-		lp_entity_embs = self._lp_entity_vectors(all_t_embs)
-		if self._uses_distance_lp_scores():
-			return self._distance_scores(query, lp_entity_embs)
-		if self._uses_cosine_lp_scores():
-			return self._cosine_similarity_scores(query, lp_entity_embs)
-		scorer_kwargs = {**self._scorer_kwargs(r), **kwargs}
-		return self.get_scorer().score_emb(query, r, all_t_embs, 'hr_', **scorer_kwargs)
-
-	def get_queries_targets(self, h: torch.Tensor, r: torch.Tensor, t: torch.Tensor):
-		from data.dataloader import collate
-		from data.dataset import Example
-		from data.dict_hub import get_relation_id_map
-		from utils.device import move_to_cuda
-
-		entity_dict = get_entity_dict()
-		relation_id_map = get_relation_id_map() or {}
-		idx_to_relation = {int(value): key for key, value in relation_id_map.items()}
-
-		examples = []
-		for head_idx, relation_idx, tail_idx in zip(h.tolist(), r.tolist(), t.tolist()):
-			head_entity = entity_dict.get_entity_by_idx(int(head_idx))
-			tail_entity = entity_dict.get_entity_by_idx(int(tail_idx))
-			relation = idx_to_relation.get(int(relation_idx), str(int(relation_idx)))
-			examples.append(Example(head_id=head_entity.entity_id, relation=relation, tail_id=tail_entity.entity_id))
-
-		batch_dict = collate([example.vectorize() for example in examples])
-		if torch.cuda.is_available():
-			batch_dict = move_to_cuda(batch_dict)
-		outputs = self.forward(**batch_dict)
-		query, tail, head = outputs['hr_vector'], outputs['tail_vector'], outputs['head_vector']
-		if self.normalize_au_vectors:
-			query = self._normalize_au_vector(query)
-			tail = self._normalize_au_vector(tail)
-			head = self._normalize_au_vector(head)
-		return query, tail, head
-
-	def _au_needs_head_vectors(self) -> bool:
-		"""True when AU head/entity uniformity (``gamma_h`` / ``gamma_ent``) is active.
-
-		Text encoders only encode head vectors on demand, so this decides whether the
-		training forward must produce them for the uniformity terms.
-		"""
-
-		gamma_h = float(getattr(self.args, 'gamma_h', 0.0) or 0.0)
-		gamma_ent = float(getattr(self.args, 'gamma_ent', 0.0) or 0.0)
-		return gamma_h > 0.0 or gamma_ent > 0.0
-
-	def forward(
-		self,
-		hr_token_ids=None,
-		hr_mask=None,
-		hr_token_type_ids=None,
-		tail_token_ids=None,
-		tail_mask=None,
-		tail_token_type_ids=None,
-		head_token_ids=None,
-		head_mask=None,
-		head_token_type_ids=None,
-		only_ent_embedding=False,
-		encode_hr_only=False,
-		src: torch.Tensor | None = None,
-		rel: torch.Tensor | None = None,
-		dst: torch.Tensor | None = None,
-		**kwargs,
-	):
-		if src is not None and rel is not None and dst is not None:
-			return self.score_hrt(src, rel, dst)
-
-		if only_ent_embedding:
-			return self.predict_ent_embedding(
-				tail_token_ids,
-				tail_mask,
-				tail_token_type_ids,
-			)
-
-		if encode_hr_only:
-			hr_vector = self.query_embedder.encode(hr_token_ids, hr_mask, hr_token_type_ids)
-			return {'hr_vector': hr_vector}
-
-		hr_vector = self.query_embedder.encode(hr_token_ids, hr_mask, hr_token_type_ids)
-		use_self_negative = self.training and bool(getattr(self.args, 'use_self_negative', False))
-		# Head vectors are also needed when the AU loss uses head/entity uniformity
-		# (``gamma_h`` / ``gamma_ent``); otherwise they would be ``None`` and crash uniformity.
-		need_head_vector = head_token_ids is not None and (
-			use_self_negative or (self.training and self._au_needs_head_vectors())
-		)
-		if need_head_vector:
-			batch_size = tail_token_ids.size(0)
-			combined_ids = torch.cat([tail_token_ids, head_token_ids], dim=0)
-			combined_mask = torch.cat([tail_mask, head_mask], dim=0)
-			combined_type_ids = torch.cat([tail_token_type_ids, head_token_type_ids], dim=0)
-			combined = self.ent_embedder.encode(combined_ids, combined_mask, combined_type_ids)
-			tail_vector = combined[:batch_size]
-			head_vector = combined[batch_size:]
-		else:
-			tail_vector = self.ent_embedder.encode(tail_token_ids, tail_mask, tail_token_type_ids)
-			head_vector = None
-		return {
-			'hr_vector': hr_vector,
-			'tail_vector': tail_vector,
-			'head_vector': head_vector,
-		}
-
-	@torch.no_grad()
-	def predict_ent_embedding(
-		self,
-		tail_token_ids,
-		tail_mask,
-		tail_token_type_ids,
-		**kwargs,
-	) -> dict:
-		ent_vectors = self.ent_embedder.encode(
-			tail_token_ids,
-			tail_mask,
-			tail_token_type_ids,
-		)
-		return {'ent_vectors': ent_vectors.detach()}
-
-	def compute_logits(self, output_dict: dict, batch_dict: dict) -> dict:
-		"""InfoNCE logits with masking, pre-batch, and self-negative terms (SimKGC-style)."""
-
-		hr_vector, tail_vector = output_dict['hr_vector'], output_dict['tail_vector']
-		batch_size = hr_vector.size(0)
-		labels = torch.arange(batch_size, device=hr_vector.device)
-
-		logits = hr_vector.mm(tail_vector.t())
-		if self.training and self.add_margin:
-			logits.diagonal().sub_(self.add_margin)
-		logits = logits * self.log_inv_t.exp()
-
-		triplet_mask = batch_dict.get('triplet_mask', None)
-		if triplet_mask is not None:
-			logits.masked_fill_(~triplet_mask.to(hr_vector.device), -1e4)
-
-		if self.pre_batch > 0 and self.training:
-			pre_batch_logits = self._compute_pre_batch_logits(hr_vector, tail_vector, batch_dict)
-			logits = torch.cat([logits, pre_batch_logits], dim=-1)
-
-		if getattr(self.args, 'use_self_negative', False) and self.training:
-			head_vector = output_dict['head_vector']
-			self_neg_logits = torch.sum(hr_vector * head_vector, dim=1) * self.log_inv_t.exp()
-			self_negative_mask = batch_dict.get('self_negative_mask', None)
-			if self_negative_mask is None:
-				self_negative_mask = torch.ones(batch_size, dtype=torch.bool, device=hr_vector.device)
-			else:
-				self_negative_mask = self_negative_mask.to(hr_vector.device).bool()
-			self_neg_logits.masked_fill_(~self_negative_mask, -1e4)
-			logits = torch.cat([logits, self_neg_logits.unsqueeze(1)], dim=-1)
-
-		return {
-			'logits': logits,
-			'labels': labels,
-			'inv_t': self.log_inv_t.detach().exp(),
-			'hr_vector': hr_vector.detach(),
-			'tail_vector': tail_vector.detach(),
-			'head_vector': output_dict['head_vector'].detach() if output_dict.get('head_vector') is not None else None,
-		}
-
-	def _compute_pre_batch_logits(
-		self,
-		hr_vector: torch.Tensor,
-		tail_vector: torch.Tensor,
-		batch_dict: dict,
-	) -> torch.Tensor:
-		from models.samplers.masking_sampler import construct_mask
-
-		assert tail_vector.size(0) == self.batch_size
-		batch_exs = batch_dict['batch_data']
-		pre_batch_logits = hr_vector.mm(self.pre_batch_vectors.clone().t())
-		pre_batch_logits = pre_batch_logits * self.log_inv_t.exp() * float(getattr(self.args, 'pre_batch_weight', 0.5))
-		if self.pre_batch_exs[-1] is not None:
-			pre_triplet_mask = construct_mask(batch_exs, self.pre_batch_exs).to(hr_vector.device)
-			pre_batch_logits.masked_fill_(~pre_triplet_mask, -1e4)
-
-		self.pre_batch_vectors[self.offset:(self.offset + self.batch_size)] = tail_vector.data.clone()
-		self.pre_batch_exs[self.offset:(self.offset + self.batch_size)] = batch_exs
-		self.offset = (self.offset + self.batch_size) % len(self.pre_batch_exs)
-
-		return pre_batch_logits
-
-	def entity_embeddings(
-		self,
-		device: torch.device | None = None,
-		batch_size: int | None = None,
-		num_workers: int | None = None,
-		max_samples: int | None = None,
-	) -> torch.Tensor:
-		entity_exs = get_entity_dict().entity_exs
-		if max_samples is not None and int(max_samples) > 0 and len(entity_exs) > int(max_samples):
-			indices = torch.randperm(len(entity_exs))[: int(max_samples)].tolist()
-			entity_exs = [entity_exs[i] for i in indices]
-
-		loader_workers = self.ent_embedder._resolve_entity_loader_workers(num_workers, len(entity_exs))
-		vectors = self.ent_embedder._encode_entity_exs(
-			entity_exs,
-			batch_size=batch_size,
-			num_workers=loader_workers,
-			show_progress=False,
-		)
-		return vectors.to(device) if device is not None else vectors
-
-	def predict_by_examples(self, examples, batch_size=None, num_workers: int = 1):
-		"""Deprecated: use ``score_hr_`` / index-based LP eval."""
-
-		from data.dataset import Dataset
-		from utils.device import move_to_cuda
-
-		if batch_size is None:
-			batch_size = max(int(getattr(self.args, 'batch_size', 512)), 512)
-		else:
-			batch_size = max(int(batch_size), 512)
-
-		data_loader = torch.utils.data.DataLoader(
-			Dataset(path='', examples=examples, task=self.args.dataset),
-			num_workers=num_workers,
-			batch_size=batch_size,
-			collate_fn=__import__('data.dataloader', fromlist=['collate']).collate,
-			shuffle=False,
-		)
-
-		hr_tensor_list, tail_tensor_list = [], []
-		use_cuda = torch.cuda.is_available()
-		for batch_dict in data_loader:
-			if use_cuda:
-				batch_dict = move_to_cuda(batch_dict)
-			outputs = self(**batch_dict)
-			hr_tensor_list.append(outputs['hr_vector'])
-			tail_tensor_list.append(outputs['tail_vector'])
-		return torch.cat(hr_tensor_list, dim=0), torch.cat(tail_tensor_list, dim=0)
-
-	def predict_by_entities(self, entity_exs, batch_size=None, num_workers=None, show_progress=None):
-		"""Deprecated: use ``embed_all_entities``."""
-
-		if batch_size is None:
-			batch_size = max(int(getattr(self.args, 'batch_size', 512)), 1024)
-		else:
-			batch_size = max(int(batch_size), 512)
-		if show_progress is None:
-			show_progress = not self.training
-		loader_workers = self.ent_embedder._resolve_entity_loader_workers(num_workers, len(entity_exs))
-		return self.ent_embedder._encode_entity_exs(
-			entity_exs,
-			batch_size=batch_size,
-			num_workers=loader_workers,
-			show_progress=show_progress,
-		)

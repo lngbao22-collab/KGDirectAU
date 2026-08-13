@@ -15,8 +15,7 @@ from utils.relations import use_reciprocal_relations
 from contextlib import nullcontext
 
 from base.evaluator import Evaluator, log_bidirectional_link_metrics, lp_score_mode_context
-from data.dataloader import collate
-from data.dataset import Dataset, load_data
+from data.dataset import load_data
 from data.dict_hub import get_entity_dict, get_relation_id_map
 from models.builder import (
 	_kge_metric_value,
@@ -32,8 +31,8 @@ from models.builder import (
 )
 from models.losses.adversarial_bce_loss import compute_adversarial_bce_loss
 from utils.checkpoint import best_model_path, checkpoint_path, delete_old_ckt, last_model_path, save_checkpoint
-from utils.device import get_model_obj, move_to_cuda, report_num_trainable_parameters
-from utils.logger import AverageMeter, ProgressMeter, logger, log_run_timing
+from utils.device import get_model_obj, report_num_trainable_parameters
+from utils.logger import logger, log_run_timing
 from utils.memory import PhaseMemoryTracker, format_memory
 from utils.training_cadence import (
 	init_step_cadence_state,
@@ -41,8 +40,6 @@ from utils.training_cadence import (
 	maybe_decay_lr_at_step,
 )
 from models.losses.au_loss import KGAULoss, distinct_first_indices, select_distinct_rows, _GAMMA_NAMES
-from models.protate import normalize_protate_phases
-from models.rotate import normalize_rotate_phases
 
 
 def _load_encoder(args) -> torch.nn.Module:
@@ -51,46 +48,11 @@ def _load_encoder(args) -> torch.nn.Module:
 	return build_model(args)
 
 
-def _resolve_normalize_phases_fn(args):
-	"""Return phase-wrapping hook for RotatE/pRotatE KGAU runs (matches negsamp_strategy)."""
-
-	if not config_bool(args, 'normalize_phases', False):
-		return None
-	model_name = str(getattr(args, 'model', '') or '').lower()
-	if 'protate' in model_name:
-		return normalize_protate_phases
-	if 'rotate' in model_name:
-		return normalize_rotate_phases
-	return None
-
-
-def _uses_text_inputs(args, model=None) -> bool:
-	if model is not None:
-		from utils.device import get_model_obj
-
-		return getattr(get_model_obj(model), 'training_input_mode', 'indices') == 'tokens'
-	embedder_path = str(getattr(args, 'model_embedder_path', '') or '').replace('\\', '/')
-	if embedder_path.endswith('text_embedder.py'):
-		return True
-	scorer_path = str(getattr(args, 'model_scorer_path', '') or getattr(args, 'model_encoder_path', '') or '')
-	return os.path.basename(scorer_path) in {'bert_encoder.py', 'simkgc.py'}
-
-
 def _config_float(args, name: str, default: float) -> float:
 	"""Read a float hyperparameter from args, treating JSON null as unset."""
 
 	value = getattr(args, name, None)
 	return default if value is None else float(value)
-
-
-def _is_dabr_encoder(args) -> bool:
-	"""Return True when the configured model is DaBR (or DaBR-AU)."""
-
-	scorer_path = str(
-		getattr(args, 'model_scorer_path', '') or getattr(args, 'model_encoder_path', '') or ''
-	).lower()
-	model_name = str(getattr(args, 'model', '') or '').lower()
-	return 'dabr' in scorer_path or 'dabr' in model_name
 
 
 def _build_relation_to_idx() -> dict[str, int]:
@@ -324,30 +286,6 @@ def _gamma_log_suffix(criterion: KGAULoss) -> str:
 	return ' | gammas: ' + ', '.join(parts)
 
 
-def _build_text_train_loader(args, train_examples) -> torch.utils.data.DataLoader:
-	"""Build the tokenized training loader (SimKGC/BERT only)."""
-
-	from data.dict_hub import build_tokenizer, init_dataloader_worker, warmup_data_structures
-
-	build_tokenizer(args)
-	warmup_data_structures()
-
-	train_workers = int(getattr(args, 'workers', 0))
-	train_loader_kwargs = {
-		'dataset': Dataset(path='', examples=train_examples, task=args.dataset),
-		'batch_size': max(getattr(args, 'batch_size', 1), 1),
-		'shuffle': True,
-		'collate_fn': collate,
-		'num_workers': train_workers,
-		'pin_memory': True,
-		'drop_last': True,
-	}
-	if train_workers > 0:
-		train_loader_kwargs['worker_init_fn'] = init_dataloader_worker
-		train_loader_kwargs['persistent_workers'] = True
-	return torch.utils.data.DataLoader(**train_loader_kwargs)
-
-
 def _entity_embeddings_call_kwargs(model, device: torch.device, criterion: KGAULoss) -> dict:
 	"""Build ``entity_embeddings`` kwargs supported by the configured encoder."""
 
@@ -383,15 +321,10 @@ class KGAUStrategy(Evaluator):
 				getattr(args, 'n_sample', None),
 			)
 		self.ngpus_per_node = ngpus_per_node
-		self.uses_text_inputs = _uses_text_inputs(args, model)
-		self.kgau_bidirectional = (
-			config_bool(args, 'kgau_bidirectional', False) and not self.uses_text_inputs
-		)
+		self.kgau_bidirectional = config_bool(args, 'kgau_bidirectional', False)
 		# GB-Magic-style head/tail batches use forward relation at eval; reciprocal triplets
 		# are only needed for hr_inverse training (legacy KGAU path).
-		add_backward_triplet = self.uses_text_inputs or (
-			use_reciprocal_relations(args) and not self.kgau_bidirectional
-		)
+		add_backward_triplet = use_reciprocal_relations(args) and not self.kgau_bidirectional
 		self.train_examples = load_data(
 			args.train_path, add_forward_triplet=True, add_backward_triplet=add_backward_triplet)
 		logger.info(
@@ -400,20 +333,16 @@ class KGAUStrategy(Evaluator):
 		)
 		self.entity_dict = get_entity_dict()
 		self.model = model if model is not None else _load_encoder(args)
-		self.uses_text_inputs = _uses_text_inputs(args, self.model)
 		logger.info(self.model)
 		self.relation_to_idx = _build_relation_to_idx()
-		if not self.uses_text_inputs:
-			self.train_src, self.train_rel, self.train_dst = self._examples_to_tensors(self.train_examples)
-		else:
-			self.train_loader = _build_text_train_loader(args, self.train_examples)
+		self.train_src, self.train_rel, self.train_dst = self._examples_to_tensors(self.train_examples)
 
 		if torch.cuda.device_count() > 1:
 			self.model = torch.nn.DataParallel(self.model).cuda()
 		elif torch.cuda.is_available():
 			self.model.cuda()
 		self.device = next(self.model.parameters()).device
-		if not self.uses_text_inputs and self.train_src.device != self.device:
+		if self.train_src.device != self.device:
 			self.train_src = self.train_src.to(self.device)
 			self.train_rel = self.train_rel.to(self.device)
 			self.train_dst = self.train_dst.to(self.device)
@@ -426,7 +355,7 @@ class KGAUStrategy(Evaluator):
 		batch_size = max(getattr(args, 'batch_size', 1), 1)
 		num_batches = max(math.ceil(len(self.train_examples) / batch_size), 1)
 		self.au_deduplicate = config_bool(args, 'au_deduplicate', True)
-		# AdamW (SimKGC-style) applies weight_decay as-is; legacy KGE optimizers keep the
+		# AdamW applies weight_decay as-is; legacy KGE optimizers keep the
 		# per-batch scaling that matches their historical regularization convention.
 		if str(getattr(args, 'optim', 'adam') or 'adam').lower() == 'adamw':
 			self.weight_decay = float(weight_decay)
@@ -441,53 +370,13 @@ class KGAUStrategy(Evaluator):
 			logger.warning('tuni_as_theta is enabled; ignoring learnable_au_theta')
 			learnable_au_theta = False
 
-		# Alignment mode is opt-in: cosine by default for all encoders; only pRotatE-AU sets
-		# ``sin_phase`` (via config and/or encoder ``kgau_alignment_mode``).
-		# DaBR-AU uses per-component scorers with standard cosine AU (not concat ``dabr_blocks``).
 		model_obj = get_model_obj(self.model)
-		self._dabr_component_au = (
-			_is_dabr_encoder(args) and hasattr(model_obj, 'get_component_queries_targets')
-		)
 		encoder_align = getattr(model_obj, 'kgau_alignment_mode', None)
 		alignment_mode = getattr(args, 'alignment_mode', None) or encoder_align or 'cosine'
-		if self._dabr_component_au:
-			if alignment_mode == 'dabr_blocks':
-				logger.info(
-					'KGAU DaBR-AU: ignoring alignment_mode=dabr_blocks; '
-					'using per-component cosine AU',
-				)
-			alignment_mode = 'cosine'
 		normalize_uniformity = getattr(args, 'normalize_uniformity', None)
 		if normalize_uniformity is None:
-			normalize_uniformity = alignment_mode not in ('phase_residual', 'sin_phase')
-		if self._dabr_component_au:
-			if config_bool(args, 'dabr_au_semantic_only', False):
-				logger.info(
-					'KGAU DaBR-AU semantic-only: single-sphere AU on quaternion branch '
-					'(no distance / λ); normalize_uniformity=%s',
-					normalize_uniformity,
-				)
-			elif config_bool(args, 'dabr_au_distance_only', False):
-				logger.info(
-					'KGAU DaBR-AU distance-only: TransE-style AU on (h+dr, t) / (t-dr, h) '
-					'(no semantic / λ); normalize_uniformity=%s',
-					normalize_uniformity,
-				)
-			elif config_bool(args, 'dabr_au_independent_spheres', False):
-				logger.info(
-					'KGAU DaBR-AU independent spheres: separate entity tables for '
-					'semantic and distance AU; equal train AU, λ only at eval '
-					'(L = L_sem + L_dist, score = ⟨h⊗r,t⊗r⁻¹⟩ + λ·cos_dist); '
-					'normalize_uniformity=%s',
-					normalize_uniformity,
-				)
-			else:
-				logger.info(
-					'KGAU DaBR-AU component scorers: separate AU per semantic/distance, '
-					'combine with learnable para (λ); normalize_uniformity=%s',
-					normalize_uniformity,
-				)
-		elif alignment_mode != 'cosine' and alignment_mode != 'dabr_blocks':
+			normalize_uniformity = True
+		if alignment_mode != 'cosine':
 			logger.info('KGAU alignment mode: %s (normalize_uniformity=%s)', alignment_mode, normalize_uniformity)
 		normalize_au = getattr(model_obj, 'normalize_au_vectors', None)
 		normalize_lp = getattr(model_obj, 'normalize_lp_scores', None)
@@ -605,10 +494,6 @@ class KGAUStrategy(Evaluator):
 			)
 		self.optimizer = _build_kgau_optimizer(args, self.model, self.criterion, self.weight_decay)
 		self.lr_scheduler = build_lr_scheduler(args, self.optimizer)
-		self._normalize_phases_fn = _resolve_normalize_phases_fn(args)
-		if self._normalize_phases_fn is not None:
-			logger.info('KGAU normalize_phases: enabled')
-			self._normalize_phases_fn(self.model)
 		init_step_cadence_state(self)
 		warm_up_epochs = getattr(args, 'warm_up_epochs', None)
 		if (
@@ -636,14 +521,6 @@ class KGAUStrategy(Evaluator):
 			logger.info(
 				'KGAU kgau_bidirectional: alternating tail/head each step '
 				'(GB-Magic BidirectionalOneShotIterator); head eval uses rt_forward',
-			)
-		if self.criterion.gamma_active('ent') and self.uses_text_inputs:
-			ent_mode = 'deduplicated' if self.au_deduplicate else 'all batch'
-			logger.info(
-				'Entity uniformity (text encoder): gamma_ent uses %s head+tail vectors '
-				'(max_uniformity_samples=%d)',
-				ent_mode,
-				self.criterion.max_uniformity_samples,
 			)
 		self.best_metric = None
 		self.best_checkpoint_path = None
@@ -680,26 +557,9 @@ class KGAUStrategy(Evaluator):
 		batch_size,
 		shuffle: bool = False,
 	) -> Iterator[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
-		"""Iterate over batches of examples; optionally shuffle or OpenKE-sample with replacement."""
-
-		from utils.openke_batch_sampling import (
-			iter_openke_triple_batches,
-			resolve_openke_batch_size,
-			resolve_openke_n_batches,
-			uses_openke_batch_sampling,
-		)
+		"""Iterate over batches of examples, optionally shuffled."""
 
 		num_examples = len(src)
-		if uses_openke_batch_sampling(self.args):
-			# Match OpenKE ``getBatch``: each positive slot is an independent
-			# uniform draw with replacement from the full training set.
-			openke_batch_size = resolve_openke_batch_size(num_examples, self.args)
-			n_batches = resolve_openke_n_batches(num_examples, openke_batch_size, self.args)
-			yield from iter_openke_triple_batches(
-				src, rel, dst, openke_batch_size, n_batches,
-			)
-			return
-
 		if shuffle and num_examples > 1:
 			order = torch.randperm(num_examples, device=src.device)
 			src = src.index_select(0, order)
@@ -812,16 +672,6 @@ class KGAUStrategy(Evaluator):
 			t_keys = tail_indices.to(device=device, dtype=torch.long)
 		h_keys = head_indices.to(device=device, dtype=torch.long)
 		return q_keys, t_keys, h_keys
-
-	def _uniformity_keys_from_examples(self, examples) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-		"""Build deduplication keys from a collated batch of training examples."""
-
-		head_indices, relation_indices, tail_indices = self._examples_to_tensors(examples)
-		return self._uniformity_keys(
-			head_indices.to(self.device),
-			relation_indices.to(self.device),
-			tail_indices.to(self.device),
-		)
 
 	def _distinct_uniformity_inputs(
 		self,
@@ -968,78 +818,6 @@ class KGAUStrategy(Evaluator):
 			loss, l_reg = au_loss, au_loss.new_zeros(())
 		return loss, l_align, l_unif, l_reg, n_unique_q, n_unique_t, margin_active_frac
 
-	def _dabr_component_au_loss(
-		self,
-		model,
-		ss: torch.Tensor,
-		rs: torch.Tensor,
-		ts: torch.Tensor,
-		q_keys: torch.Tensor,
-		t_keys: torch.Tensor,
-		h_keys: torch.Tensor,
-		*,
-		predict_head: bool = False,
-		batch_triples: torch.Tensor | None = None,
-	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int, int, float]:
-		"""Separate AU on semantic/distance scorers.
-
-		Default / independent spheres: ``L = L_sem + L_dist`` (equal AU); λ fuses
-		scores only at eval (``φ = original_sem + λ·cos_dist``).
-		With ``dabr_au_semantic_only``: ``L = L_sem`` only (single-sphere AU).
-		With ``dabr_au_distance_only``: ``L = L_dist`` only (TransE-style AU on h+dr ↔ t).
-		"""
-
-		model_obj = get_model_obj(model)
-		components = model_obj.get_component_queries_targets(
-			ss, rs, ts, predict_head=predict_head,
-		)
-		if len(components) not in (1, 2):
-			raise RuntimeError(
-				'DaBR component AU expects 1 (semantic-only / distance-only) or '
-				f'2 (semantic, distance) parts, got {len(components)}',
-			)
-
-		part_losses: list[torch.Tensor] = []
-		align_parts: list[torch.Tensor] = []
-		unif_parts: list[torch.Tensor] = []
-		n_uq = 0
-		n_ut = 0
-		margin_sum = 0.0
-		for part_idx, (q_raw, t_raw, h_raw) in enumerate(components):
-			# GB-Magic applies gamma_ent once per step on cat(head, tail). For
-			# multi-component DaBR-AU, attach entity uniformity only to the first
-			# part so the entity term is not double-counted.
-			ent_raw = None
-			if part_idx == 0:
-				ent_raw = self._entity_uniformity_vectors_for_loss(
-					model, h_raw, t_raw, h_keys, t_keys,
-					q_raw=q_raw, head_indices=ss, tail_indices=ts, predict_head=predict_head,
-				)
-			part_loss, l_align, l_unif, _, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
-				q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys,
-				batch_triples=batch_triples,
-				apply_regularization=False,
-			)
-			part_losses.append(part_loss)
-			align_parts.append(l_align)
-			unif_parts.append(l_unif)
-			margin_sum += float(margin_active)
-
-		if len(components) == 1:
-			# Semantic-only or distance-only: single-sphere AU, no λ fusion.
-			au_loss = part_losses[0]
-			l_align = align_parts[0]
-			l_unif = unif_parts[0]
-		else:
-			# Train both spheres with equal AU weight. Learnable λ is eval-only
-			# fusion (φ = original_sem + λ·cos_dist); scaling L_dist by λ lets one
-			# sphere starve when λ drifts and worsens the AU align/unif tradeoff.
-			au_loss = part_losses[0] + part_losses[1]
-			l_align = align_parts[0] + align_parts[1]
-			l_unif = unif_parts[0] + unif_parts[1]
-		loss, l_reg = self._apply_embedding_regularization(au_loss, batch_triples=batch_triples)
-		return loss, l_align, l_unif, l_reg, n_uq, n_ut, margin_sum / max(len(components), 1)
-
 	def _compute_batch_au_loss(
 		self,
 		model,
@@ -1053,13 +831,8 @@ class KGAUStrategy(Evaluator):
 		predict_head: bool = False,
 		batch_triples: torch.Tensor | None = None,
 	) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int, int, float]:
-		"""Dispatch single-scorer AU vs DaBR per-component AU."""
+		"""Dispatch AU loss for a batch of index triples."""
 
-		if self._dabr_component_au:
-			return self._dabr_component_au_loss(
-				model, ss, rs, ts, q_keys, t_keys, h_keys,
-				predict_head=predict_head, batch_triples=batch_triples,
-			)
 		q_raw, t_raw, h_raw = self._au_representation_batch(
 			model, ss, rs, ts, predict_head=predict_head)
 		ent_raw = self._entity_uniformity_vectors_for_loss(
@@ -1105,15 +878,12 @@ class KGAUStrategy(Evaluator):
 		return torch.stack(rows, dim=0)
 
 	def _catalog_entity_uniformity_vectors(self, model) -> torch.Tensor | None:
-		"""Full entity-table vectors for embedding encoders (ComplEx, DistMult, DaBR, etc.)."""
+		"""Full entity-table vectors for ComplEx embedding encoders."""
 
 		if not self.criterion.gamma_active('ent'):
 			return None
 		kwargs = _entity_embeddings_call_kwargs(model, self.device, self.criterion)
-		# DaBR component AU uses single-block vectors; skip ``cat(e, e)`` widening.
-		if self._dabr_component_au and hasattr(model, 'entity_embeddings'):
-			ent = model.entity_embeddings(**kwargs)
-		elif hasattr(model, 'au_entity_embeddings'):
+		if hasattr(model, 'au_entity_embeddings'):
 			ent = model.au_entity_embeddings(**kwargs)
 		elif hasattr(model, 'entity_embeddings'):
 			ent = model.entity_embeddings(**kwargs)
@@ -1132,7 +902,7 @@ class KGAUStrategy(Evaluator):
 		"""Lookup batch head/tail entity embeddings (GB-Magic ``cat([head, tail])`` inputs).
 
 		Always uses the triple endpoints, independent of head-batch vs tail-batch mode.
-		Optional ``au_entity_embeddings`` (e.g. pRotatE) remaps catalog rows into AU space.
+		Optional ``au_entity_embeddings`` remaps catalog rows into AU space.
 		"""
 
 		model_obj = get_model_obj(model)
@@ -1168,18 +938,13 @@ class KGAUStrategy(Evaluator):
 		target is the head, which would incorrectly yield ``cat([head, head])``.
 
 		* Index KGE + ``entity_uniformity_batch``: lookup ``embed_h`` / ``embed_t``.
-		* Text encoders: pool batch head/tail encoder outputs.
 		* Otherwise: full entity table (catalog) uniformity.
 		"""
 
 		del q_raw, predict_head  # entity term is mode-independent (GB-Magic)
 
-		if config_bool(self.args, 'entity_uniformity_batch', False) or self.uses_text_inputs:
-			if (
-				not self.uses_text_inputs
-				and head_indices is not None
-				and tail_indices is not None
-			):
+		if config_bool(self.args, 'entity_uniformity_batch', False):
+			if head_indices is not None and tail_indices is not None:
 				h_ent, t_ent = self._triple_endpoint_entity_vectors(
 					model, head_indices, tail_indices,
 				)
@@ -1188,7 +953,6 @@ class KGAUStrategy(Evaluator):
 				return self._batch_entity_uniformity_vectors(
 					h_ent, t_ent, head_indices, tail_indices,
 				)
-			# Text / token path: caller passes true head and tail batch vectors.
 			return self._batch_entity_uniformity_vectors(h_raw, t_raw, h_keys, t_keys)
 		return self._catalog_entity_uniformity_vectors(model)
 
@@ -1198,12 +962,6 @@ class KGAUStrategy(Evaluator):
 		explicit = getattr(self.args, 'train_micro_batch_size', None)
 		if explicit is not None:
 			return max(min(int(explicit), batch_size), 1)
-
-		if _is_dabr_encoder(self.args):
-			# Default DaBR cap: 64 rows per forward/backward chunk on ~15 GiB GPUs.
-			if batch_size > 64:
-				return 64
-			return batch_size
 
 		# Exact i<j uniformity is chunked (``uniform_pair_chunk_size``); no pdist-based
 		# batch cap is required for ``uniformity_full_pdist`` + ``gamma_ent`` anymore.
@@ -1246,8 +1004,6 @@ class KGAUStrategy(Evaluator):
 		self.criterion.clamp_learnable_gamma_adj()
 		self.criterion.clamp_learnable_theta_adj()
 		self.criterion.clamp_learnable_tuni()
-		if self._normalize_phases_fn is not None:
-			self._normalize_phases_fn(self.model)
 		step = increment_trainer_global_step(self)
 		maybe_decay_lr_at_step(self, step)
 
@@ -1263,8 +1019,8 @@ class KGAUStrategy(Evaluator):
 	) -> tuple[float, float, float, float, float, int, int, float, int]:
 		"""Run one optimizer step on a head/relation/tail batch.
 
-		Non-DaBR encoders use a single forward/backward over the full batch (unchanged).
-		DaBR may split into smaller chunks when ``train_micro_batch_size`` or the default cap applies.
+		ComplEx-AU uses a single forward/backward over the full batch unless
+		``train_micro_batch_size`` splits it into smaller chunks.
 		"""
 
 		total = ss.size(0)
@@ -1528,7 +1284,7 @@ class KGAUStrategy(Evaluator):
 		*,
 		predict_head: bool = False,
 	) -> tuple[float, float, float, float, float, int, int, float, int]:
-		"""Full-batch training step (DistMult-AU, ComplEx-AU, RotatE-AU, etc.)."""
+		"""Full-batch ComplEx-AU training step."""
 
 		self.optimizer.zero_grad()
 		q_keys, t_keys, h_keys = self._uniformity_keys(ss, rs, ts, predict_head=predict_head)
@@ -1702,73 +1458,28 @@ class KGAUStrategy(Evaluator):
 		model = get_model_obj(self.model)
 		use_amp = bool(getattr(self.args, 'use_amp', False))
 
-		if self.uses_text_inputs:
-			losses = AverageMeter('Loss', ':.4')
-			progress = ProgressMeter(len(self.train_loader), [losses], prefix='Epoch: [{}]'.format(epoch))
-			for i, batch_dict in enumerate(self.train_loader):
-				self.model.train()
-				if torch.cuda.is_available():
-					batch_dict = move_to_cuda(batch_dict)
-				self.optimizer.zero_grad()
-				q_keys, t_keys, h_keys = self._uniformity_keys_from_examples(batch_dict['batch_data'])
-				if use_amp:
-					with torch.amp.autocast(device_type='cuda'):
-						outputs = self.model(**batch_dict)
-						q_raw = outputs['hr_vector']
-						t_raw = outputs['tail_vector']
-						h_raw = outputs['head_vector']
-						ent_raw = self._entity_uniformity_vectors_for_loss(
-							model, h_raw, t_raw, h_keys, t_keys)
-						loss, l_align, l_unif, l_reg, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
-							q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
-					self.scaler.scale(loss).backward()
-					self._optimizer_step(use_amp)
-				else:
-					outputs = self.model(**batch_dict)
-					q_raw = outputs['hr_vector']
-					t_raw = outputs['tail_vector']
-					h_raw = outputs['head_vector']
-					ent_raw = self._entity_uniformity_vectors_for_loss(
-						model, h_raw, t_raw, h_keys, t_keys)
-					loss, l_align, l_unif, l_reg, n_uq, n_ut, margin_active = self._au_loss_with_distinct_keys(
-						q_raw, t_raw, h_raw, ent_raw, q_keys, t_keys, h_keys)
-					loss.backward()
-					self._optimizer_step(use_amp)
-				batch_examples = len(batch_dict['batch_data'])
-				losses.update(loss.item(), batch_examples)
-				epoch_align_loss += l_align.item() * batch_examples
-				epoch_unif_loss += l_unif.item() * batch_examples
-				epoch_reg_loss += l_reg.item() * batch_examples
-				epoch_loss += loss.item() * batch_examples
-				epoch_unique_q += n_uq
-				epoch_unique_t += n_ut
-				epoch_margin_active += margin_active
-				epoch_batches += 1
-				if i % self.args.print_freq == 0:
-					progress.display(i)
+		if self.kgau_bidirectional:
+			batch_iter = self._iter_bidirectional_au_batches(batch_size)
 		else:
-			if self.kgau_bidirectional:
-				batch_iter = self._iter_bidirectional_au_batches(batch_size)
-			else:
-				batch_iter = (
-					(*batch, False)
-					for batch in self._iter_batches(
-						self.train_src, self.train_rel, self.train_dst, batch_size, shuffle=True,
-					)
+			batch_iter = (
+				(*batch, False)
+				for batch in self._iter_batches(
+					self.train_src, self.train_rel, self.train_dst, batch_size, shuffle=True,
 				)
-			for ss, rs, ts, predict_head in batch_iter:
-				loss, l_align, l_unif, l_reg, l_kge, n_uq, n_ut, margin_active, n_examples = self._train_au_tensor_batch(
-					model, ss, rs, ts, use_amp, predict_head=predict_head,
-				)
-				epoch_align_loss += l_align * n_examples
-				epoch_unif_loss += l_unif * n_examples
-				epoch_reg_loss += l_reg * n_examples
-				epoch_kge_loss += l_kge * n_examples
-				epoch_loss += loss * n_examples
-				epoch_unique_q += n_uq
-				epoch_unique_t += n_ut
-				epoch_margin_active += margin_active
-				epoch_batches += 1
+			)
+		for ss, rs, ts, predict_head in batch_iter:
+			loss, l_align, l_unif, l_reg, l_kge, n_uq, n_ut, margin_active, n_examples = self._train_au_tensor_batch(
+				model, ss, rs, ts, use_amp, predict_head=predict_head,
+			)
+			epoch_align_loss += l_align * n_examples
+			epoch_unif_loss += l_unif * n_examples
+			epoch_reg_loss += l_reg * n_examples
+			epoch_kge_loss += l_kge * n_examples
+			epoch_loss += loss * n_examples
+			epoch_unique_q += n_uq
+			epoch_unique_t += n_ut
+			epoch_margin_active += margin_active
+			epoch_batches += 1
 
 		avg_count = max(len(self.train_examples) * (2 if self.kgau_bidirectional else 1), 1)
 		avg_loss = epoch_loss / avg_count

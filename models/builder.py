@@ -11,14 +11,9 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from utils.relations import (
-	kbc_forward_relation_count,
-	use_kbc_reciprocal_relations,
-	use_reciprocal_relations,
-)
-from data.dataset import PointwiseDataset, load_data
+from utils.relations import use_kbc_reciprocal_relations, use_reciprocal_relations
+from data.dataset import load_data
 from data.dict_hub import get_entity_dict, get_relation_id_map
-from models.embedders.base import embedder_input_mode
 from utils.device import get_model_obj
 
 
@@ -66,11 +61,7 @@ def _config_path(args, name: str, legacy_name: str = '') -> str:
 	return ''
 
 
-_INDEX_KGE_MODELS = frozenset({
-	'distmult', 'distmult-au', 'distmult-adversarial', 'distmult-adversarial-au',
-	'complex', 'complex-au', 'dabr', 'dabr-au', 'rotate', 'rotate-au', 'protate', 'protate-au',
-	'transe', 'transe-au', 'transerr', 'transerr-au',
-})
+_INDEX_KGE_MODELS = frozenset({'complex', 'complex-au'})
 
 
 def is_index_kge_model(args) -> bool:
@@ -81,16 +72,10 @@ def is_index_kge_model(args) -> bool:
 
 def _strategy_paradigm(strategy_path: str) -> str:
 	path = strategy_path.replace('\\', '/').lower()
-	if 'negsamp' in path or 'adversarial' in path or 'pointwise' in path:
+	if 'negsamp' in path or 'adversarial' in path:
 		return 'negsamp'
-	if 'kvsall' in path:
-		return 'kvsall'
-	if '1vsall' in path or 'softmax' in path:
-		return '1vsall'
 	if 'kgau' in path:
 		return 'kgau'
-	if 'inbatch' in path or 'contrastive' in path or 'simkgc' in path:
-		return 'inbatch'
 	return 'generic'
 
 
@@ -124,7 +109,7 @@ def build_scorer_module(args) -> nn.Module | list[nn.Module]:
 def _resolve_model_class(scorer_path: str):
 	"""Return the concrete ``*Model`` class exported by a model module."""
 
-	from base.model import KGEModel, TextKGEModel
+	from base.model import KGEModel
 
 	module = import_module_from_path(scorer_path)
 	explicit = getattr(module, 'MODEL_CLASS', None)
@@ -137,7 +122,7 @@ def _resolve_model_class(scorer_path: str):
 			continue
 		if not name.endswith('Model'):
 			continue
-		if obj in (KGEModel, TextKGEModel):
+		if obj is KGEModel:
 			continue
 		if issubclass(obj, KGEModel):
 			candidates.append(obj)
@@ -149,13 +134,6 @@ def _resolve_model_class(scorer_path: str):
 	raise AttributeError(f'{scorer_path} has multiple Model classes ({names}); set MODEL_CLASS')
 
 
-def _is_token_embedder_model(args, ent_embedder: nn.Module | None = None) -> bool:
-	if ent_embedder is not None:
-		return embedder_input_mode(ent_embedder) == 'tokens'
-	embedder_path = _config_path(args, 'model_embedder_path')
-	return embedder_path.replace('\\', '/').endswith('text_embedder.py')
-
-
 def bind_model(
 	args,
 	ent_embedder: nn.Module,
@@ -165,23 +143,9 @@ def bind_model(
 ) -> nn.Module:
 	"""Bind embedders and scorers into the concrete ``*Model`` from ``model_scorer_path``."""
 
-	from base.model import TextKGEModel
-
 	scorer_path = _config_path(args, 'model_scorer_path', 'model_encoder_path')
 	model_cls = _resolve_model_class(scorer_path)
 	scorers = scorer if isinstance(scorer, list) else [scorer]
-
-	if issubclass(model_cls, TextKGEModel):
-		from copy import deepcopy
-
-		from models.embedders.text_embedder import TextQueryEmbedder
-
-		if getattr(args, 'shared_encoder', False):
-			query_embedder = TextQueryEmbedder(args, shared_encoder=ent_embedder.encoder)
-		else:
-			query_embedder = TextQueryEmbedder(args, shared_encoder=deepcopy(ent_embedder.encoder))
-		return model_cls(ent_embedder, query_embedder, scorers=scorers, args=args)
-
 	return model_cls(
 		ent_embedder,
 		rel_embedder,
@@ -191,43 +155,13 @@ def bind_model(
 	)
 
 
-def _build_aux_embedders(args) -> dict[str, nn.Module] | None:
-	model_name = str(getattr(args, 'model', '') or '').lower()
-	if 'dabr' not in model_name:
-		return None
-	# Semantic-only DaBR-AU does not use the relation-drift table.
-	if config_bool(args, 'dabr_au_semantic_only', False):
-		return None
-	if (
-		config_bool(args, 'dabr_au_independent_spheres', False)
-		and (
-			config_bool(args, 'dabr_au_semantic_only', False)
-			or config_bool(args, 'dabr_au_distance_only', False)
-		)
-	):
-		raise ValueError(
-			'dabr_au_independent_spheres cannot be combined with '
-			'dabr_au_semantic_only or dabr_au_distance_only',
-		)
-	embedder_path = _config_path(args, 'model_embedder_path')
-	aux: dict[str, nn.Module] = {
-		'dr': load_attr_from_path(embedder_path, 'build_dr_embedder')(args),
-	}
-	# Second entity table for the distance hypersphere (semantic keeps primary ent_embedder).
-	if config_bool(args, 'dabr_au_independent_spheres', False):
-		aux['ent_dist'] = load_attr_from_path(embedder_path, 'build_entity_embedder')(args)
-	return aux
-
-
 def build_model(args) -> nn.Module:
-	"""Assemble the model pillar (embedder + scorer bound by ``KGEModel`` / ``TextKGEModel``)."""
+	"""Assemble the model pillar (embedder + scorer bound by ``KGEModel``)."""
 
 	ent_embedder = build_entity_embedder(args)
 	scorer = build_scorer_module(args)
-	if embedder_input_mode(ent_embedder) == 'tokens':
-		return bind_model(args, ent_embedder, None, scorer, aux_embedders=_build_aux_embedders(args))
 	rel_embedder = build_relation_embedder(args)
-	return bind_model(args, ent_embedder, rel_embedder, scorer, aux_embedders=_build_aux_embedders(args))
+	return bind_model(args, ent_embedder, rel_embedder, scorer)
 
 
 def load_loss_fn(args):
@@ -247,7 +181,7 @@ def load_loss_fn(args):
 
 
 def load_sampler(args, model: nn.Module | None = None, train_triples: torch.Tensor | None = None):
-	"""Load the sampler pillar when configured (1vsAll/KGAU/in-batch skip it)."""
+	"""Load the sampler pillar when configured (ComplEx-AU / KGAU skip it)."""
 
 	sampler_path = getattr(args, 'model_sampler_path', '') or ''
 	if not sampler_path:
@@ -379,7 +313,7 @@ def _eval_batch_size(args) -> int:
 
 
 def load_loss_fn_for_paradigm(args, paradigm: str):
-	"""Load a loss factory from ``model_loss_path`` for negsamp/1vsall fallbacks."""
+	"""Load a loss factory from ``model_loss_path`` for negsamp fallbacks."""
 
 	loss_path = getattr(args, 'model_loss_path', '') or ''
 	if not loss_path:
@@ -456,7 +390,7 @@ def init_index_kge_trainer(trainer, model: nn.Module, args) -> None:
 
 
 def _kge_validation_interval(args) -> int:
-	# Prefer epoch_per_eval; accept legacy eval_every_epoch used by older DaBR configs.
+	# Prefer epoch_per_eval; accept legacy eval_every_epoch.
 	raw = getattr(args, 'epoch_per_eval', None)
 	if raw is None:
 		raw = getattr(args, 'eval_every_epoch', None)
@@ -1040,67 +974,9 @@ def run_index_kge_train_loop(trainer, dataloader=None) -> dict:
 	return run_epoch_based_kge_train_loop(trainer, dataloader)
 
 
-def run_kge_train_loop(trainer) -> dict:
-	"""Shared epoch shell for in-batch / contrastive trainers (SimKGC-style cadence)."""
-
-	import time
-
-	from utils.logger import logger, log_run_timing
-	from utils.memory import format_memory
-	from utils.training_cadence import get_trainer_global_step, resolve_max_steps, uses_step_cadence
-
-	if getattr(trainer.args, 'use_amp', False) and not hasattr(trainer, 'scaler'):
-		trainer.scaler = torch.cuda.amp.GradScaler()
-
-	total_start = time.time()
-	max_steps = resolve_max_steps(trainer.args) if uses_step_cadence(trainer.args) else None
-	num_train_epochs = 0
-	for epoch in range(trainer.args.epochs):
-		epoch_train_start = time.time()
-		trainer.memory_tracker.begin_phase()
-		trainer.train_epoch(epoch)
-		trainer.memory_tracker.end_phase('train')
-		trainer.train_time += time.time() - epoch_train_start
-		num_train_epochs = epoch + 1
-		if max_steps is None:
-			if _kge_should_validate(trainer.args, epoch):
-				trainer._run_eval(epoch=epoch)
-		elif getattr(trainer, '_stop_training', False) or get_trainer_global_step(trainer) >= max_steps:
-			break
-
-	if max_steps is not None and getattr(trainer, '_stop_training', False):
-		logger.info('[STOP] Reached max_steps=%d', max_steps)
-
-	trainer.num_train_epochs = num_train_epochs
-	trainer.total_time = time.time() - total_start
-	epoch_time = log_run_timing(
-		train_time=trainer.train_time,
-		valid_time=trainer.valid_time,
-		total_time=trainer.total_time,
-		num_train_epochs=num_train_epochs,
-	)
-	logger.info('[Memory] Training peak: %s', format_memory(trainer.memory_tracker.train_peak_mb))
-	logger.info('[Memory] Eval peak: %s', format_memory(trainer.memory_tracker.eval_peak_mb))
-	logger.info('[Memory] Peak memory: %s', format_memory(trainer.memory_tracker.peak_memory_mb))
-
-	return {
-		'best_epoch': None if trainer.best_metric is None else trainer.best_metric.get('epoch', 0) + 1,
-		'best_mrr': None if trainer.best_metric is None else trainer.best_metric.get('score'),
-		'best_monitor_metric': None if trainer.best_metric is None else trainer.best_metric.get('metric'),
-		'best_monitor_score': None if trainer.best_metric is None else trainer.best_metric.get('score'),
-		'train_time': trainer.train_time,
-		'valid_time': trainer.valid_time,
-		'total_time': trainer.total_time,
-		'num_train_epochs': num_train_epochs,
-		'time_per_train_epoch': epoch_time,
-		'best_checkpoint_path': trainer.best_checkpoint_path,
-		**trainer.memory_tracker.to_dict(),
-	}
-
-
 def load_strategy_class(args):
 	strategy_path = getattr(args, 'model_strategy_path', '') or ''
-	for attr in ('Strategy', 'NegSampStrategy', 'OneVsAllStrategy', 'KvsAllStrategy', 'KGAUStrategy', 'InBatchStrategy', 'SimKGCStrategy'):
+	for attr in ('Strategy', 'NegSampStrategy', 'KGAUStrategy'):
 		try:
 			cls = load_attr_from_path(strategy_path, attr)
 		except AttributeError:
@@ -1127,11 +1003,6 @@ def _relation_index_map(model: nn.Module | None) -> dict[str, int]:
 def _load_train_examples(args, model: nn.Module | None = None):
 	del model
 	add_backward = use_reciprocal_relations(args) and not use_kbc_reciprocal_relations(args)
-	strategy_path = (getattr(args, 'model_strategy_path', '') or '').replace('\\', '/').lower()
-	if 'kvsall' in strategy_path:
-		from models.strategies.kvsall_strategy import kvsall_uses_rt_training
-		if kvsall_uses_rt_training(args):
-			add_backward = False
 	return load_data(args.train_path, add_forward_triplet=True, add_backward_triplet=add_backward)
 
 
@@ -1145,37 +1016,6 @@ def _examples_to_tensors(examples, entity_dict, relation_to_idx):
 	return head_indices, relation_indices, tail_indices
 
 
-def _augment_kbc_1vsall_train_tensors(
-	src: torch.Tensor,
-	rel: torch.Tensor,
-	dst: torch.Tensor,
-	relation_to_idx: dict[str, int],
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-	"""Stack forward triples with swapped (t, r + n_forward, h) copies (kbc ``get_train``)."""
-
-	n_forward = kbc_forward_relation_count(relation_to_idx)
-	if n_forward <= 0:
-		return src, rel, dst
-	return (
-		torch.cat([src, dst]),
-		torch.cat([rel, rel + n_forward]),
-		torch.cat([dst, src]),
-	)
-
-
-def _prepare_1vsall_train_data(
-	args,
-	model: nn.Module | None,
-	train_examples,
-	entity_dict,
-	relation_to_idx: dict[str, int],
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-	src, rel, dst = _examples_to_tensors(train_examples, entity_dict, relation_to_idx)
-	if use_kbc_reciprocal_relations(args):
-		src, rel, dst = _augment_kbc_1vsall_train_tensors(src, rel, dst, relation_to_idx)
-	return src, rel, dst
-
-
 def _prepare_train_triples(args, model: nn.Module) -> torch.Tensor:
 	entity_dict = get_entity_dict()
 	relation_to_idx = _relation_index_map(model)
@@ -1186,62 +1026,13 @@ def _prepare_train_triples(args, model: nn.Module) -> torch.Tensor:
 	return torch.stack([src, rel, dst], dim=-1)
 
 
-def _prepare_pointwise_dataloader(args):
-	from data.dataloader import collate_pointwise
-	from utils.openke_batch_sampling import (
-		resolve_openke_batch_size,
-		resolve_openke_n_batches,
-		uses_openke_batch_sampling,
-	)
-
-	train_examples = _load_train_examples(args)
-	train_dataset = PointwiseDataset(train_examples)
-	num_examples = len(train_examples)
-	batch_size = resolve_openke_batch_size(num_examples, args)
-	args.batch_size = batch_size
-	loader_kwargs = {
-		'collate_fn': collate_pointwise,
-		'num_workers': getattr(args, 'workers', 0),
-		'pin_memory': torch.cuda.is_available(),
-	}
-	# OpenKE / DaBR: each positive is drawn independently with replacement
-	# (``i = rand_max(id, trainTotal)``), for a fixed number of batches per epoch.
-	if uses_openke_batch_sampling(args):
-		n_batches = resolve_openke_n_batches(num_examples, batch_size, args)
-		num_samples = batch_size * n_batches
-		sampler = torch.utils.data.RandomSampler(
-			train_dataset,
-			replacement=True,
-			num_samples=num_samples,
-		)
-		batch_sampler = torch.utils.data.BatchSampler(
-			sampler,
-			batch_size=batch_size,
-			drop_last=True,
-		)
-		return torch.utils.data.DataLoader(
-			train_dataset,
-			batch_sampler=batch_sampler,
-			**loader_kwargs,
-		)
-	return torch.utils.data.DataLoader(
-		train_dataset,
-		batch_size=batch_size,
-		shuffle=True,
-		drop_last=True,
-		**loader_kwargs,
-	)
-
-
 def _strategy_init_kwargs(args, strategy_path: str, model: nn.Module, train_triples: torch.Tensor | None):
 	paradigm = _strategy_paradigm(strategy_path)
 	kwargs: dict[str, Any] = {}
 
 	if paradigm == 'negsamp':
 		sampler_path = (getattr(args, 'model_sampler_path', '') or '').replace('\\', '/')
-		if sampler_path.endswith('uniform_pointwise_sampler.py'):
-			kwargs['train_dataloader'] = _prepare_pointwise_dataloader(args)
-		elif sampler_path.endswith('filtered_1_to_n_sampler.py'):
+		if sampler_path.endswith('filtered_1_to_n_sampler.py'):
 			from models.samplers.filtered_1_to_n_sampler import build_filtered_negsamp_dataloaders
 
 			triples = train_triples if train_triples is not None else _prepare_train_triples(args, model)
@@ -1251,15 +1042,6 @@ def _strategy_init_kwargs(args, strategy_path: str, model: nn.Module, train_trip
 			)
 		else:
 			kwargs['train_triples'] = train_triples if train_triples is not None else _prepare_train_triples(args, model)
-	elif paradigm == 'kvsall':
-		kwargs['train_triples'] = train_triples if train_triples is not None else _prepare_train_triples(args, model)
-	elif paradigm == '1vsall':
-		entity_dict = get_entity_dict()
-		train_examples = _load_train_examples(args, model)
-		rel_map = _relation_index_map(model)
-		kwargs['train_data'] = _prepare_1vsall_train_data(
-			args, model, train_examples, entity_dict, rel_map,
-		)
 
 	return kwargs
 
@@ -1273,34 +1055,27 @@ def build_pipeline(args, ngpus_per_node: int = 1):
 
 	ent_embedder = build_entity_embedder(args)
 	scorer = build_scorer_module(args)
-	if embedder_input_mode(ent_embedder) == 'tokens':
-		model = bind_model(args, ent_embedder, None, scorer, aux_embedders=_build_aux_embedders(args))
-	else:
-		rel_embedder = build_relation_embedder(args)
-		model = bind_model(args, ent_embedder, rel_embedder, scorer, aux_embedders=_build_aux_embedders(args))
+	rel_embedder = build_relation_embedder(args)
+	model = bind_model(args, ent_embedder, rel_embedder, scorer)
 	if torch.cuda.is_available():
 		model.cuda()
 
-	if paradigm in ('negsamp', 'kvsall', '1vsall', 'inbatch'):
+	if paradigm == 'negsamp':
 		loss_fn = load_loss_fn_for_paradigm(args, paradigm)
 	else:
 		loss_fn = load_loss_fn(args)
 	train_triples = (
 		_prepare_train_triples(args, model)
-		if paradigm in ('negsamp', 'kvsall')
+		if paradigm == 'negsamp'
 		or (paradigm == 'kgau' and config_bool(args, 'au_hybrid_adversarial_bce', False))
 		else None
 	)
-	if paradigm in ('kvsall', '1vsall'):
-		sampler = None
-	elif paradigm == 'kgau':
+	if paradigm == 'kgau':
 		sampler = (
 			load_sampler(args, model, train_triples)
 			if config_bool(args, 'au_hybrid_adversarial_bce', False)
 			else None
 		)
-	elif paradigm == 'inbatch':
-		sampler = load_sampler(args)
 	else:
 		sampler = load_sampler(args, model, train_triples)
 	strategy_kwargs = _strategy_init_kwargs(args, strategy_path, model, train_triples)

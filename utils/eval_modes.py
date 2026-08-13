@@ -46,18 +46,6 @@ def resolve_head_eval_mode(args: Any | None, *, eval_forward: bool) -> str:
 	if 'negsamp' in strategy or 'adversarial_bce' in loss_path:
 		return 'rt_forward'
 
-	if 'kvsall' in strategy:
-		from models.strategies.kvsall_strategy import kvsall_uses_rt_training
-
-		if kvsall_uses_rt_training(args) and use_reciprocal_relations(args):
-			return 'rt_inverse'
-		return 'rt_forward'
-
-	if '1vsall' in strategy:
-		if use_kbc_reciprocal_relations(args) and not bool(getattr(args, 'bidirectional_1vsall', True)):
-			return 'hr_inverse'
-		return 'rt_forward'
-
 	if 'kgau' in strategy:
 		if bool(getattr(args, 'kgau_bidirectional', False)):
 			return 'rt_forward'

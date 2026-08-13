@@ -1,39 +1,21 @@
-"""Dataset and graph helpers for generic KG workloads."""
+"""Triplet and entity dictionaries for ComplEx / ComplEx-AU."""
 
 from __future__ import annotations
 
 import json
 import os
-from collections import deque
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import List
 
-import torch
-import torch.utils.data.dataset
-
-from configs.config import args
-from data.preprocess import _concat_name_desc, _parse_entity_name
 from utils.logger import logger
 
-from data.dict_hub import get_entity_dict, get_link_graph, get_tokenizer
+from data.dict_hub import get_entity_dict
 
 
 def _get_entity_dict() -> EntityDict:
 	"""Get the entity dictionary, which provides mapping from entity IDs to their descriptions."""
 
 	return get_entity_dict()
-
-
-def _get_link_graph() -> LinkGraph:
-	"""Get the link graph, which provides neighbor information for entities."""
-
-	return get_link_graph()
-
-
-def _get_tokenizer() -> Any:
-	"""Get the tokenizer, which is used to tokenize text inputs."""
-
-	return get_tokenizer()
 
 
 def reverse_triplet(obj) -> dict:
@@ -237,64 +219,8 @@ class EntityDict:
 		return len(self.entity_exs)
 
 
-class LinkGraph:
-	"""Data structure for storing the link graph of entities, which allows retrieval of neighboring entities based on the training triplets."""
-
-	def __init__(self, train_path: str):
-		logger.info('Start to build link graph from {}'.format(train_path))
-		self.graph = {}
-		if train_path.endswith('.json'):
-			examples = json.load(open(train_path, 'r', encoding='utf-8'))
-		elif train_path.endswith('.txt'):
-			examples = []
-			with open(train_path, 'r', encoding='utf-8') as reader:
-				for line in reader:
-					fields = line.strip().split('\t')
-					if len(fields) not in (3, 4):
-						continue
-					head_id, relation, tail_id = fields[:3]
-					examples.append({'head_id': head_id, 'relation': relation, 'tail_id': tail_id})
-		else:
-			raise ValueError(f'Unsupported format: {train_path}')
-		for ex in examples:
-			head_id, tail_id = ex['head_id'], ex['tail_id']
-			if head_id not in self.graph:
-				self.graph[head_id] = set()
-			self.graph[head_id].add(tail_id)
-			if tail_id not in self.graph:
-				self.graph[tail_id] = set()
-			self.graph[tail_id].add(head_id)
-		logger.info('Done build link graph with {} nodes'.format(len(self.graph)))
-
-	def get_neighbor_ids(self, entity_id: str, max_to_keep=10) -> List[str]:
-		"""Given an entity ID, return a list of neighboring entity IDs based on the link graph, limited to a maximum number of neighbors."""
-
-		neighbor_ids = self.graph.get(entity_id, set())
-		return sorted(list(neighbor_ids))[:max_to_keep]
-
-	def get_n_hop_entity_indices(self, entity_id: str, entity_dict: EntityDict, n_hop: int = 2, max_nodes: int = 100000) -> set:
-		"""Given an entity ID, return the set of neighboring entity indices within n hops in the link graph, limited to a maximum number of nodes to prevent explosion."""
-
-		if n_hop < 0:
-			return set()
-
-		seen_eids = {entity_id}
-		queue = deque([entity_id])
-		for _ in range(n_hop):
-			len_q = len(queue)
-			for _ in range(len_q):
-				tp = queue.popleft()
-				for node in self.graph.get(tp, set()):
-					if node not in seen_eids:
-						queue.append(node)
-						seen_eids.add(node)
-						if len(seen_eids) > max_nodes:
-							return set()
-		return {entity_dict.entity_to_idx(e_id) for e_id in seen_eids}
-
-
 class Example:
-	"""Data class representing a single triplet example, including methods for vectorization and retrieval of entity descriptions."""
+	"""Triplet example with entity-name lookups for ComplEx / ComplEx-AU."""
 
 	def __init__(self, head_id, relation, tail_id, label=None, **kwargs):
 		self.head_id = head_id
@@ -333,105 +259,6 @@ class Example:
 		if not self.tail_id:
 			return ''
 		return _get_entity_dict().get_entity_by_id(self.tail_id).entity
-
-	def vectorize(self) -> dict:
-		"""Convert the example into a dictionary of token IDs and token type IDs for the head-relation pair, tail entity, and head entity, including optional neighbor descriptions if specified in the arguments."""
-
-		head_desc, tail_desc = self.head_desc, self.tail_desc
-		if args.use_link_graph:
-			if len(head_desc.split()) < 20:
-				head_desc += ' ' + get_neighbor_desc(head_id=self.head_id, tail_id=self.tail_id)
-			if len(tail_desc.split()) < 20:
-				tail_desc += ' ' + get_neighbor_desc(head_id=self.tail_id, tail_id=self.head_id)
-
-		head_word = _parse_entity_name(self.head, task=args.dataset)
-		head_text = _concat_name_desc(head_word, head_desc)
-		hr_encoded_inputs = _custom_tokenize(text=head_text, text_pair=self.relation)
-
-		head_encoded_inputs = _custom_tokenize(text=head_text)
-
-		tail_word = _parse_entity_name(self.tail, task=args.dataset)
-		tail_encoded_inputs = _custom_tokenize(text=_concat_name_desc(tail_word, tail_desc))
-
-		out = {
-			'hr_token_ids': hr_encoded_inputs['input_ids'],
-			'hr_token_type_ids': hr_encoded_inputs['token_type_ids'],
-			'tail_token_ids': tail_encoded_inputs['input_ids'],
-			'tail_token_type_ids': tail_encoded_inputs['token_type_ids'],
-			'head_token_ids': head_encoded_inputs['input_ids'],
-			'head_token_type_ids': head_encoded_inputs['token_type_ids'],
-			'obj': self,
-		}
-		if self.label is not None:
-			out['label'] = self.label
-		return out
-
-
-def _custom_tokenize(text: str, text_pair: Optional[str] = None) -> dict:
-	"""Custom tokenization function that uses the tokenizer to convert text (and an optional text pair) into token IDs and token type IDs, with truncation and special token handling as specified in the arguments."""
-
-	tokenizer = _get_tokenizer()
-	encoded_inputs = tokenizer(
-		text=text,
-		text_pair=text_pair if text_pair else None,
-		add_special_tokens=True,
-		max_length=args.max_num_tokens,
-		return_token_type_ids=True,
-		truncation=True,
-	)
-	return encoded_inputs
-
-
-
-def get_neighbor_desc(head_id: str, tail_id: str = None) -> str:
-	"""Given a head entity ID and an optional tail entity ID, return a concatenated string of the names of neighboring entities from the link graph, excluding the tail entity if specified."""
-
-	neighbor_ids = _get_link_graph().get_neighbor_ids(head_id)
-	if not args.is_test:
-		neighbor_ids = [n_id for n_id in neighbor_ids if n_id != tail_id]
-	entities = [_parse_entity_name(_get_entity_dict().get_entity_by_id(n_id).entity, task=args.dataset) for n_id in neighbor_ids]
-	return ' '.join(entities)
-
-
-class Dataset(torch.utils.data.dataset.Dataset):
-	"""Custom dataset class for loading examples from specified paths, with support for both JSON and TXT formats, and optional addition of forward and backward triplets."""
-
-	def __init__(self, path, task, examples=None):
-		self.path_list = path.split(',')
-		self.task = task
-		assert examples is not None or all(os.path.exists(path) for path in self.path_list if path)
-		if examples is not None:
-			self.examples = examples
-		else:
-			self.examples = []
-			for path in self.path_list:
-				if not self.examples:
-					self.examples = load_data(path)
-				else:
-					self.examples.extend(load_data(path))
-
-	def __len__(self) -> int:
-		"""Return the total number of examples in the dataset."""
-
-		return len(self.examples)
-
-	def __getitem__(self, index) -> dict:
-		"""Given an index, return the vectorized representation of the corresponding example."""
-
-		return self.examples[index].vectorize()
-
-
-class PointwiseDataset(torch.utils.data.dataset.Dataset):
-	"""Dataset for embedding models (e.g. DaBR) that only need Example objects, not token ids."""
-
-	def __init__(self, examples):
-		self.examples = examples
-
-	def __len__(self) -> int:
-		return len(self.examples)
-
-	def __getitem__(self, index) -> dict:
-		return {'obj': self.examples[index]}
 
 
 def load_data(path: str, add_forward_triplet: bool = True, add_backward_triplet: bool = True) -> List[Example]:

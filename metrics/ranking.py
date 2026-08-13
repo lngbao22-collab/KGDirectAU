@@ -3,10 +3,6 @@
 from typing import Sequence, List, Tuple
 import torch
 
-from configs.config import args
-from data.dataset import EntityDict, Example
-from data.dict_hub import get_link_graph
-
 
 def topk_accuracy(output: torch.Tensor, target: torch.Tensor, topk: Tuple[int, ...] = (1,)) -> List[torch.Tensor]:
     """Compute top-k classification accuracy (percentage) for each k in `topk`.
@@ -128,46 +124,3 @@ def link_prediction_metrics(ranks: Sequence[int]) -> dict:
     """Alias for ranking_metrics_from_ranks for link prediction tasks."""
 
     return ranking_metrics_from_ranks(ranks)
-
-
-def rerank_by_graph(batch_score: torch.Tensor, examples: Sequence[Example], entity_dict: EntityDict) -> None:
-    """Re-rank entity scores using the local link graph.
-
-    Modifies `batch_score` in-place by adding a small delta to entities
-    that are within `args.rerank_n_hop` hops in the training graph.
-    """
-    neighbor_weight = 0.0 if args.neighbor_weight is None else args.neighbor_weight
-    rerank_n_hop = 2 if args.rerank_n_hop is None else args.rerank_n_hop
-
-    if args.dataset == 'wiki5m_ind':
-        assert neighbor_weight < 1e-6, 'Inductive setting can not use re-rank strategy'
-
-    if neighbor_weight < 1e-6:
-        return
-
-    for idx in range(batch_score.size(0)):
-        cur_ex = examples[idx]
-        n_hop_indices = get_link_graph().get_n_hop_entity_indices(
-            cur_ex.head_id,
-            entity_dict=entity_dict,
-            n_hop=rerank_n_hop,
-        )
-        delta = torch.tensor([neighbor_weight for _ in n_hop_indices]).to(batch_score.device)
-        n_hop_indices = torch.LongTensor(list(n_hop_indices)).to(batch_score.device)
-
-        batch_score[idx].index_add_(0, n_hop_indices, delta)
-
-        # The test set of FB15k237 removes triples that are connected in train set,
-        # so any two entities that are connected in train set will not appear in test,
-        # however, this is not a trick that could generalize.
-        # by default, we do not use this piece of code.
-
-        # if args.dataset == 'FB15k237':
-        #     n_hop_indices = get_link_graph().get_n_hop_entity_indices(cur_ex.head_id,
-        #                                                               entity_dict=entity_dict,
-        #                                                               n_hop=1)
-        #     n_hop_indices.remove(entity_dict.entity_to_idx(cur_ex.head_id))
-        #     delta = torch.tensor([-0.5 for _ in n_hop_indices]).to(batch_score.device)
-        #     n_hop_indices = torch.LongTensor(list(n_hop_indices)).to(batch_score.device)
-        #
-        #     batch_score[idx].index_add_(0, n_hop_indices, delta)

@@ -1,4 +1,4 @@
-"""Adversarial negative-sampling BCE loss for RotatE training."""
+"""Adversarial negative-sampling BCE loss for ComplEx training."""
 
 import torch
 
@@ -11,7 +11,7 @@ def compute_adversarial_bce_loss(
     adversarial_temp: float,
     subsampling_weight: torch.Tensor,
 ) -> torch.Tensor:
-    """Compute weighted RotatE-style adversarial BCE loss."""
+    """Compute weighted adversarial BCE loss."""
 
     return compute_bce_loss(
         scores=pos_scores,

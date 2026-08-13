@@ -9,13 +9,12 @@ from types import SimpleNamespace
 import torch
 import tqdm
 
-from base.model import KGEModel, TextKGEModel
+from base.model import KGEModel
 from utils.logger import logger
-from utils.device import get_model_obj, move_to_cuda
+from utils.device import get_model_obj
 
 from data.dict_hub import get_all_triplet_dict, get_entity_dict
 from data.dataset import Example, load_data
-from data.dataloader import collate
 from metrics.ranking import ranking_metrics_from_ranks, ranks_from_score_matrix
 from metrics.classification import classification_metrics, find_global_threshold
 from models.losses.bce_loss import bce_logit_offset, uses_logit_classification_scores
@@ -23,7 +22,6 @@ from models.losses.bce_loss import bce_logit_offset, uses_logit_classification_s
 from utils.eval_modes import resolve_head_eval_mode, uses_forward_examples_for_backward_eval
 from utils.relations import build_forward_to_inverse_index_tensor
 from configs.config import args as global_args
-from data.dict_hub import build_tokenizer
 from models.builder import import_module_from_path, is_index_kge_model, load_attr_from_path
 from utils.checkpoint import load_state_dict_clean, load_checkpoint, best_model_path, checkpoint_path
 
@@ -169,31 +167,11 @@ class ModelInterfaceError(RuntimeError):
 	pass
 
 
-def _model_uses_token_inputs(model) -> bool:
-	"""Return True when the model expects tokenized training/eval inputs."""
-
-	model_obj = get_model_obj(model)
-	return getattr(model_obj, 'training_input_mode', 'indices') == 'tokens'
-
-
 def _supports_kge_1vsall_eval(model) -> bool:
 	"""Return True when the model exposes 1-vs-all tail/head scoring."""
 
 	model_obj = get_model_obj(model)
-	if getattr(model_obj, 'training_input_mode', 'indices') == 'tokens':
-		return False
 	return hasattr(model_obj, 'predict_tail_hr_') or isinstance(model_obj, KGEModel)
-
-
-def _supports_simkgc_link_eval(model) -> bool:
-	"""Return True for token-input models that encode queries/entities like SimKGC."""
-
-	model_obj = get_model_obj(model)
-	return (
-		getattr(model_obj, 'training_input_mode', 'indices') == 'tokens'
-		and hasattr(model_obj, 'predict_by_examples')
-		and hasattr(model_obj, 'predict_by_entities')
-	)
 
 
 def _resolve_relation_index(relation: str, relation_to_idx: dict) -> int:
@@ -334,133 +312,6 @@ def _evaluate_kge_1vsall_batch(
 		raise ValueError(f'Unsupported head_eval_mode: {head_eval_mode}')
 
 	return _ranks_from_score_matrix(scores, target_indices)
-
-
-def _encode_simkgc_entity_embeddings(
-	model,
-	entity_dict,
-	batch_size: int,
-	*,
-	args=None,
-) -> torch.Tensor:
-	"""Encode all entity vectors once for SimKGC link prediction."""
-
-	from data.dataset import Dataset, Example
-	from data.dataloader import collate
-	from utils.device import call_model_forward, move_to_cuda
-
-	eval_args = args if args is not None else global_args
-	use_cuda = torch.cuda.is_available()
-	entity_examples = [
-		Example(head_id='', relation='', tail_id=entity_ex.entity_id)
-		for entity_ex in entity_dict.entity_exs
-	]
-	logger.info('[EVAL] Encoding %d entities for link prediction...', len(entity_examples))
-	entity_loader = torch.utils.data.DataLoader(
-		Dataset(path='', examples=entity_examples, task=eval_args.dataset),
-		num_workers=0,
-		batch_size=max(batch_size, 512),
-		collate_fn=collate,
-		shuffle=False,
-	)
-	entity_vectors = []
-	for batch_dict in entity_loader:
-		batch_dict['only_ent_embedding'] = True
-		if use_cuda:
-			batch_dict = move_to_cuda(batch_dict)
-		outputs = call_model_forward(model, batch_dict)
-		entity_vectors.append(outputs['ent_vectors'])
-	return torch.cat(entity_vectors, dim=0)
-
-
-def _evaluate_simkgc_link_prediction(
-	model,
-	examples: Sequence[Example],
-	entity_dict,
-	batch_size: int,
-	*,
-	filter_known: bool = True,
-	args=None,
-	all_entity_embs: torch.Tensor | None = None,
-	score_mode: str = 'cosine',
-) -> dict:
-	"""Chunked link prediction for token-input models (reference SimKGC ``compute_metrics`` path)."""
-
-	from data.dataset import Dataset
-	from data.dataloader import collate_hr
-	from metrics.ranking import rerank_by_graph
-	from utils.device import call_model_forward, move_to_cuda
-
-	eval_args = args if args is not None else global_args
-	model.eval()
-	use_cuda = torch.cuda.is_available()
-
-	scoring_examples = list(examples)
-	logger.info(
-		'[EVAL] Encoding %d query vectors for link prediction (%s scorer)...',
-		len(scoring_examples),
-		score_mode,
-	)
-	hr_vectors = []
-	data_loader = torch.utils.data.DataLoader(
-		Dataset(path='', examples=scoring_examples, task=eval_args.dataset),
-		num_workers=0,
-		batch_size=batch_size,
-		collate_fn=collate_hr,
-		shuffle=False,
-	)
-	for batch_dict in data_loader:
-		batch_dict['encode_hr_only'] = True
-		if use_cuda:
-			batch_dict = move_to_cuda(batch_dict)
-		outputs = call_model_forward(model, batch_dict)
-		hr_vectors.append(outputs['hr_vector'])
-	hr_tensor = torch.cat(hr_vectors, dim=0)
-
-	if all_entity_embs is None:
-		entities_tensor = _encode_simkgc_entity_embeddings(
-			model, entity_dict, batch_size, args=eval_args,
-		)
-	else:
-		logger.info('[EVAL] Reusing cached entity embeddings (%d entities)...', all_entity_embs.size(0))
-		entities_tensor = all_entity_embs
-
-	device = hr_tensor.device
-	entities_tensor = entities_tensor.to(device)
-	entity_cnt = entities_tensor.size(0)
-	chunk_size = getattr(eval_args, 'chunk_size', None) or 8192
-	chunk_size = max(int(chunk_size), 1)
-	all_triplet_dict = get_all_triplet_dict()
-	ranks: list[int] = []
-
-	for start in range(0, hr_tensor.size(0), batch_size):
-		end = min(start + batch_size, hr_tensor.size(0))
-		batch_hr = hr_tensor[start:end]
-		batch_examples = scoring_examples[start:end]
-		batch_score = torch.zeros(
-			batch_hr.size(0),
-			entity_cnt,
-			device=device,
-			dtype=batch_hr.dtype,
-		)
-		for entity_start in range(0, entity_cnt, chunk_size):
-			entity_end = min(entity_start + chunk_size, entity_cnt)
-			batch_score[:, entity_start:entity_end] = _score_query_entity_matrix(
-				batch_hr,
-				entities_tensor[entity_start:entity_end],
-				mode=score_mode,
-				distance_degree=_lp_distance_degree(eval_args),
-			)
-
-		rerank_by_graph(batch_score, batch_examples, entity_dict)
-
-		if filter_known:
-			_filter_known(batch_score, batch_examples, all_triplet_dict, entity_dict)
-
-		target_indices = _infer_target_indices(batch_examples, entity_dict, predict_head=False).to(device)
-		ranks.extend(_ranks_from_score_matrix(batch_score, target_indices))
-
-	return ranking_metrics_from_ranks(ranks)
 
 
 def _evaluate_kge_link_prediction(
@@ -764,15 +615,6 @@ def _score_triple_classification_batch(
 	return scores
 
 
-def _bert_encoder_configured(args) -> bool:
-	"""Return True when a HuggingFace encoder name is available for text triple classification."""
-
-	for key in ('bert_encoder', 'encoder', 'pretrained_model'):
-		if str(getattr(args, key, '') or '').strip():
-			return True
-	return False
-
-
 def _should_use_index_triple_classification(model, args) -> bool:
 	"""Return True when triple classification should use index KGE scoring (not BERT)."""
 
@@ -837,16 +679,6 @@ def evaluate_model(
         raise ValueError(f'No examples found in {eval_path}')
 
     model = get_model_obj(model)
-    if _supports_simkgc_link_eval(model):
-        metrics = _evaluate_simkgc_link_prediction(
-            model,
-            examples,
-            entity_dict,
-            batch_size,
-            filter_known=filter_known,
-            score_mode='cosine',
-        )
-        return [], [], metrics
     if _supports_kge_1vsall_eval(model):
         ranks_all = _evaluate_kge_link_prediction(
             model,
@@ -973,7 +805,7 @@ class Evaluator:
         return 128
 
     def load(self, ckt_path: str, use_data_parallel: bool = False) -> None:
-        """Load checkpoint, apply training args, build tokenizer and model, and load weights."""
+        """Load checkpoint, apply training args, build the model, and load weights."""
 
         checkpoint = load_checkpoint(ckt_path, map_location='cpu')
         self.checkpoint = checkpoint
@@ -984,8 +816,6 @@ class Evaluator:
         from models.builder import build_model
 
         self.model = build_model(self.train_args)
-        if _model_uses_token_inputs(self.model):
-            build_tokenizer(self.train_args)
 
         load_state_dict_clean(self.model, ckt_path)
         self.model.eval()
@@ -1023,24 +853,11 @@ class Evaluator:
             y_prob = _collect_index_triple_classification_probs(
                 model, eval_exs, entity_dict, batch_size, tc_args
             )
-        elif not _bert_encoder_configured(tc_args):
-            raise ModelInterfaceError(
-                f'Model {getattr(tc_args, "model", "?")} cannot run text triple classification: '
-                'bert_encoder is empty and the loaded model has no score_hrt/score_batch.'
-            )
         else:
-            with torch.no_grad():
-                for i in range(0, len(eval_exs), batch_size):
-                    batch = eval_exs[i:i + batch_size]
-                    batch_vec = [ex.vectorize() for ex in batch]
-                    batch_dict = collate(batch_vec)
-                    if torch.cuda.is_available():
-                        batch_dict = move_to_cuda(batch_dict)
-                        model.cuda()
-                    output_dict = model(**batch_dict)
-                    logits = model.compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
-                    prob = torch.sigmoid(logits.diag()).detach().cpu().numpy().reshape(-1)
-                    y_prob.extend(prob.tolist())
+            raise ModelInterfaceError(
+                f'Model {getattr(tc_args, "model", "?")} cannot run triple classification: '
+                'the loaded model has no score_hrt/score_batch.'
+            )
 
         threshold = find_global_threshold(y_true, y_prob)
         y_pred = (np.array(y_prob) > threshold).astype(int).tolist()
@@ -1068,7 +885,6 @@ class Evaluator:
     ) -> dict:
         """Evaluate link prediction using the model's forward pass."""
         batch_size = self._eval_batch_size(batch_size)
-        eval_model = model
         inner_model = get_model_obj(model)
         inner_model.eval()
         if not os.path.exists(eval_path):
@@ -1076,20 +892,6 @@ class Evaluator:
             return {}
         if examples is None:
             examples = load_data(eval_path, add_forward_triplet=eval_forward, add_backward_triplet=not eval_forward)
-
-        if _supports_simkgc_link_eval(inner_model):
-            direction = 'forward' if eval_forward else 'backward'
-            logger.info('[EVAL] Link prediction (%s) on %d queries (SimKGC path)...', direction, len(examples))
-            return _evaluate_simkgc_link_prediction(
-                eval_model,
-                examples,
-                entity_dict,
-                batch_size,
-                filter_known=True,
-                args=self.args,
-                all_entity_embs=all_entity_embs,
-                score_mode=getattr(inner_model, 'lp_score_mode', 'cosine'),
-            )
 
         if _supports_kge_1vsall_eval(inner_model):
             direction = 'forward' if eval_forward else 'backward'
@@ -1106,133 +908,10 @@ class Evaluator:
             )
             return ranking_metrics_from_ranks(ranks)
 
-        model = inner_model
-        predict_head = (not eval_forward) and _uses_head_batch_scoring(model)
-        scoring_examples = _coerce_forward_examples(examples) if predict_head else list(examples)
-
-        if hasattr(model, 'score_batch'):
-            all_entity_ids = [entity_ex.entity_id for entity_ex in entity_dict.entity_exs]
-            score_device = next(model.parameters()).device
-            head_ids = [ex.head_id for ex in scoring_examples]
-            relations = [ex.relation for ex in scoring_examples]
-            score_batch_mode = 'head-batch' if predict_head and _score_batch_supports_mode(model) else 'tail-batch'
-            use_fast_indices = hasattr(model, 'score_batch_from_indices')
-            query_head_idx = query_rel_idx = query_tail_idx = None
-            all_entity_idx = None
-            if use_fast_indices:
-                query_head_idx, query_rel_idx, query_tail_idx = _examples_to_query_index_tensors(
-                    scoring_examples, entity_dict, model
-                )
-                all_entity_idx = _entity_indices(entity_dict, all_entity_ids)
-
-            if (
-                score_batch_mode == 'head-batch'
-                and hasattr(model, 'prepare_head_prediction_queries')
-                and hasattr(model, 'score_head_prediction_full')
-            ):
-                tail_ids = [ex.tail_id for ex in scoring_examples]
-                query_cache = model.prepare_head_prediction_queries(tail_ids, relations)
-                score = model.score_head_prediction_full(query_cache)
-                if score.size(0) != len(scoring_examples) or score.size(1) != len(all_entity_ids):
-                    raise RuntimeError('DaBR fast head-prediction score matrix has unexpected shape')
-            elif (
-                score_batch_mode == 'tail-batch'
-                and hasattr(model, 'prepare_link_prediction_queries')
-                and hasattr(model, 'score_link_prediction_full')
-            ):
-                query_cache = model.prepare_link_prediction_queries(head_ids, relations)
-                score = model.score_link_prediction_full(query_cache)
-                if score.size(0) != len(scoring_examples) or score.size(1) != len(all_entity_ids):
-                    raise RuntimeError('DaBR fast link-prediction score matrix has unexpected shape')
-            else:
-                score = torch.zeros(len(scoring_examples), len(all_entity_ids), device=score_device)
-                entity_chunk_size = getattr(model, 'eval_entity_chunk_size', None)
-                if entity_chunk_size is None:
-                    entity_chunk_size = getattr(model.config, 'eval_entity_chunk_size', None) if hasattr(model, 'config') else None
-                if entity_chunk_size is None:
-                    entity_chunk_size = getattr(global_args, 'eval_entity_chunk_size', None)
-                if entity_chunk_size is None:
-                    entity_chunk_size = max(batch_size, 4096)
-                entity_chunk_size = max(int(entity_chunk_size), 1)
-
-                if score_batch_mode == 'head-batch' and hasattr(model, 'prepare_head_prediction_queries'):
-                    tail_ids = [ex.tail_id for ex in scoring_examples]
-                    query_cache = model.prepare_head_prediction_queries(tail_ids, relations)
-                    score_candidates = getattr(model, 'score_head_prediction_candidates', None)
-                elif hasattr(model, 'prepare_link_prediction_queries'):
-                    query_cache = model.prepare_link_prediction_queries(head_ids, relations)
-                    score_candidates = model.score_link_prediction_candidates
-                else:
-                    query_cache = None
-                    score_candidates = None
-
-                use_eval_amp = (
-                    score_device.type == 'cuda'
-                    and bool(getattr(global_args, 'eval_use_amp', getattr(global_args, 'use_amp', False)))
-                )
-                for start in range(0, len(all_entity_ids), entity_chunk_size):
-                    end = min(start + entity_chunk_size, len(all_entity_ids))
-                    if score_candidates is not None:
-                        chunk_score = score_candidates(query_cache, (start, end))
-                    elif use_fast_indices:
-                        candidate_idx = all_entity_idx[start:end].to(score_device)
-                        with torch.autocast(device_type='cuda', enabled=use_eval_amp):
-                            if score_batch_mode == 'head-batch':
-                                chunk_score = model.score_batch_from_indices(
-                                    query_rel_idx,
-                                    candidate_idx,
-                                    mode='head-batch',
-                                    query_tail_indices=query_tail_idx,
-                                )
-                            else:
-                                chunk_score = model.score_batch_from_indices(
-                                    query_rel_idx,
-                                    candidate_idx,
-                                    mode='tail-batch',
-                                    query_head_indices=query_head_idx,
-                                )
-                    else:
-                        entity_chunk = all_entity_ids[start:end]
-                        score_batch_kwargs = {}
-                        if score_batch_mode == 'head-batch':
-                            score_batch_kwargs['mode'] = 'head-batch'
-                            score_batch_kwargs['query_tail_ids'] = [ex.tail_id for ex in scoring_examples]
-                        with torch.autocast(device_type='cuda', enabled=use_eval_amp):
-                            if score_batch_mode == 'head-batch':
-                                chunk_score = model.score_batch(
-                                    head_ids,
-                                    relations,
-                                    entity_chunk,
-                                    **score_batch_kwargs,
-                                )
-                            else:
-                                chunk_score = model.score_batch(head_ids, relations, entity_chunk)
-                    if not isinstance(chunk_score, torch.Tensor):
-                        chunk_score = torch.tensor(chunk_score, device=score_device)
-                    score[:, start:end] = chunk_score
-        else:
-            hr_tensor, _ = model.predict_by_examples(scoring_examples, batch_size=batch_size)
-            entity_examples = [Example(head_id='', relation='', tail_id=entity_ex.entity_id) for entity_ex in entity_dict.entity_exs]
-            entities_tensor = model.predict_by_entities(entity_examples, batch_size=max(batch_size, 512))
-
-            if torch.cuda.is_available():
-                hr_tensor = hr_tensor.cuda()
-                entities_tensor = entities_tensor.cuda()
-            score = _score_query_entity_matrix(
-                hr_tensor,
-                entities_tensor,
-                mode=getattr(model, 'lp_score_mode', 'original'),
-                distance_degree=_lp_distance_degree(self.args),
-            )
-        all_triplet_dict = get_all_triplet_dict()
-        if predict_head:
-            _filter_known_heads(score, scoring_examples, all_triplet_dict, entity_dict)
-        else:
-            _filter_known(score, scoring_examples, all_triplet_dict, entity_dict)
-        target_indices = _infer_target_indices(scoring_examples, entity_dict, predict_head=predict_head).to(score.device)
-        ranks = _ranks_from_score_matrix(score, target_indices)
-        metrics = ranking_metrics_from_ranks(ranks)
-        return metrics
+        raise ModelInterfaceError(
+            f'Model {type(inner_model).__name__} cannot run ComplEx link prediction: '
+            'expected a KGEModel with predict_tail_hr_ / 1-vs-all scoring.'
+        )
 
     def evaluate_dual_test_link_prediction(
         self,
@@ -1250,40 +929,6 @@ class Evaluator:
             ('original', 'original'),
             (_lp_distance_label(self.args), 'lp_distance'),
         ]
-
-        if _supports_simkgc_link_eval(inner_model):
-            entity_embs = _encode_simkgc_entity_embeddings(
-                self.model, entity_dict, batch_size, args=self.args,
-            )
-            metrics_by_mode: dict[str, dict] = {}
-            for label, mode in scorer_modes:
-                logger.info('[TEST] Link prediction (SimKGC %s scorer)...', label)
-                log_path = os.path.join(output_dir, f'test_link_prediction_{label}.log')
-                with lp_score_mode_context(self.model, mode, distance_degree):
-                    forward_metrics = self.evaluate_link_prediction_inplace(
-                        self.model,
-                        eval_path,
-                        entity_dict,
-                        log_path,
-                        eval_forward=True,
-                        all_entity_embs=entity_embs,
-                    )
-                    backward_metrics = self.evaluate_link_prediction_inplace(
-                        self.model,
-                        eval_path,
-                        entity_dict,
-                        log_path,
-                        eval_forward=False,
-                        all_entity_embs=entity_embs,
-                    )
-                metrics_by_mode[label] = log_bidirectional_link_metrics(
-                    f'[TEST] Link prediction ({label} scorer)',
-                    forward_metrics,
-                    backward_metrics,
-                )
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            return metrics_by_mode
 
         cached_entity_embs = None
         if _supports_kge_1vsall_eval(inner_model):
@@ -1355,23 +1000,11 @@ class Evaluator:
             y_prob = _collect_index_triple_classification_probs(
                 self.model, test_exs, entity_dict, batch_size, tc_args
             )
-        elif not _bert_encoder_configured(tc_args):
-            raise ModelInterfaceError(
-                f'Model {getattr(tc_args, "model", "?")} cannot run text triple classification: '
-                'bert_encoder is empty and the loaded model has no score_hrt/score_batch.'
-            )
         else:
-            for i in range(0, len(test_exs), batch_size):
-                batch = test_exs[i:i + batch_size]
-                batch_vec = [ex.vectorize() for ex in batch]
-                batch_dict = collate(batch_vec)
-                if torch.cuda.is_available():
-                    batch_dict = move_to_cuda(batch_dict)
-                    self.model.cuda()
-                output_dict = self.model(**batch_dict)
-                logits = self.model.compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
-                prob = torch.sigmoid(logits.diag()).detach().cpu().numpy().reshape(-1)
-                y_prob.extend(prob.tolist())
+            raise ModelInterfaceError(
+                f'Model {getattr(tc_args, "model", "?")} cannot run triple classification: '
+                'the loaded model has no score_hrt/score_batch.'
+            )
 
         threshold = None
         valid_label_path = _resolve_label_split_path(args, 'valid')
@@ -1383,24 +1016,11 @@ class Evaluator:
                     valid_y_prob = _collect_index_triple_classification_probs(
                         self.model, valid_exs, get_entity_dict(), batch_size, tc_args
                     )
-                elif not _bert_encoder_configured(tc_args):
-                    raise ModelInterfaceError(
-                        f'Model {getattr(tc_args, "model", "?")} cannot run text triple classification: '
-                        'bert_encoder is empty and the loaded model has no score_hrt/score_batch.'
-                    )
                 else:
-                    valid_y_prob = []
-                    for i in range(0, len(valid_exs), batch_size):
-                        batch = valid_exs[i:i + batch_size]
-                        batch_vec = [ex.vectorize() for ex in batch]
-                        batch_dict = collate(batch_vec)
-                        if torch.cuda.is_available():
-                            batch_dict = move_to_cuda(batch_dict)
-                            self.model.cuda()
-                        output_dict = self.model(**batch_dict)
-                        logits = self.model.compute_logits(output_dict=output_dict, batch_dict=batch_dict)['logits']
-                        prob = torch.sigmoid(logits.diag()).detach().cpu().numpy().reshape(-1)
-                        valid_y_prob.extend(prob.tolist())
+                    raise ModelInterfaceError(
+                        f'Model {getattr(tc_args, "model", "?")} cannot run triple classification: '
+                        'the loaded model has no score_hrt/score_batch.'
+                    )
                 threshold = find_global_threshold(valid_y_true, valid_y_prob)
                 logger.info('[TEST] Threshold tuned on validation set: %.6f', threshold)
         if threshold is None:

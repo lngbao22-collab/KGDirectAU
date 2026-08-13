@@ -265,9 +265,7 @@ class KGAULoss(nn.Module):
 		self.max_uniformity_samples = max_uniformity_samples
 		# InfoNCE additive margin gamma; geometric threshold m = 2 * gamma on squared L2.
 		self.additive_margin = _coalesce_float(additive_margin, 0.0)
-		# `cosine`: L2-normalize paired vectors (DistMult/ComplEx/SimKGC).
-		# `phase_residual`: element-wise |phase residual|^alpha without global normalization.
-		# `sin_phase`: pRotatE link-pred term sum_i |sin(theta_q,i - theta_t,i)| (no global normalize).
+		# `cosine`: L2-normalize paired vectors (ComplEx).
 		self.alignment_mode = alignment_mode or 'cosine'
 		self.normalize_uniformity = normalize_uniformity
 		# When True, q/t/h/ent inputs are already L2-normalized (``normalize_au_vectors`` in the model).
@@ -414,16 +412,6 @@ class KGAULoss(nn.Module):
 		q = self._l2_normalize_if_needed(q)
 		t = self._l2_normalize_if_needed(t)
 		return self._feature_alignment(q, t)
-
-	def sin_phase_alignment_loss(self, phase_query: torch.Tensor, phase_target: torch.Tensor) -> torch.Tensor:
-		"""Alignment in native pRotatE geometry: mean sum of |sin(phase residual)| per dimension.
-
-		Matches the penalty inside ``pRotatEEncoder._rotate_score`` (before margin/modulus):
-		minimizing this term raises positive link-prediction scores without cosine normalization.
-		"""
-
-		residual = phase_query - phase_target
-		return torch.abs(torch.sin(residual)).sum(dim=-1).mean()
 
 	def _uniformity_row_cap(self, dim: int) -> int | None:
 		"""Optional explicit row cap via ``max_uniformity_samples`` (full exact mode skips GB budgets)."""
@@ -644,18 +632,6 @@ class KGAULoss(nn.Module):
 			return False
 		return self._max_uniformity_pair_count(num_rows, x_probe.size(-1)) >= full_pairs
 
-	def _block_alignment_loss(self, q: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-		"""|q - t|^alpha alignment on per-block L2-normalized vectors (eval-consistent).
-
-		Unlike ``alignment_loss``, this always normalizes each block even when
-		``assume_unit_norm`` is set, because a global AU normalization does not make
-		individual ``dabr_blocks`` sub-vectors unit norm.
-		"""
-
-		q = F.normalize(q, p=2, dim=-1)
-		t = F.normalize(t, p=2, dim=-1)
-		return self._feature_alignment(q, t)
-
 	def _raw_alignment_loss(
 		self,
 		q: torch.Tensor,
@@ -664,22 +640,6 @@ class KGAULoss(nn.Module):
 	) -> torch.Tensor:
 		if external_align is not None:
 			return external_align
-		if self.alignment_mode == 'sin_phase':
-			return self.sin_phase_alignment_loss(q, t)
-		if self.alignment_mode == 'phase_residual':
-			return self._feature_alignment(q, t)
-		if self.alignment_mode == 'dabr_blocks':
-			mid = q.size(-1) // 2
-			if mid <= 0 or mid * 2 != q.size(-1):
-				return self.alignment_loss(q, t)
-			# Each block must be L2-normalized independently so training matches the
-			# per-block cosine used at eval (``_normalized_block_pair_score``). A single
-			# global ``normalize_au_vectors`` leaves the blocks with unequal norms, which
-			# over-weights the additive branch and diverges from the scored geometry.
-			return (
-				self._block_alignment_loss(q[..., :mid], t[..., :mid])
-				+ self._block_alignment_loss(q[..., mid:], t[..., mid:])
-			)
 		return self.alignment_loss(q, t)
 
 	def forward(

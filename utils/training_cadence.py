@@ -91,7 +91,7 @@ def estimate_steps_per_epoch(trainer: Any) -> int | None:
 
 	batch_size = max(config_int(args, 'batch_size', 1024) or 1024, 1)
 
-	# Prefer DataLoader length when present (covers OpenKE RandomSampler+BatchSampler).
+	# Prefer DataLoader length when present.
 	for loader_attr in ('train_dataloader', 'train_loader'):
 		loader = getattr(trainer, loader_attr, None)
 		if loader is not None:
@@ -100,33 +100,10 @@ def estimate_steps_per_epoch(trainer: Any) -> int | None:
 			except TypeError:
 				pass
 
-	from utils.openke_batch_sampling import (
-		resolve_openke_batch_size,
-		resolve_openke_n_batches,
-		uses_openke_batch_sampling,
-	)
-
-	if uses_openke_batch_sampling(args):
-		train_src = getattr(trainer, 'train_src', None)
-		if train_src is not None:
-			num_triples = int(train_src.size(0))
-		else:
-			train_triples = getattr(trainer, 'train_triples', None)
-			if train_triples is not None:
-				num_triples = int(train_triples.size(0))
-			else:
-				train_examples = getattr(trainer, 'train_examples', None)
-				num_triples = len(train_examples) if train_examples is not None else 0
-		if num_triples > 0:
-			openke_bs = resolve_openke_batch_size(num_triples, args)
-			n_batches = resolve_openke_n_batches(num_triples, openke_bs, args)
-			bidirectional = bool(getattr(trainer, 'kgau_bidirectional', False))
-			return n_batches * (2 if bidirectional else 1)
-
 	train_triples = getattr(trainer, 'train_triples', None)
 	if train_triples is not None:
 		num_triples = int(train_triples.size(0))
-		bidirectional = not bool(getattr(trainer, '_pointwise_mode', False))
+		bidirectional = True
 		return _ceil_batches(num_triples, batch_size) * (2 if bidirectional else 1)
 
 	train_src = getattr(trainer, 'train_src', None)

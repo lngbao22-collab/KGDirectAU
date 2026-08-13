@@ -18,8 +18,6 @@ from models.builder import (
 	load_sampler,
 	run_index_kge_train_loop,
 )
-from models.protate import normalize_protate_phases
-from models.rotate import normalize_rotate_phases
 from utils.device import get_model_obj
 from utils.logger import logger
 from utils.training_cadence import init_step_cadence_state, maybe_decay_lr_at_step, uses_step_cadence
@@ -62,16 +60,6 @@ class NegSampStrategy:
 		self.use_amp = bool(getattr(args, 'use_amp', False)) and torch.cuda.is_available()
 		device_type = 'cuda' if torch.cuda.is_available() else 'cpu'
 		self.scaler = torch.amp.GradScaler(device_type, enabled=self.use_amp)
-		self._pointwise_mode = hasattr(self.sampler, 'num_entities') or type(self.sampler).__name__ == 'PointwiseNegSampler'
-		model_name = str(getattr(args, 'model', '') or '').lower()
-		self._normalize_phases_fn = None
-		if config_bool(args, 'normalize_phases', False):
-			if model_name == 'rotate':
-				self._normalize_phases_fn = normalize_rotate_phases
-			elif 'protate' in model_name:
-				self._normalize_phases_fn = normalize_protate_phases
-		if self._normalize_phases_fn is not None:
-			self._normalize_phases_fn(self.model)
 		if self.train_triples is not None and torch.cuda.is_available():
 			self.train_triples = self.train_triples.pin_memory()
 
@@ -181,14 +169,9 @@ class NegSampStrategy:
 
 	def _optimizer_step(self) -> None:
 		if self.use_amp:
-			if self._pointwise_mode:
-				self.scaler.unscale_(self.optimizer)
-				torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
 			self.scaler.step(self.optimizer)
 			self.scaler.update()
 		else:
-			if self._pointwise_mode:
-				torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
 			self.optimizer.step()
 
 	def _maybe_decay_learning_rate(self) -> None:
@@ -207,7 +190,7 @@ class NegSampStrategy:
 			del epoch  # DataLoader shuffle handles epoch randomness
 			yield from iter_bidirectional_presampled_batches(loaders['head'], loaders['tail'])
 			return
-		if self._pointwise_mode or self.train_triples is None:
+		if self.train_triples is None:
 			yield from self._iter_train_batches(epoch)
 			return
 		yield from self._iter_bidirectional_train_batches(epoch)
@@ -228,7 +211,7 @@ class NegSampStrategy:
 			pos_batch, neg_batch, weights, mode = batch
 		else:
 			batch, mode = self._unpack_training_batch(batch, mode)
-			if not self._pointwise_mode and mode is None:
+			if mode is None:
 				raise ValueError('Filtered negative-sampling requires an explicit head-batch or tail-batch mode')
 			sample_result = self.sampler.sample(batch, mode)
 			if len(sample_result) == 4:
@@ -248,32 +231,21 @@ class NegSampStrategy:
 			weights = weights.to(self.device, non_blocking=True)
 
 		with torch.autocast(device_type='cuda', enabled=self.use_amp):
-			if self._pointwise_mode:
-				pos_scores, neg_scores = self._score_pointwise_batch(pos_batch, neg_batch)
-				loss = self._compute_loss(pos_scores, neg_scores, weights)
-				dabr_reg = self._dabr_regularization(pos_batch, neg_batch)
-				if dabr_reg is not None:
-					loss = loss + dabr_reg
-				self._backward_loss(loss)
-			else:
-				# Strategy-aligned: chunk+checkpoint score → full [B,N] → one loss/backward.
-				pos_scores, neg_scores = self._score_negatives(pos_batch, neg_batch, mode)
-				loss = self._compute_loss(pos_scores, neg_scores, weights)
-				loss = apply_kge_regularization(
-					loss,
-					self.model,
-					self.args,
-					batch_triples=pos_batch,
-				)
-				reg_term = self._regularization_term()
-				if reg_term is not None:
-					loss = loss + reg_term
-				self._backward_loss(loss)
+			# Strategy-aligned: chunk+checkpoint score → full [B,N] → one loss/backward.
+			pos_scores, neg_scores = self._score_negatives(pos_batch, neg_batch, mode)
+			loss = self._compute_loss(pos_scores, neg_scores, weights)
+			loss = apply_kge_regularization(
+				loss,
+				self.model,
+				self.args,
+				batch_triples=pos_batch,
+			)
+			reg_term = self._regularization_term()
+			if reg_term is not None:
+				loss = loss + reg_term
+			self._backward_loss(loss)
 
 		self._optimizer_step()
-
-		if self._normalize_phases_fn is not None:
-			self._normalize_phases_fn(self.model)
 
 		loss_value = float(loss.detach().item())
 		if not math.isfinite(loss_value):
@@ -346,28 +318,10 @@ class NegSampStrategy:
 			yield from self.train_dataloader
 			return
 
-		from utils.openke_batch_sampling import (
-			iter_openke_index_batches,
-			resolve_openke_batch_size,
-			resolve_openke_n_batches,
-			uses_openke_batch_sampling,
-		)
-
 		triples = self.train_triples
 		if triples is None:
 			return
 		batch_size = max(getattr(self.args, 'batch_size', 1024), 1)
-		if uses_openke_batch_sampling(self.args):
-			# OpenKE / DaBR fallback when no DataLoader was built: sample indices
-			# with replacement for ``n_batches`` steps (``getBatch`` semantics).
-			del epoch
-			num_examples = int(triples.size(0))
-			openke_bs = resolve_openke_batch_size(num_examples, self.args)
-			n_batches = resolve_openke_n_batches(num_examples, openke_bs, self.args)
-			for indices in iter_openke_index_batches(num_examples, openke_bs, n_batches):
-				yield triples.index_select(0, indices)
-			return
-
 		for chunk in self._batch_chunks(self._shuffled_triples(epoch, stream='tail'), batch_size):
 			yield chunk
 
@@ -544,22 +498,8 @@ class NegSampStrategy:
 			)
 		return pos_scores, torch.cat(score_chunks, dim=1)
 
-	def _score_pointwise_batch(
-		self,
-		pos_triples: torch.Tensor,
-		neg_triples: torch.Tensor,
-	) -> tuple[torch.Tensor, torch.Tensor]:
-		pos_scores = self.model.score_hrt(pos_triples[:, 0], pos_triples[:, 1], pos_triples[:, 2])
-		neg_scores = self.model.score_hrt(neg_triples[:, 0], neg_triples[:, 1], neg_triples[:, 2])
-		return pos_scores, neg_scores
-
 	def _compute_loss(self, pos_scores: torch.Tensor, neg_scores: torch.Tensor, weights) -> torch.Tensor:
 		"""Dispatch to negsamp-style loss or row-wise softmax fallback."""
-
-		if self._pointwise_mode:
-			# Pointwise DaBR uses one loss term per scored triple; subsampling weights
-			# are not defined at positive-row granularity.
-			weights = None
 
 		try:
 			return self.loss_fn(pos_scores, neg_scores, weights)
@@ -597,54 +537,6 @@ class NegSampStrategy:
 		if l3_term is not None:
 			return reg_coef * l3_term
 		return None
-
-	def _aux_relation_embedding(self, model_obj, relation_indices: torch.Tensor):
-		aux = getattr(model_obj, 'aux_embedders', None)
-		if aux is not None and 'dr' in aux:
-			return aux['dr'](relation_indices)
-		dr = getattr(model_obj, 'Dr', None)
-		if dr is not None:
-			return dr(relation_indices)
-		return None
-
-	def _dabr_regularization(
-		self,
-		pos_triples: torch.Tensor,
-		neg_triples: torch.Tensor | None = None,
-	) -> torch.Tensor | None:
-		model_obj = get_model_obj(self.model)
-		scorer = model_obj.get_scorer()
-		reg_fn = getattr(model_obj, 'regularization', None) or getattr(scorer, 'regularization', None)
-		if reg_fn is None:
-			return None
-
-		entity_reg_weight = getattr(self.args, 'entity_reg_weight', None)
-		if entity_reg_weight is None:
-			entity_reg_weight = getattr(self.args, 'lmbda', 0.0)
-		relation_reg_weight = getattr(self.args, 'relation_reg_weight', None)
-		if relation_reg_weight is None:
-			relation_reg_weight = getattr(self.args, 'lmbda_two', 0.0)
-		entity_reg_weight = float(entity_reg_weight or 0.0)
-		relation_reg_weight = float(relation_reg_weight or 0.0)
-		if entity_reg_weight <= 0.0 and relation_reg_weight <= 0.0:
-			return None
-
-		# Match the reference DaBR, which regularizes over the full positive+negative
-		# batch when opted in; otherwise fall back to positive triples only.
-		reg_triples = pos_triples
-		if config_bool(self.args, 'dabr_reg_include_negatives', False) and neg_triples is not None:
-			reg_triples = torch.cat([pos_triples, neg_triples], dim=0)
-
-		h = model_obj.embed_h(reg_triples[:, 0])
-		r = model_obj.embed_r(reg_triples[:, 1])
-		t = model_obj.embed_t(reg_triples[:, 2])
-		dr_embedder = self._aux_relation_embedding(model_obj, reg_triples[:, 1])
-		if dr_embedder is None:
-			return None
-		dr = dr_embedder
-		reg_ent = reg_fn(h) + reg_fn(t)
-		reg_rel = reg_fn(r) + reg_fn(dr)
-		return (entity_reg_weight * reg_ent) + (relation_reg_weight * reg_rel)
 
 	def train_epoch(self, dataloader: Iterable | None, epoch: int) -> float:
 		if uses_step_cadence(self.args):

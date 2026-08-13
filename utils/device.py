@@ -32,7 +32,7 @@ def init_hardware(args) -> int:
 
 
 def call_model_forward(model: nn.Module, batch_dict: dict) -> dict:
-    """Call ``model.forward`` with explicit kwargs (DataParallel-safe, SimKGC-style)."""
+    """Call ``model.forward`` with explicit kwargs (DataParallel-safe)."""
 
     return model(
         hr_token_ids=batch_dict['hr_token_ids'],
