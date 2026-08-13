@@ -209,7 +209,8 @@ def build_parser() -> argparse.ArgumentParser:
     # KGAU alignment-uniformity hyperparameters (DistMult-AU, ComplEx-AU, etc.).
     parser.add_argument('--theta', default=None, type=float,
                         help='alignment loss scale (default 1.0)')
-    parser.add_argument('--alpha', default=None, type=float,
+    parser.add_argument('--alpha', '--align-alpha', '--align_alpha', default=None, type=float,
+                        dest='alpha',
                         help='alignment degree: mean sum_i |q_i - t_i|^alpha (default 2.0)')
     parser.add_argument('--gamma-q', '--gamma_q', default=None, type=float,
                         help='uniformity weight for query embeddings')
@@ -1060,6 +1061,10 @@ args.unparsed_args = _apply_extra_cli_tokens(parser, args, extra_cli_tokens)
 for _name, _default in (('gamma_h', 0.0), ('gamma_ent', 0.0), ('gamma_cross', 0.0)):
     if getattr(args, _name, None) is None:
         setattr(args, _name, _default)
+
+# Other-branch JSON key ``align_alpha`` maps onto usecase ``alpha`` (alignment degree).
+if getattr(args, 'alpha', None) is None and getattr(args, 'align_alpha', None) is not None:
+    args.alpha = args.align_alpha
 
 _model_name = str(getattr(args, 'model', '') or '').lower()
 if any(tag in _model_name for tag in ('rotate', 'protate', 'transe', 'transerr')):

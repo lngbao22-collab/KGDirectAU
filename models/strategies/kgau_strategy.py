@@ -500,7 +500,7 @@ class KGAUStrategy(Evaluator):
 			)
 		if assume_unit_norm:
 			logger.info('KGAU assume_unit_norm: loss skips redundant L2 normalize (vectors normalized in model)')
-		alpha_val = _config_float(args, 'alpha', 2.0)
+		alpha_val = _config_float(args, 'alpha', _config_float(args, 'align_alpha', 2.0))
 		self.criterion = KGAULoss(
 			gamma_q=_config_float(args, 'gamma_q', 1.0),
 			gamma_t=_config_float(args, 'gamma_t', 1.0),
@@ -524,6 +524,7 @@ class KGAUStrategy(Evaluator):
 			uniformity_pdist_gb=getattr(args, 'uniformity_pdist_gb', None),
 			uniform_pair_chunk_size=int(_config_float(args, 'uniform_pair_chunk_size', 0) or 0),
 		).to(self.device)
+		logger.info('KGAU alignment degree alpha=%.4f (feature |q-t|^alpha)', alpha_val)
 		if config_bool(args, 'average_uniformity_terms', False):
 			logger.info('KGAU average_uniformity_terms: enabled (sum active terms / count)')
 		if config_bool(args, 'uniformity_full_pdist', False):
