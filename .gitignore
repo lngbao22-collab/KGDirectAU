@@ -2,10 +2,10 @@
 __pycache__/
 .idea/
 logs/
-entities.json
-relations.json
+data/**/entities.json
+data/**/relations.json
 data/**/preprocessed/
-*.txt.json
+data/**/*.txt.json
 *.pdf
 models/losses/LOSS_RELATIONSHIPS.md
 # Local trial configs (machine-specific paths)
@@ -14,3 +14,5 @@ configs/ComplEx_WN18RR_bpr.json
 docs/CONFIG_EXTRACTION_TEMPLATE.md
 scritps/
 tests
+usecase/frontend/node_modules/
+usecase/frontend/dist/

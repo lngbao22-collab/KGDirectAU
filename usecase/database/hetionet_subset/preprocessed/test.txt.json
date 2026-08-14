@@ -1,0 +1,3282 @@
+[
+    {
+        "head_id": "DOID:10534",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D001247",
+        "head": "DOID:10534",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D001247",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:784",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D009846",
+        "head": "DOID:784",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D009846",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:8850",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D012678",
+        "head": "DOID:8850",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D012678",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1319",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D018886",
+        "head": "DOID:1319",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D018886",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:9835",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D002832",
+        "head": "DOID:9835",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D002832",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3565",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D002559",
+        "head": "DOID:3565",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D002559",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:5612",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D009128",
+        "head": "DOID:5612",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D009128",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:14004",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D014826",
+        "head": "DOID:14004",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D014826",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1319",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D015354",
+        "head": "DOID:1319",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D015354",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1826",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D015325",
+        "head": "DOID:1826",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D015325",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11934",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D014098",
+        "head": "DOID:11934",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D014098",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1612",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D063806",
+        "head": "DOID:1612",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D063806",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:12236",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011537",
+        "head": "DOID:12236",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011537",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1793",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D014474",
+        "head": "DOID:1793",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D014474",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:219",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D005414",
+        "head": "DOID:219",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D005414",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1612",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006987",
+        "head": "DOID:1612",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006987",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1909",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D009755",
+        "head": "DOID:1909",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D009755",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10652",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D020336",
+        "head": "DOID:10652",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D020336",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:0050425",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D009120",
+        "head": "DOID:0050425",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D009120",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2377",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D009133",
+        "head": "DOID:2377",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D009133",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1192",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010591",
+        "head": "DOID:1192",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010591",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:8778",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D005334",
+        "head": "DOID:8778",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D005334",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3070",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D009207",
+        "head": "DOID:3070",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D009207",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:8577",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D009325",
+        "head": "DOID:8577",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D009325",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10652",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D013494",
+        "head": "DOID:10652",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D013494",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1826",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D013009",
+        "head": "DOID:1826",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D013009",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:12995",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011595",
+        "head": "DOID:12995",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011595",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1936",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D000787",
+        "head": "DOID:1936",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D000787",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3393",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006337",
+        "head": "DOID:3393",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006337",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:9744",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D018589",
+        "head": "DOID:9744",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D018589",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3953",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D003968",
+        "head": "DOID:3953",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D003968",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1612",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004487",
+        "head": "DOID:1612",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004487",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2355",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D002303",
+        "head": "DOID:2355",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D002303",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:0060119",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D020385",
+        "head": "DOID:0060119",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D020385",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:0060119",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D013651",
+        "head": "DOID:0060119",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D013651",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:14268",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D041781",
+        "head": "DOID:14268",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D041781",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:13241",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010243",
+        "head": "DOID:13241",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010243",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:332",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D002524",
+        "head": "DOID:332",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D002524",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10763",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D001724",
+        "head": "DOID:10763",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D001724",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10608",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004415",
+        "head": "DOID:10608",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004415",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11920",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D012135",
+        "head": "DOID:11920",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D012135",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:184",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006930",
+        "head": "DOID:184",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006930",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:5041",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D015431",
+        "head": "DOID:5041",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D015431",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:263",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011507",
+        "head": "DOID:263",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011507",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3070",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D020233",
+        "head": "DOID:3070",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D020233",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3070",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D013064",
+        "head": "DOID:3070",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D013064",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:13223",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D019584",
+        "head": "DOID:13223",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D019584",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:8986",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D002385",
+        "head": "DOID:8986",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D002385",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:12365",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D002524",
+        "head": "DOID:12365",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D002524",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3393",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D060050",
+        "head": "DOID:3393",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D060050",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:0050156",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D000860",
+        "head": "DOID:0050156",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D000860",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1094",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D012893",
+        "head": "DOID:1094",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D012893",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11934",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D001766",
+        "head": "DOID:11934",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D001766",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:0050741",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D008607",
+        "head": "DOID:0050741",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D008607",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10652",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D018458",
+        "head": "DOID:10652",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D018458",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11119",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011595",
+        "head": "DOID:11119",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011595",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3312",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D014202",
+        "head": "DOID:3312",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D014202",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:784",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D016534",
+        "head": "DOID:784",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D016534",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:635",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D005335",
+        "head": "DOID:635",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D005335",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10534",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004487",
+        "head": "DOID:10534",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004487",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:13241",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006319",
+        "head": "DOID:13241",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006319",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3953",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D005483",
+        "head": "DOID:3953",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D005483",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10941",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D008569",
+        "head": "DOID:10941",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D008569",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11934",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D001044",
+        "head": "DOID:11934",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D001044",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10534",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D016553",
+        "head": "DOID:10534",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D016553",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:6364",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D013009",
+        "head": "DOID:6364",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D013009",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:8893",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011538",
+        "head": "DOID:8893",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011538",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2355",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D016553",
+        "head": "DOID:2355",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D016553",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:12930",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D009123",
+        "head": "DOID:12930",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D009123",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1826",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D013746",
+        "head": "DOID:1826",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D013746",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:0050741",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D014202",
+        "head": "DOID:0050741",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D014202",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3070",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010243",
+        "head": "DOID:3070",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010243",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1319",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D001766",
+        "head": "DOID:1319",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D001766",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:184",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004433",
+        "head": "DOID:184",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004433",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:13223",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D015746",
+        "head": "DOID:13223",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D015746",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10941",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D005157",
+        "head": "DOID:10941",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D005157",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:14330",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D007319",
+        "head": "DOID:14330",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D007319",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:263",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D005221",
+        "head": "DOID:263",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D005221",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1826",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D005334",
+        "head": "DOID:1826",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D005334",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1826",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D019462",
+        "head": "DOID:1826",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D019462",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:9744",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D002032",
+        "head": "DOID:9744",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D002032",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11054",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011782",
+        "head": "DOID:11054",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011782",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2174",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D012166",
+        "head": "DOID:2174",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D012166",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11054",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D021501",
+        "head": "DOID:11054",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D021501",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2994",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006939",
+        "head": "DOID:2994",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006939",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10763",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D000860",
+        "head": "DOID:10763",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D000860",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:184",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D058447",
+        "head": "DOID:184",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D058447",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:263",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D001247",
+        "head": "DOID:263",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D001247",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1686",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D003117",
+        "head": "DOID:1686",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D003117",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:184",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D017116",
+        "head": "DOID:184",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D017116",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1319",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010291",
+        "head": "DOID:1319",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010291",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1319",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D019569",
+        "head": "DOID:1319",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D019569",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11476",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D001416",
+        "head": "DOID:11476",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D001416",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:5612",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D017116",
+        "head": "DOID:5612",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D017116",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1115",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004487",
+        "head": "DOID:1115",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004487",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3312",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D053608",
+        "head": "DOID:3312",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D053608",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3565",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006312",
+        "head": "DOID:3565",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006312",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3070",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010468",
+        "head": "DOID:3070",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010468",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1826",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D007706",
+        "head": "DOID:1826",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D007706",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:0050425",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010591",
+        "head": "DOID:0050425",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010591",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:14330",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D002524",
+        "head": "DOID:14330",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D002524",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10871",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004172",
+        "head": "DOID:10871",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004172",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1324",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D012877",
+        "head": "DOID:1324",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D012877",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:4606",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011537",
+        "head": "DOID:4606",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011537",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:8850",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010243",
+        "head": "DOID:8850",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010243",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:5559",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D053578",
+        "head": "DOID:5559",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D053578",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3070",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D014839",
+        "head": "DOID:3070",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D014839",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:8986",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010243",
+        "head": "DOID:8986",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010243",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2994",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004433",
+        "head": "DOID:2994",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004433",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:12849",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004410",
+        "head": "DOID:12849",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004410",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2377",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D012678",
+        "head": "DOID:2377",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D012678",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:9352",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D056128",
+        "head": "DOID:9352",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D056128",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:13378",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006319",
+        "head": "DOID:13378",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006319",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:9744",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D005884",
+        "head": "DOID:9744",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D005884",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:14004",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D005335",
+        "head": "DOID:14004",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D005335",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10021",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D041781",
+        "head": "DOID:10021",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D041781",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:8986",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D012893",
+        "head": "DOID:8986",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D012893",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:9074",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006261",
+        "head": "DOID:9074",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006261",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:363",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D003248",
+        "head": "DOID:363",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D003248",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3565",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D003244",
+        "head": "DOID:3565",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D003244",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1319",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D003244",
+        "head": "DOID:1319",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D003244",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:0050741",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011782",
+        "head": "DOID:0050741",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011782",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1319",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D002100",
+        "head": "DOID:1319",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D002100",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:12930",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D019462",
+        "head": "DOID:12930",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D019462",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:12306",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D034381",
+        "head": "DOID:12306",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D034381",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:216",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D014098",
+        "head": "DOID:216",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D014098",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:0050741",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D000472",
+        "head": "DOID:0050741",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D000472",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:784",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011507",
+        "head": "DOID:784",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011507",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11934",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D012135",
+        "head": "DOID:11934",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D012135",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10763",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011507",
+        "head": "DOID:10763",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011507",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:585",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D053584",
+        "head": "DOID:585",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D053584",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:363",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D005334",
+        "head": "DOID:363",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D005334",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3277",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D003967",
+        "head": "DOID:3277",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D003967",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3393",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D002303",
+        "head": "DOID:3393",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D002303",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2994",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D002559",
+        "head": "DOID:2994",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D002559",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:332",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D001259",
+        "head": "DOID:332",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D001259",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:14330",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D020240",
+        "head": "DOID:14330",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D020240",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:332",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010243",
+        "head": "DOID:332",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010243",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:7148",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D020069",
+        "head": "DOID:7148",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D020069",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1115",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010146",
+        "head": "DOID:1115",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010146",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:7148",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011695",
+        "head": "DOID:7148",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011695",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:5559",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D005334",
+        "head": "DOID:5559",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D005334",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11054",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004487",
+        "head": "DOID:11054",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004487",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:8398",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004487",
+        "head": "DOID:8398",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004487",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1909",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004487",
+        "head": "DOID:1909",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004487",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1115",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D014839",
+        "head": "DOID:1115",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D014839",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11949",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010292",
+        "head": "DOID:11949",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010292",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:5041",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D000860",
+        "head": "DOID:5041",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D000860",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:585",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011507",
+        "head": "DOID:585",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011507",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:13378",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011696",
+        "head": "DOID:13378",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011696",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:9970",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D015430",
+        "head": "DOID:9970",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D015430",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1826",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D007806",
+        "head": "DOID:1826",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D007806",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:9970",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D056865",
+        "head": "DOID:9970",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D056865",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2994",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006988",
+        "head": "DOID:2994",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006988",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11934",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006319",
+        "head": "DOID:11934",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006319",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:14330",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010591",
+        "head": "DOID:14330",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010591",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:13241",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D018771",
+        "head": "DOID:13241",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D018771",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:8577",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D018771",
+        "head": "DOID:8577",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D018771",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2994",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006315",
+        "head": "DOID:2994",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006315",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:7693",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D021501",
+        "head": "DOID:7693",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D021501",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:8986",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D007319",
+        "head": "DOID:8986",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D007319",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10941",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004172",
+        "head": "DOID:10941",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004172",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:9352",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D000419",
+        "head": "DOID:9352",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D000419",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:0050741",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D002524",
+        "head": "DOID:0050741",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D002524",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1192",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D037061",
+        "head": "DOID:1192",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D037061",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10941",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D019575",
+        "head": "DOID:10941",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D019575",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10652",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D001041",
+        "head": "DOID:10652",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D001041",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1094",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D007805",
+        "head": "DOID:1094",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D007805",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1826",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D020184",
+        "head": "DOID:1826",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D020184",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:9744",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D007331",
+        "head": "DOID:9744",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D007331",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:12185",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011304",
+        "head": "DOID:12185",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011304",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:5419",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D007331",
+        "head": "DOID:5419",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D007331",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3070",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D034381",
+        "head": "DOID:3070",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D034381",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:6364",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006930",
+        "head": "DOID:6364",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006930",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:12849",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D012678",
+        "head": "DOID:12849",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D012678",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:12361",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D014786",
+        "head": "DOID:12361",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D014786",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:12849",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D009903",
+        "head": "DOID:12849",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D009903",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1192",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D012001",
+        "head": "DOID:1192",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D012001",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:184",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D014098",
+        "head": "DOID:184",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D014098",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1993",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D005414",
+        "head": "DOID:1993",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D005414",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:12306",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D007565",
+        "head": "DOID:12306",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D007565",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:9970",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010845",
+        "head": "DOID:9970",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010845",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1094",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D020323",
+        "head": "DOID:1094",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D020323",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10941",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004401",
+        "head": "DOID:10941",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004401",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1319",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D014717",
+        "head": "DOID:1319",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D014717",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1115",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006930",
+        "head": "DOID:1115",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006930",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:5612",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D020335",
+        "head": "DOID:5612",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D020335",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:5559",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D012133",
+        "head": "DOID:5559",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D012133",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:0050741",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D005483",
+        "head": "DOID:0050741",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D005483",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3565",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006261",
+        "head": "DOID:3565",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006261",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:824",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006472",
+        "head": "DOID:824",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006472",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:6364",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004244",
+        "head": "DOID:6364",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004244",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:4362",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011602",
+        "head": "DOID:4362",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011602",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11054",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011141",
+        "head": "DOID:11054",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011141",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1826",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D002524",
+        "head": "DOID:1826",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D002524",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:5408",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D017116",
+        "head": "DOID:5408",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D017116",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:5612",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D009437",
+        "head": "DOID:5612",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D009437",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2355",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D005335",
+        "head": "DOID:2355",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D005335",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1993",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D017699",
+        "head": "DOID:1993",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D017699",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2994",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D058568",
+        "head": "DOID:2994",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D058568",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10534",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D000855",
+        "head": "DOID:10534",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D000855",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3565",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010243",
+        "head": "DOID:3565",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010243",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:363",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010148",
+        "head": "DOID:363",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010148",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1793",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D015431",
+        "head": "DOID:1793",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D015431",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:263",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D000860",
+        "head": "DOID:263",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D000860",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:0060119",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006319",
+        "head": "DOID:0060119",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006319",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:13241",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D005132",
+        "head": "DOID:13241",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D005132",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3312",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011595",
+        "head": "DOID:3312",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011595",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10763",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D000419",
+        "head": "DOID:10763",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D000419",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1319",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D002558",
+        "head": "DOID:1319",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D002558",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3393",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D002637",
+        "head": "DOID:3393",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D002637",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3571",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D005334",
+        "head": "DOID:3571",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D005334",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2355",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D003968",
+        "head": "DOID:2355",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D003968",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10871",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004487",
+        "head": "DOID:10871",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004487",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:9296",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D013342",
+        "head": "DOID:9296",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D013342",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3953",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006261",
+        "head": "DOID:3953",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006261",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:12849",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D003147",
+        "head": "DOID:12849",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D003147",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1115",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004438",
+        "head": "DOID:1115",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004438",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:4481",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004487",
+        "head": "DOID:4481",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004487",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1094",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011596",
+        "head": "DOID:1094",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011596",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:0050156",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D020181",
+        "head": "DOID:0050156",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D020181",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:7148",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010292",
+        "head": "DOID:7148",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010292",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10941",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D014012",
+        "head": "DOID:10941",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D014012",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3070",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006429",
+        "head": "DOID:3070",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006429",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11819",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D021501",
+        "head": "DOID:11819",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D021501",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1993",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D003248",
+        "head": "DOID:1993",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D003248",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1094",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D007859",
+        "head": "DOID:1094",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D007859",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11612",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004412",
+        "head": "DOID:11612",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004412",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10283",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D053159",
+        "head": "DOID:10283",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D053159",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3312",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D000326",
+        "head": "DOID:3312",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D000326",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2994",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D017699",
+        "head": "DOID:2994",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D017699",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:5559",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D003490",
+        "head": "DOID:5559",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D003490",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2394",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D009325",
+        "head": "DOID:2394",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D009325",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:184",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D019080",
+        "head": "DOID:184",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D019080",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2355",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D003410",
+        "head": "DOID:2355",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D003410",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2994",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D034381",
+        "head": "DOID:2994",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D034381",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:219",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D014839",
+        "head": "DOID:219",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D014839",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:0050741",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D003244",
+        "head": "DOID:0050741",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D003244",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:12365",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D001724",
+        "head": "DOID:12365",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D001724",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:14004",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010264",
+        "head": "DOID:14004",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010264",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:12185",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D012021",
+        "head": "DOID:12185",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D012021",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:14330",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D009122",
+        "head": "DOID:14330",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D009122",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:12930",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D002303",
+        "head": "DOID:12930",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D002303",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1826",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D054221",
+        "head": "DOID:1826",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D054221",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:784",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D001835",
+        "head": "DOID:784",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D001835",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:9296",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D003638",
+        "head": "DOID:9296",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D003638",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11934",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006311",
+        "head": "DOID:11934",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006311",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1793",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D007565",
+        "head": "DOID:1793",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D007565",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10652",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D019954",
+        "head": "DOID:10652",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D019954",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:9008",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D001416",
+        "head": "DOID:9008",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D001416",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:9744",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D007024",
+        "head": "DOID:9744",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D007024",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11934",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010148",
+        "head": "DOID:11934",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010148",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:784",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D007926",
+        "head": "DOID:784",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D007926",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:184",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D013064",
+        "head": "DOID:184",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D013064",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:418",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011537",
+        "head": "DOID:418",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011537",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:824",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D001724",
+        "head": "DOID:824",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D001724",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:5419",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D007088",
+        "head": "DOID:5419",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D007088",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:12361",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004172",
+        "head": "DOID:12361",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004172",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1324",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D005157",
+        "head": "DOID:1324",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D005157",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1909",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010291",
+        "head": "DOID:1909",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010291",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:184",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010243",
+        "head": "DOID:184",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010243",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:7148",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D017288",
+        "head": "DOID:7148",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D017288",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1790",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004417",
+        "head": "DOID:1790",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004417",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:7693",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D007035",
+        "head": "DOID:7693",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D007035",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1192",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004172",
+        "head": "DOID:1192",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004172",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:418",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D012877",
+        "head": "DOID:418",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D012877",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3310",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D012135",
+        "head": "DOID:3310",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D012135",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:635",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D003693",
+        "head": "DOID:635",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D003693",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10941",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D001926",
+        "head": "DOID:10941",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D001926",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3121",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D015746",
+        "head": "DOID:3121",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D015746",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1319",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D003221",
+        "head": "DOID:1319",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D003221",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11054",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D053584",
+        "head": "DOID:11054",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D053584",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:0050741",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D001308",
+        "head": "DOID:0050741",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D001308",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1024",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010243",
+        "head": "DOID:1024",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010243",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1612",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D015430",
+        "head": "DOID:1612",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D015430",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1094",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D013342",
+        "head": "DOID:1094",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D013342",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:824",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D009912",
+        "head": "DOID:824",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D009912",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1319",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011782",
+        "head": "DOID:1319",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011782",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:184",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011782",
+        "head": "DOID:184",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011782",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11920",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004417",
+        "head": "DOID:11920",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004417",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1826",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D007088",
+        "head": "DOID:1826",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D007088",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:0050741",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D003693",
+        "head": "DOID:0050741",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D003693",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:12995",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D007859",
+        "head": "DOID:12995",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D007859",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3083",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006935",
+        "head": "DOID:3083",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006935",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10652",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D007859",
+        "head": "DOID:10652",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D007859",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2998",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D034381",
+        "head": "DOID:2998",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D034381",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:9074",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D020757",
+        "head": "DOID:9074",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D020757",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1909",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D005334",
+        "head": "DOID:1909",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D005334",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2174",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D058447",
+        "head": "DOID:2174",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D058447",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10652",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011595",
+        "head": "DOID:10652",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011595",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2394",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D005334",
+        "head": "DOID:2394",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D005334",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1595",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D062706",
+        "head": "DOID:1595",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D062706",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:363",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D000006",
+        "head": "DOID:363",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D000006",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11612",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D015431",
+        "head": "DOID:11612",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D015431",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:263",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010264",
+        "head": "DOID:263",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010264",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:184",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D009912",
+        "head": "DOID:184",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D009912",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:4159",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006942",
+        "head": "DOID:4159",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006942",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10283",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D059373",
+        "head": "DOID:10283",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D059373",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:4481",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D014832",
+        "head": "DOID:4481",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D014832",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:9074",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D009461",
+        "head": "DOID:9074",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D009461",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:6364",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D012607",
+        "head": "DOID:6364",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D012607",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:184",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004487",
+        "head": "DOID:184",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004487",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1936",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D050177",
+        "head": "DOID:1936",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D050177",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1612",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D059373",
+        "head": "DOID:1612",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D059373",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11119",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D007806",
+        "head": "DOID:11119",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D007806",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:5875",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D003085",
+        "head": "DOID:5875",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D003085",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:7148",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D001259",
+        "head": "DOID:7148",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D001259",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1595",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004409",
+        "head": "DOID:1595",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004409",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:10534",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D009325",
+        "head": "DOID:10534",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D009325",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:5612",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D011782",
+        "head": "DOID:5612",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D011782",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:3277",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D018908",
+        "head": "DOID:3277",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D018908",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1319",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D009461",
+        "head": "DOID:1319",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D009461",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11476",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D008998",
+        "head": "DOID:11476",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D008998",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2355",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D059787",
+        "head": "DOID:2355",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D059787",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1115",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D017699",
+        "head": "DOID:1115",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D017699",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11934",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006314",
+        "head": "DOID:11934",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006314",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1192",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D018908",
+        "head": "DOID:1192",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D018908",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:14330",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D012148",
+        "head": "DOID:14330",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D012148",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:263",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D041781",
+        "head": "DOID:263",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D041781",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11920",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D014826",
+        "head": "DOID:11920",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D014826",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11054",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D010264",
+        "head": "DOID:11054",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D010264",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11476",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D018908",
+        "head": "DOID:11476",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D018908",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:2994",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D004487",
+        "head": "DOID:2994",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D004487",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:7693",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D053591",
+        "head": "DOID:7693",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D053591",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:11949",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D009207",
+        "head": "DOID:11949",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D009207",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:332",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D013494",
+        "head": "DOID:332",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D013494",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:1781",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D006469",
+        "head": "DOID:1781",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D006469",
+        "head_desc": "",
+        "tail_desc": ""
+    },
+    {
+        "head_id": "DOID:5041",
+        "relation_id": "Disease:presents:Symptom",
+        "tail_id": "D014826",
+        "head": "DOID:5041",
+        "relation": "Disease:presents:Symptom",
+        "tail": "D014826",
+        "head_desc": "",
+        "tail_desc": ""
+    }
+]

@@ -1,0 +1,22 @@
+{
+  "framework": "KGAU",
+  "backbone": "ComplEx",
+  "model": "ComplEx-AU",
+  "dataset": "hetionet_subset",
+  "embedding_dim": 64,
+  "double_entity_embedding": true,
+  "double_relation_embedding": true,
+  "training_strategy": "Positive-only",
+  "negative_sampling": "Disabled",
+  "head_eval_mode": "rt_forward",
+  "kgau_bidirectional": true,
+  "add_reciprocal_relations": false,
+  "tuni": 2,
+  "gamma_q": 1.0,
+  "gamma_t": 1.0,
+  "gamma_ent": 1.0,
+  "gamma_cross": 0.0,
+  "best_epoch": 174,
+  "checkpoint_filename": "ComplEx-AU.mdl",
+  "presents_relation": "Disease:presents:Symptom"
+}
