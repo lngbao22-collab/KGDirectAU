@@ -31,6 +31,18 @@ export type MatchedSymptom = {
   id: string;
   name: string;
   score: number;
+  is_ground_truth?: boolean;
+};
+
+export type SymptomMetric = {
+  id: string;
+  name: string;
+  precision: number;
+  recall: number;
+  true_positives: number;
+  predicted_count: number;
+  ground_truth_count: number;
+  top_k: number;
 };
 
 export type Candidate = {
@@ -41,6 +53,7 @@ export type Candidate = {
   avg_similarity: number;
   max_similarity: number;
   matched_symptoms: MatchedSymptom[];
+  ground_truth_hits?: number;
 };
 
 export type ScatterPoint = {
@@ -54,6 +67,12 @@ export type ScatterPoint = {
   rank?: number | null;
   symptom_ids?: string[];
   ground_truth_ids?: string[];
+  precision?: number | null;
+  recall?: number | null;
+  true_positives?: number | null;
+  predicted_count?: number | null;
+  ground_truth_count?: number | null;
+  top_k?: number | null;
 };
 
 export type SimilarDisease = {
@@ -72,6 +91,12 @@ export type DiseaseDetail = {
   matched_count: number;
   selected_count: number;
   similar_diseases: SimilarDisease[];
+  precision?: number | null;
+  recall?: number | null;
+  true_positives?: number | null;
+  predicted_count?: number | null;
+  ground_truth_count?: number | null;
+  top_k?: number | null;
 };
 
 export type PredictResponse = {
@@ -81,4 +106,5 @@ export type PredictResponse = {
   candidates: Candidate[];
   points: ScatterPoint[];
   focused: DiseaseDetail | null;
+  symptom_metrics?: SymptomMetric[];
 };

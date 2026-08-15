@@ -17,6 +17,7 @@ from app.paths import (
 )
 
 PRESENTS_RELATION = "Disease:presents:Symptom"
+RESEMBLES_RELATION = "Disease:resembles:Disease"
 
 
 class EntityRecord:
@@ -65,6 +66,11 @@ class Catalog:
         self.relation_to_idx = relation_to_idx
         self.resembles = resembles
         self.symptom_to_diseases = symptom_to_diseases or {}
+        self.presents_edges, self.disease_to_symptoms, self.resembles_edges = _index_edges(
+            self.symptom_to_diseases,
+            self.resembles,
+            set(self.id_to_entity),
+        )
 
     @property
     def n_entities(self) -> int:
@@ -102,6 +108,37 @@ def _display_name(entity_id: str, meta: dict[str, str] | None) -> str:
     if entity_id.startswith("DOID:"):
         return name[:1].upper() + name[1:]
     return name
+
+
+def _index_edges(
+    symptom_to_diseases: dict[str, list[str]],
+    resembles: dict[str, list[str]],
+    known_ids: set[str],
+) -> tuple[list[tuple[str, str]], dict[str, list[str]], list[tuple[str, str]]]:
+    presents: list[tuple[str, str]] = []
+    disease_to_symptoms: dict[str, list[str]] = defaultdict(list)
+    for symptom_id, disease_ids in symptom_to_diseases.items():
+        if symptom_id not in known_ids:
+            continue
+        for disease_id in disease_ids:
+            if disease_id not in known_ids:
+                continue
+            presents.append((disease_id, symptom_id))
+            disease_to_symptoms[disease_id].append(symptom_id)
+    resemble_pairs: set[tuple[str, str]] = set()
+    for source_id, target_ids in resembles.items():
+        if source_id not in known_ids:
+            continue
+        for target_id in target_ids:
+            if target_id not in known_ids or target_id == source_id:
+                continue
+            pair = (source_id, target_id) if source_id < target_id else (target_id, source_id)
+            resemble_pairs.add(pair)
+    return (
+        presents,
+        {key: list(dict.fromkeys(value)) for key, value in disease_to_symptoms.items()},
+        sorted(resemble_pairs),
+    )
 
 
 def _load_ground_truth(path) -> dict[str, list[str]]:

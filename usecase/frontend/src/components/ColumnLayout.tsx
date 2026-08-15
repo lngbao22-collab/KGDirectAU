@@ -11,9 +11,9 @@ const COLUMN_KEYS: Record<ColumnId, MessageKey> = {
 };
 
 const DEFAULT_WEIGHTS: Record<ColumnId, number> = {
-  input: 16,
-  plot: 66,
-  info: 18,
+  input: 23,
+  plot: 55,
+  info: 22,
 };
 
 const MIN_PX: Record<ColumnId, number> = {

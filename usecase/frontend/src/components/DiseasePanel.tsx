@@ -1,13 +1,15 @@
 import { frequencyColor, frequencyLabel } from "../lib/colors";
 import { useI18n } from "../i18n";
-import type { DiseaseDetail } from "../types";
+import type { DiseaseDetail, SymptomMetric } from "../types";
+import { metricById, MetricsHover } from "./MetricsHover";
 
 type Props = {
   detail: DiseaseDetail | null;
+  metrics?: SymptomMetric[];
   onSelectSimilar: (id: string) => void;
 };
 
-export function DiseasePanel({ detail, onSelectSimilar }: Props) {
+export function DiseasePanel({ detail, metrics = [], onSelectSimilar }: Props) {
   const { t } = useI18n();
   if (!detail) {
     return (
@@ -19,6 +21,19 @@ export function DiseasePanel({ detail, onSelectSimilar }: Props) {
   }
 
   const isSymptom = detail.kind === "symptom" || !detail.id.startsWith("DOID:");
+  const hasMetrics = detail.precision != null && detail.recall != null;
+  const symptomMetric = hasMetrics
+    ? {
+        id: detail.id,
+        name: detail.name,
+        precision: detail.precision ?? 0,
+        recall: detail.recall ?? 0,
+        true_positives: detail.true_positives ?? 0,
+        predicted_count: detail.predicted_count ?? 0,
+        ground_truth_count: detail.ground_truth_count ?? 0,
+        top_k: detail.top_k ?? 10,
+      }
+    : null;
 
   return (
     <section className="card flex h-full min-h-[640px] min-w-0 flex-col overflow-x-hidden overflow-y-hidden p-4 xl:min-h-0">
@@ -31,6 +46,20 @@ export function DiseasePanel({ detail, onSelectSimilar }: Props) {
         <p className="mt-3 max-w-full overflow-hidden break-words text-sm leading-6 text-slate-600 line-clamp-4">
           {detail.description}
         </p>
+        {isSymptom && symptomMetric ? (
+          <MetricsHover className="mt-3" metric={symptomMetric}>
+            <div className="rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              <div>
+                {t("hoverPrecision")}: <span className="font-semibold text-slate-800">{symptomMetric.precision.toFixed(2)}</span>
+                <span className="text-slate-400"> ({symptomMetric.true_positives}/{symptomMetric.predicted_count})</span>
+              </div>
+              <div>
+                {t("hoverRecall")}: <span className="font-semibold text-slate-800">{symptomMetric.recall.toFixed(2)}</span>
+                <span className="text-slate-400"> ({symptomMetric.true_positives}/{symptomMetric.ground_truth_count})</span>
+              </div>
+            </div>
+          </MetricsHover>
+        ) : null}
         <div className="mt-2 max-w-full text-xs text-slate-500">
           {detail.wiki_url ? (
             <a
@@ -55,16 +84,19 @@ export function DiseasePanel({ detail, onSelectSimilar }: Props) {
             </h3>
             <div className="space-y-1">
               {detail.matched_symptoms.map((item) => (
-                <button
-                  className="flex w-full min-w-0 items-center gap-2 rounded-lg px-1 py-0.5 text-left text-sm hover:bg-slate-50"
-                  key={item.id}
-                  onClick={() => onSelectSimilar(item.id)}
-                  type="button"
-                >
-                  <span className="text-emerald-600">✓</span>
-                  <span className="min-w-0 truncate">{item.name}</span>
-                  <span className="shrink-0 text-xs text-slate-400">{item.score.toFixed(3)}</span>
-                </button>
+                <MetricsHover className="block w-full" key={item.id} metric={metricById(metrics, item.id)}>
+                  <button
+                    className="flex w-full min-w-0 items-center gap-2 rounded-lg px-1 py-0.5 text-left text-sm hover:bg-slate-50"
+                    onClick={() => onSelectSimilar(item.id)}
+                    type="button"
+                  >
+                    <span className={item.is_ground_truth ? "text-emerald-600" : "text-blue-600"}>
+                      {item.is_ground_truth ? "✓" : "○"}
+                    </span>
+                    <span className="min-w-0 truncate">{item.name}</span>
+                    <span className="shrink-0 text-xs text-slate-400">{item.score.toFixed(3)}</span>
+                  </button>
+                </MetricsHover>
               ))}
             </div>
           </div>

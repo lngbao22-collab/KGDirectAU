@@ -98,7 +98,7 @@ def predict(payload: PredictRequest):
     engine = get_engine(payload.model_id)
     lang = parse_lang(payload.lang)
     try:
-        ranked, points = engine.retrieve(payload.symptom_ids, payload.projection, lang)
+        ranked, points, metrics = engine.retrieve(payload.symptom_ids, payload.projection, lang)
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     focused = engine.disease_detail(ranked[0].id, ranked, payload.symptom_ids, lang) if ranked else None
@@ -109,6 +109,7 @@ def predict(payload: PredictRequest):
         candidates=engine.candidates_out(ranked, lang),
         points=points,
         focused=focused,
+        symptom_metrics=metrics,
     )
 
 
@@ -125,7 +126,7 @@ def disease_detail(disease_id: str, symptoms: str = "", lang: str = "en"):
     engine = get_engine()
     ranked = None
     if entity.kind == "disease" and selected_ids:
-        ranked, _ = engine.retrieve(selected_ids, lang=lang)
+        ranked, _, _ = engine.retrieve(selected_ids, lang=lang)
     return engine.disease_detail(disease_id, ranked, selected_ids, lang)
 
 

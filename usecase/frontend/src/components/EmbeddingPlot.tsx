@@ -10,7 +10,8 @@ import {
   type SymptomStyle,
 } from "../lib/colors";
 import { useI18n } from "../i18n";
-import type { ScatterPoint } from "../types";
+import type { ScatterPoint, SymptomMetric } from "../types";
+import { MetricsHover } from "./MetricsHover";
 
 const Plot = createPlotlyComponent(Plotly);
 
@@ -36,6 +37,20 @@ function pointId(customdata: unknown): string | null {
   if (typeof customdata === "string") return customdata;
   if (Array.isArray(customdata) && typeof customdata[0] === "string") return customdata[0];
   return null;
+}
+
+function symptomMetric(item: ScatterPoint): SymptomMetric | null {
+  if (item.precision == null || item.recall == null) return null;
+  return {
+    id: item.id,
+    name: item.name,
+    precision: item.precision,
+    recall: item.recall,
+    true_positives: item.true_positives ?? 0,
+    predicted_count: item.predicted_count ?? 0,
+    ground_truth_count: item.ground_truth_count ?? 0,
+    top_k: item.top_k ?? 10,
+  };
 }
 
 function densityScales(points: ScatterPoint[]): number[] {
@@ -187,7 +202,17 @@ export function EmbeddingPlot({ points, projection, focusedId, palette, onSelect
       textposition: "top center",
       textfont: { size: 11, color: "#0f172a", family: "Segoe UI, system-ui, sans-serif" },
       cliponaxis: false,
-      hovertemplate: "<b>%{text}</b><extra></extra>",
+      hovertemplate: symptoms.map((item) => {
+        if (item.precision == null || item.recall == null) {
+          return "<b>%{text}</b><extra></extra>";
+        }
+        return (
+          `<b>%{text}</b><br>` +
+          `${t("hoverPrecision")}: ${item.precision.toFixed(2)} (${item.true_positives}/${item.predicted_count})<br>` +
+          `${t("hoverRecall")}: ${item.recall.toFixed(2)} (${item.true_positives}/${item.ground_truth_count})` +
+          `<extra></extra>`
+        );
+      }),
       marker: {
         symbol: "triangle-up",
         size: symptoms.map((item) => (item.id === focusedId ? 16 : 14)),
@@ -357,16 +382,18 @@ export function EmbeddingPlot({ points, projection, focusedId, palette, onSelect
       </div>
       <div className="mt-1 flex shrink-0 flex-wrap items-center gap-3 text-xs text-slate-500">
         {symptoms.map((item) => (
-          <span className="inline-flex items-center gap-1" key={item.id}>
-            <span
-              className="h-2.5 w-2.5 rounded-full"
-              style={{
-                background: colorMap[item.id],
-                boxShadow: `0 0 0 1.5px ${strokeMap[item.id] || MIXED_OUTLINE}`,
-              }}
-            />
-            {item.name}
-          </span>
+          <MetricsHover key={item.id} metric={symptomMetric(item)}>
+            <span className="inline-flex items-center gap-1">
+              <span
+                className="h-2.5 w-2.5 rounded-full"
+                style={{
+                  background: colorMap[item.id],
+                  boxShadow: `0 0 0 1.5px ${strokeMap[item.id] || MIXED_OUTLINE}`,
+                }}
+              />
+              {item.name}
+            </span>
+          </MetricsHover>
         ))}
         {symptoms.length > 0 ? <span className="ml-2">{t("sizeLegend")}</span> : null}
         {symptoms.some((item) => item.id === focusedId) ? (

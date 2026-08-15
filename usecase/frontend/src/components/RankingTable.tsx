@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { frequencyColor, frequencyLabel } from "../lib/colors";
 import { useI18n } from "../i18n";
-import type { Candidate } from "../types";
+import type { Candidate, SymptomMetric } from "../types";
+import { metricById, MetricsHover } from "./MetricsHover";
 
 type SortKey = "frequency" | "avg_similarity" | "max_similarity" | "name";
 
@@ -9,10 +10,11 @@ type Props = {
   candidates: Candidate[];
   selectedCount: number;
   focusedId?: string | null;
+  metrics?: SymptomMetric[];
   onSelect: (id: string) => void;
 };
 
-export function RankingTable({ candidates, selectedCount, focusedId, onSelect }: Props) {
+export function RankingTable({ candidates, selectedCount, focusedId, metrics = [], onSelect }: Props) {
   const { lang, t } = useI18n();
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("frequency");
@@ -115,17 +117,22 @@ export function RankingTable({ candidates, selectedCount, focusedId, onSelect }:
                 <td className="px-2 py-2">
                   <div className="flex flex-wrap gap-1">
                     {item.matched_symptoms.map((symptom) => (
-                      <button
-                        className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700 hover:bg-emerald-100"
-                        key={symptom.id}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onSelect(symptom.id);
-                        }}
-                        type="button"
-                      >
-                        {symptom.name}
-                      </button>
+                      <MetricsHover key={symptom.id} metric={metricById(metrics, symptom.id)}>
+                        <button
+                          className={`rounded-full px-2 py-0.5 text-xs hover:opacity-90 ${
+                            symptom.is_ground_truth
+                              ? "bg-emerald-50 text-emerald-700"
+                              : "bg-blue-50 text-blue-700"
+                          }`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onSelect(symptom.id);
+                          }}
+                          type="button"
+                        >
+                          {symptom.name}
+                        </button>
+                      </MetricsHover>
                     ))}
                   </div>
                 </td>

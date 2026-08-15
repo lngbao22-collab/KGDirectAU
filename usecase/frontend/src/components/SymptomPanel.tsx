@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { useI18n } from "../i18n";
 import { symptomColor, type SymptomStyle } from "../lib/colors";
-import type { Symptom } from "../types";
+import { MetricsHover, metricById } from "./MetricsHover";
+import type { Symptom, SymptomMetric } from "../types";
 
 type Props = {
   selected: Symptom[];
@@ -12,9 +13,10 @@ type Props = {
   onSelect?: (id: string) => void;
   loading: boolean;
   palette: SymptomStyle[];
+  metrics?: SymptomMetric[];
 };
 
-export function SymptomPanel({ selected, onChange, onPredict, onClear, onSelect, loading, palette }: Props) {
+export function SymptomPanel({ selected, onChange, onPredict, onClear, onSelect, loading, palette, metrics = [] }: Props) {
   const { lang, t } = useI18n();
   const [query, setQuery] = useState("");
   const [options, setOptions] = useState<Symptom[]>([]);
@@ -59,17 +61,19 @@ export function SymptomPanel({ selected, onChange, onPredict, onClear, onSelect,
       <div className="space-y-2">
         {selected.map((item) => (
           <div key={item.id} className="flex items-center justify-between rounded-xl bg-orange-50 px-3 py-2">
-            <button
-              className="flex min-w-0 items-center gap-2 text-left"
-              onClick={() => onSelect?.(item.id)}
-              type="button"
-            >
-              <span
-                className="h-2.5 w-2.5 shrink-0 rounded-full"
-                style={{ background: symptomColor(selected.findIndex((row) => row.id === item.id), palette) }}
-              />
-              <span className="truncate text-sm font-medium text-slate-800">{item.name}</span>
-            </button>
+            <MetricsHover className="min-w-0 flex-1" metric={metricById(metrics, item.id)}>
+              <button
+                className="flex min-w-0 items-center gap-2 text-left"
+                onClick={() => onSelect?.(item.id)}
+                type="button"
+              >
+                <span
+                  className="h-2.5 w-2.5 shrink-0 rounded-full"
+                  style={{ background: symptomColor(selected.findIndex((row) => row.id === item.id), palette) }}
+                />
+                <span className="truncate text-sm font-medium text-slate-800">{item.name}</span>
+              </button>
+            </MetricsHover>
             <button
               className="text-slate-400 hover:text-slate-700"
               onClick={() => onChange(selected.filter((row) => row.id !== item.id))}

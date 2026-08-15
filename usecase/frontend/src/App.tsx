@@ -133,6 +133,7 @@ export default function App() {
               <div className="min-w-0 space-y-4">
                 <SymptomPanel
                   loading={loading}
+                  metrics={result?.symptom_metrics || []}
                   onChange={setSymptoms}
                   onClear={() => {
                     setSymptoms([]);
@@ -170,7 +171,7 @@ export default function App() {
             ),
             info: (
               <div className="flex h-full min-h-0 min-w-0 flex-col">
-                <DiseasePanel detail={focused} onSelectSimilar={selectDisease} />
+                <DiseasePanel detail={focused} metrics={result?.symptom_metrics || []} onSelectSimilar={selectDisease} />
               </div>
             ),
           }}
@@ -184,6 +185,7 @@ export default function App() {
           <RankingTable
             candidates={result?.candidates || []}
             focusedId={focused?.id}
+            metrics={result?.symptom_metrics || []}
             onSelect={selectDisease}
             selectedCount={symptoms.length}
           />

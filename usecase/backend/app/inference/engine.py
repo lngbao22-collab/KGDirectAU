@@ -17,6 +17,7 @@ from app.schemas import (
     MatchedSymptomOut,
     ScatterPointOut,
     SimilarDiseaseOut,
+    SymptomMetricsOut,
     SymptomOut,
 )
 
@@ -103,6 +104,47 @@ class InferenceEngine:
         self.presents_idx = int(catalog.relation_to_idx[PRESENTS_RELATION])
         self.disease_index_tensor = torch.tensor(catalog.disease_indices, dtype=torch.long)
         self.card = _as_card(registered)
+        self._truth_sets = {key: set(value) for key, value in catalog.symptom_to_diseases.items()}
+
+    def _truth_ids(self, symptom_id: str) -> list[str]:
+        return self.catalog.symptom_to_diseases.get(symptom_id, [])
+
+    def _is_ground_truth(self, disease_id: str, symptom_id: str) -> bool:
+        return disease_id in self._truth_sets.get(symptom_id, ())
+
+    def _pack_metrics(self, symptom_id: str, predicted_ids: list[str], lang: str) -> SymptomMetricsOut:
+        truth = set(self._truth_ids(symptom_id))
+        predicted = list(dict.fromkeys(predicted_ids))
+        predicted_set = set(predicted)
+        true_positives = len(predicted_set & truth)
+        predicted_count = len(predicted_set)
+        ground_truth_count = len(truth)
+        return SymptomMetricsOut(
+            id=symptom_id,
+            name=self.catalog.get(symptom_id).localized_name(lang),
+            precision=round(true_positives / predicted_count if predicted_count else 0.0, 4),
+            recall=round(true_positives / ground_truth_count if ground_truth_count else 0.0, 4),
+            true_positives=true_positives,
+            predicted_count=predicted_count,
+            ground_truth_count=ground_truth_count,
+            top_k=TOP_K_PER_SYMPTOM,
+        )
+
+    def _matched_out(self, disease_id: str, symptom_id: str, score: float, lang: str) -> MatchedSymptomOut:
+        return MatchedSymptomOut(
+            id=symptom_id,
+            name=self.catalog.get(symptom_id).localized_name(lang),
+            score=round(score, 4),
+            is_ground_truth=self._is_ground_truth(disease_id, symptom_id),
+        )
+
+    def metrics_for_symptom(self, symptom_id: str, lang: str = "en") -> SymptomMetricsOut:
+        symptom = self.catalog.get(symptom_id)
+        raw = self._score_symptom(symptom.index)
+        disease_raw = raw[self.catalog.disease_indices]
+        ranked_local = _top_k_indices(disease_raw, self.catalog.diseases, TOP_K_PER_SYMPTOM)
+        predicted_ids = [self.catalog.diseases[int(index)].id for index in ranked_local]
+        return self._pack_metrics(symptom_id, predicted_ids, lang)
 
     def _score_symptom(self, symptom_index: int) -> np.ndarray:
         relation = torch.tensor([self.presents_idx], dtype=torch.long)
@@ -123,13 +165,14 @@ class InferenceEngine:
         symptom_ids: list[str],
         projection: str = "tsne",
         lang: str = "en",
-    ) -> tuple[list[RankedDisease], list[ScatterPointOut]]:
+    ) -> tuple[list[RankedDisease], list[ScatterPointOut], list[SymptomMetricsOut]]:
         if not symptom_ids:
             raise ValueError("Select at least one symptom." if lang != "vi" else "Chọn ít nhất một triệu chứng.")
         if len(symptom_ids) > 5:
             raise ValueError("Select at most five symptoms." if lang != "vi" else "Chọn tối đa năm triệu chứng.")
 
         per_disease: dict[str, list[tuple[str, float]]] = defaultdict(list)
+        predicted_by_symptom: dict[str, list[str]] = {}
         for symptom_id in symptom_ids:
             symptom = self.catalog.get(symptom_id)
             if symptom.kind != "symptom":
@@ -145,9 +188,12 @@ class InferenceEngine:
             if finite.any():
                 scaled[finite] = _minmax(disease_raw[finite])
             ranked_local = _top_k_indices(disease_raw, self.catalog.diseases, TOP_K_PER_SYMPTOM)
+            predicted_ids: list[str] = []
             for local_rank in ranked_local:
                 disease = self.catalog.diseases[int(local_rank)]
+                predicted_ids.append(disease.id)
                 per_disease[disease.id].append((symptom_id, float(scaled[local_rank])))
+            predicted_by_symptom[symptom_id] = predicted_ids
 
         ranked: list[RankedDisease] = []
         for disease_id, matches in per_disease.items():
@@ -166,12 +212,18 @@ class InferenceEngine:
 
         coords = self.projections["tsne" if projection == "tsne" else "umap"]
         candidate_ids = {item.id for item in ranked}
+        metrics = [
+            self._pack_metrics(symptom_id, predicted_by_symptom.get(symptom_id, []), lang)
+            for symptom_id in symptom_ids
+        ]
+        metrics_by_id = {item.id: item for item in metrics}
         points: list[ScatterPointOut] = []
         for symptom_id in symptom_ids:
             symptom = self.catalog.get(symptom_id)
+            metric = metrics_by_id[symptom_id]
             truth_ids = [
                 disease_id
-                for disease_id in self.catalog.symptom_to_diseases.get(symptom_id, [])
+                for disease_id in self._truth_ids(symptom_id)
                 if disease_id in candidate_ids
             ]
             points.append(
@@ -183,6 +235,12 @@ class InferenceEngine:
                     y=float(coords[symptom.index, 1]),
                     symptom_ids=[symptom.id],
                     ground_truth_ids=truth_ids,
+                    precision=metric.precision,
+                    recall=metric.recall,
+                    true_positives=metric.true_positives,
+                    predicted_count=metric.predicted_count,
+                    ground_truth_count=metric.ground_truth_count,
+                    top_k=metric.top_k,
                 )
             )
         for rank, item in enumerate(ranked, start=1):
@@ -201,7 +259,7 @@ class InferenceEngine:
                     symptom_ids=[symptom_id for symptom_id in symptom_ids if symptom_id in matched_ids],
                 )
             )
-        return ranked, points
+        return ranked, points, metrics
 
     def candidates_out(self, ranked: list[RankedDisease], lang: str = "en") -> list[CandidateOut]:
         rows: list[CandidateOut] = []
@@ -216,13 +274,12 @@ class InferenceEngine:
                     avg_similarity=round(item.avg_similarity, 4),
                     max_similarity=round(item.max_similarity, 4),
                     matched_symptoms=[
-                        MatchedSymptomOut(
-                            id=symptom_id,
-                            name=self.catalog.get(symptom_id).localized_name(lang),
-                            score=round(score, 4),
-                        )
+                        self._matched_out(disease.id, symptom_id, score, lang)
                         for symptom_id, score in item.matched
                     ],
+                    ground_truth_hits=sum(
+                        1 for symptom_id, _ in item.matched if self._is_ground_truth(disease.id, symptom_id)
+                    ),
                 )
             )
         return rows
@@ -236,6 +293,7 @@ class InferenceEngine:
     ) -> DiseaseDetailOut:
         disease = self.catalog.get(disease_id)
         if disease.kind == "symptom":
+            metric = self.metrics_for_symptom(disease.id, lang)
             return DiseaseDetailOut(
                 id=disease.id,
                 name=disease.localized_name(lang),
@@ -243,17 +301,19 @@ class InferenceEngine:
                 description=disease.localized_description(lang),
                 wiki_url=disease.wiki_url,
                 hetionet_id=disease.id,
+                precision=metric.precision,
+                recall=metric.recall,
+                true_positives=metric.true_positives,
+                predicted_count=metric.predicted_count,
+                ground_truth_count=metric.ground_truth_count,
+                top_k=metric.top_k,
             )
         matched: list[MatchedSymptomOut] = []
         if ranked:
             for item in ranked:
                 if item.id == disease_id:
                     matched = [
-                        MatchedSymptomOut(
-                            id=symptom_id,
-                            name=self.catalog.get(symptom_id).localized_name(lang),
-                            score=round(score, 4),
-                        )
+                        self._matched_out(disease_id, symptom_id, score, lang)
                         for symptom_id, score in item.matched
                     ]
                     break

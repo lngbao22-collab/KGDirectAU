@@ -45,6 +45,18 @@ class MatchedSymptomOut(BaseModel):
     id: str
     name: str
     score: float
+    is_ground_truth: bool = False
+
+
+class SymptomMetricsOut(BaseModel):
+    id: str
+    name: str
+    precision: float
+    recall: float
+    true_positives: int
+    predicted_count: int
+    ground_truth_count: int
+    top_k: int = 10
 
 
 class CandidateOut(BaseModel):
@@ -55,6 +67,7 @@ class CandidateOut(BaseModel):
     avg_similarity: float
     max_similarity: float
     matched_symptoms: list[MatchedSymptomOut]
+    ground_truth_hits: int = 0
 
 
 class ScatterPointOut(BaseModel):
@@ -68,6 +81,12 @@ class ScatterPointOut(BaseModel):
     rank: int | None = None
     symptom_ids: list[str] = []
     ground_truth_ids: list[str] = []
+    precision: float | None = None
+    recall: float | None = None
+    true_positives: int | None = None
+    predicted_count: int | None = None
+    ground_truth_count: int | None = None
+    top_k: int | None = None
 
 
 class SimilarDiseaseOut(BaseModel):
@@ -86,6 +105,12 @@ class DiseaseDetailOut(BaseModel):
     matched_count: int = 0
     selected_count: int = 0
     similar_diseases: list[SimilarDiseaseOut] = []
+    precision: float | None = None
+    recall: float | None = None
+    true_positives: int | None = None
+    predicted_count: int | None = None
+    ground_truth_count: int | None = None
+    top_k: int | None = None
 
 
 class PredictResponse(BaseModel):
@@ -95,3 +120,4 @@ class PredictResponse(BaseModel):
     candidates: list[CandidateOut]
     points: list[ScatterPointOut]
     focused: DiseaseDetailOut | None = None
+    symptom_metrics: list[SymptomMetricsOut] = []
