@@ -33,6 +33,22 @@ type PieMarker = {
   strokeWidth: number;
 };
 
+type HoverTip = {
+  id: string;
+  left: number;
+  top: number;
+};
+
+type PlotHoverPoint = {
+  customdata?: unknown;
+  bbox?: { x0: number; x1: number; y0: number; y1: number };
+};
+
+type PlotHoverEvent = {
+  points?: PlotHoverPoint[];
+  event?: { offsetX?: number; offsetY?: number };
+};
+
 function pointId(customdata: unknown): string | null {
   if (typeof customdata === "string") return customdata;
   if (Array.isArray(customdata) && typeof customdata[0] === "string") return customdata[0];
@@ -110,6 +126,28 @@ type PlotGraph = HTMLElement & {
   };
 };
 
+function pointAnchor(graphDiv: PlotGraph, item: ScatterPoint): { left: number; top: number } | null {
+  const xToPx = graphDiv._fullLayout?.xaxis?.l2p;
+  const yToPx = graphDiv._fullLayout?.yaxis?.l2p;
+  const xOffset = graphDiv._fullLayout?.xaxis?._offset || 0;
+  const yOffset = graphDiv._fullLayout?.yaxis?._offset || 0;
+  if (!xToPx || !yToPx) return null;
+  return {
+    left: xToPx(item.x) + xOffset,
+    top: yToPx(item.y) + yOffset,
+  };
+}
+
+function hoverAnchor(point: PlotHoverPoint, event?: PlotHoverEvent["event"]): { left: number; top: number } {
+  if (point.bbox) {
+    return {
+      left: (point.bbox.x0 + point.bbox.x1) / 2,
+      top: point.bbox.y0,
+    };
+  }
+  return { left: event?.offsetX ?? 0, top: event?.offsetY ?? 0 };
+}
+
 function layoutPies(
   graphDiv: PlotGraph,
   diseases: ScatterPoint[],
@@ -146,6 +184,10 @@ export function EmbeddingPlot({ points, projection, focusedId, palette, onSelect
   const plotRef = useRef<PlotGraph | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const [pies, setPies] = useState<PieMarker[]>([]);
+  const [hover, setHover] = useState<HoverTip | null>(null);
+  const hoverIdRef = useRef<string | null>(null);
+  const pointsRef = useRef(points);
+  pointsRef.current = points;
   const symptoms = useMemo(() => points.filter((item) => item.kind === "symptom"), [points]);
   const diseases = useMemo(() => points.filter((item) => item.kind === "disease"), [points]);
   const densities = useMemo(() => densityScales(diseases), [diseases]);
@@ -158,6 +200,7 @@ export function EmbeddingPlot({ points, projection, focusedId, palette, onSelect
     [palette, symptoms],
   );
   const viewRevision = `${projection}:${symptoms.map((item) => item.id).join(",")}`;
+  const hoverPoint = hover ? points.find((item) => item.id === hover.id) ?? null : null;
   const gtTargets = useMemo(() => {
     const focused = symptoms.find((item) => item.id === focusedId);
     return new Set(focused?.ground_truth_ids || []);
@@ -173,11 +216,7 @@ export function EmbeddingPlot({ points, projection, focusedId, palette, onSelect
       type: "scatter" as const,
       name: t("traceDiseases"),
       opacity: 1,
-      hovertemplate: diseases.map((item) =>
-        item.avg_similarity != null
-          ? `<b>%{text}</b><br>${t("hoverFrequency")}: %{customdata[1]}<br>${t("hoverAvgSimilarity")}: %{customdata[2]:.3f}<extra></extra>`
-          : `<b>%{text}</b><br>${t("hoverGroundTruth")}<extra></extra>`,
-      ),
+      hoverinfo: "none" as const,
       marker: {
         symbol: "circle",
         size: diseases.map((item, index) => markerSize(item, densities[index] ?? 1, focusedId, gtTargets)),
@@ -202,17 +241,7 @@ export function EmbeddingPlot({ points, projection, focusedId, palette, onSelect
       textposition: "top center",
       textfont: { size: 11, color: "#0f172a", family: "Segoe UI, system-ui, sans-serif" },
       cliponaxis: false,
-      hovertemplate: symptoms.map((item) => {
-        if (item.precision == null || item.recall == null) {
-          return "<b>%{text}</b><extra></extra>";
-        }
-        return (
-          `<b>%{text}</b><br>` +
-          `${t("hoverPrecision")}: ${item.precision.toFixed(2)} (${item.true_positives}/${item.predicted_count})<br>` +
-          `${t("hoverRecall")}: ${item.recall.toFixed(2)} (${item.true_positives}/${item.ground_truth_count})` +
-          `<extra></extra>`
-        );
-      }),
+      hoverinfo: "none" as const,
       marker: {
         symbol: "triangle-up",
         size: symptoms.map((item) => (item.id === focusedId ? 16 : 14)),
@@ -252,11 +281,56 @@ export function EmbeddingPlot({ points, projection, focusedId, palette, onSelect
     });
   }, [colorMap, diseases, focusedId, strokeMap, symptoms]);
 
+  function syncHoverPosition(graphDiv: PlotGraph) {
+    const id = hoverIdRef.current;
+    if (!id) {
+      setHover((current) => (current ? null : current));
+      return;
+    }
+    const item = pointsRef.current.find((point) => point.id === id);
+    if (!item) {
+      hoverIdRef.current = null;
+      setHover(null);
+      return;
+    }
+    const anchor = pointAnchor(graphDiv, item);
+    if (!anchor) return;
+    setHover((current) =>
+      current && current.id === id && current.left === anchor.left && current.top === anchor.top
+        ? current
+        : { id, ...anchor },
+    );
+  }
+
+  function setHovered(id: string | null, fallback?: { left: number; top: number }) {
+    hoverIdRef.current = id;
+    const graphDiv = plotRef.current;
+    if (id && graphDiv) {
+      const item = pointsRef.current.find((point) => point.id === id);
+      const anchor = item ? pointAnchor(graphDiv, item) : null;
+      if (anchor) {
+        setHover({ id, ...anchor });
+        return;
+      }
+    }
+    if (id && fallback) {
+      setHover({ id, ...fallback });
+      return;
+    }
+    setHover(null);
+  }
+
   function syncPies(graphDiv: PlotGraph) {
     plotRef.current = graphDiv;
     const next = layoutPies(graphDiv, diseases, colorMap, densities, palette, focusedId, gtTargets);
     setPies((current) => (samePies(current, next) ? current : next));
+    syncHoverPosition(graphDiv);
   }
+
+  useEffect(() => {
+    hoverIdRef.current = null;
+    setHover(null);
+  }, [viewRevision]);
 
   useEffect(() => {
     const node = frameRef.current;
@@ -325,10 +399,58 @@ export function EmbeddingPlot({ points, projection, focusedId, palette, onSelect
                     opacity: 1,
                     boxShadow: `0 0 0 ${pie.strokeWidth}px ${pie.stroke}`,
                     border: "none",
+                    zIndex: pie.id === hover?.id ? 2 : 1,
                   }}
                 />
               ))}
             </div>
+            {hover && hoverPoint ? (
+              <div
+                className="pointer-events-none absolute z-[4] w-max max-w-xs rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-left text-xs leading-5 text-slate-600 shadow-card"
+                style={{
+                  left: hover.left,
+                  top: hover.top,
+                  transform: hover.top < 64 ? "translate(-50%, 12px)" : "translate(-50%, calc(-100% - 10px))",
+                }}
+              >
+                <div className="font-semibold text-slate-800">{hoverPoint.name}</div>
+                {hoverPoint.kind === "disease" ? (
+                  hoverPoint.avg_similarity != null ? (
+                    <>
+                      <div>
+                        {t("hoverFrequency")}:{" "}
+                        <span className="font-semibold text-slate-800">{hoverPoint.frequency || 0}</span>
+                      </div>
+                      <div>
+                        {t("hoverAvgSimilarity")}:{" "}
+                        <span className="font-semibold text-slate-800">{hoverPoint.avg_similarity.toFixed(3)}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <div>{t("hoverGroundTruth")}</div>
+                  )
+                ) : hoverPoint.precision != null && hoverPoint.recall != null ? (
+                  <>
+                    <div>
+                      {t("hoverPrecision")}:{" "}
+                      <span className="font-semibold text-slate-800">{hoverPoint.precision.toFixed(2)}</span>
+                      <span className="text-slate-400">
+                        {" "}
+                        ({hoverPoint.true_positives}/{hoverPoint.predicted_count})
+                      </span>
+                    </div>
+                    <div>
+                      {t("hoverRecall")}:{" "}
+                      <span className="font-semibold text-slate-800">{hoverPoint.recall.toFixed(2)}</span>
+                      <span className="text-slate-400">
+                        {" "}
+                        ({hoverPoint.true_positives}/{hoverPoint.ground_truth_count})
+                      </span>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
             <Plot
               config={{
                 displayModeBar: false,
@@ -369,6 +491,13 @@ export function EmbeddingPlot({ points, projection, focusedId, palette, onSelect
                 const id = pointId(event.points?.[0]?.customdata);
                 if (id) onSelect(id);
               }}
+              onHover={(event: PlotHoverEvent) => {
+                const pt = event.points?.[0];
+                const id = pointId(pt?.customdata);
+                if (!id || !pt) return;
+                setHovered(id, hoverAnchor(pt, event.event));
+              }}
+              onUnhover={() => setHovered(null)}
               onInitialized={(_figure: unknown, graphDiv: PlotGraph) => syncPies(graphDiv)}
               onRelayout={() => {
                 if (plotRef.current) syncPies(plotRef.current);

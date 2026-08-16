@@ -141,6 +141,16 @@ def _index_edges(
     )
 
 
+def _is_positive_label(value: str) -> bool:
+    text = value.strip()
+    if not text:
+        return False
+    try:
+        return int(float(text)) == 1
+    except ValueError:
+        return False
+
+
 def _load_ground_truth(path) -> dict[str, list[str]]:
     mapping: dict[str, list[str]] = defaultdict(list)
     if not path.exists():
@@ -148,7 +158,8 @@ def _load_ground_truth(path) -> dict[str, list[str]]:
     with path.open(encoding="utf-8") as handle:
         for line in handle:
             parts = line.strip().split("\t")
-            if len(parts) < 3:
+            # head, relation, tail, label — keep only positive (label=1) edges
+            if len(parts) < 4 or not _is_positive_label(parts[3]):
                 continue
             disease_id, symptom_id = parts[0].strip(), parts[2].strip()
             if disease_id and symptom_id:
