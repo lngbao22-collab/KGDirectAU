@@ -42,6 +42,7 @@
   "test_eval_last": true,
   "test_eval_best": true,
   "shuffle_train": true,
+  "use_amp": false,
   "n_sample": 0,
   "training_cadence": "epoch",
   "epoch_per_eval": 5,
