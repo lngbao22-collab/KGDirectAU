@@ -29,7 +29,7 @@
   "adversarial_training": true,
   "margin": 200.0,
   "epsilon": 2.0,
-  "regularization": 1e-06,
+  "regularization": 5e-06,
   "regularization_p": 3,
   "batch_size": 256,
   "epochs": 400,
