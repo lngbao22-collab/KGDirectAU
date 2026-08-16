@@ -52,7 +52,7 @@ export function SettingsPanel({
         <div className="flex gap-2">
           {(["tsne", "umap"] as const).map((item) => (
             <button
-              className={`flex-1 rounded-xl px-3 py-2 text-sm ${
+              className={`flex-1 whitespace-nowrap rounded-xl px-3 py-2 text-sm ${
                 projection === item ? "bg-brand-600 text-white" : "border border-slate-200 text-slate-600"
               }`}
               key={item}
