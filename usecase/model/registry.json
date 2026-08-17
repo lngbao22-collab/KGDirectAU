@@ -1,0 +1,41 @@
+{
+  "default_model_id": "ComplEx-AU",
+  "dataset": "hetionet_subset",
+  "models": [
+    {
+      "id": "ComplEx-AU",
+      "label": "ComplEx-AU (default)",
+      "available": true,
+      "checkpoint": "ComplEx-AU_best.mdl",
+      "config": "ComplEx-AU/config.json"
+    },
+    {
+      "id": "DistMult-AU",
+      "label": "DistMult-AU",
+      "available": false,
+      "checkpoint": "DistMult-AU/best_model.mdl",
+      "config": "DistMult-AU/config.json"
+    },
+    {
+      "id": "RotatE-AU",
+      "label": "RotatE-AU",
+      "available": false,
+      "checkpoint": "RotatE-AU/best_model.mdl",
+      "config": "RotatE-AU/config.json"
+    },
+    {
+      "id": "TransE-AU",
+      "label": "TransE-AU",
+      "available": false,
+      "checkpoint": "TransE-AU/best_model.mdl",
+      "config": "TransE-AU/config.json"
+    },
+    {
+      "id": "SimKGC-AU",
+      "label": "SimKGC-AU",
+      "available": false,
+      "checkpoint": "SimKGC-AU/best_model.mdl",
+      "config": "SimKGC-AU/config.json"
+    }
+  ]
+}

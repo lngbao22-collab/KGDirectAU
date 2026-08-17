@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  font-family: Segoe UI, system-ui, sans-serif;
+}
+
+.card {
+  @apply rounded-2xl border border-slate-200 bg-white shadow-card;
+}
