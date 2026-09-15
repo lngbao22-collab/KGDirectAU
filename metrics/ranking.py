@@ -157,17 +157,3 @@ def rerank_by_graph(batch_score: torch.Tensor, examples: Sequence[Example], enti
 
         batch_score[idx].index_add_(0, n_hop_indices, delta)
 
-        # The test set of FB15k237 removes triples that are connected in train set,
-        # so any two entities that are connected in train set will not appear in test,
-        # however, this is not a trick that could generalize.
-        # by default, we do not use this piece of code.
-
-        # if args.dataset == 'FB15k237':
-        #     n_hop_indices = get_link_graph().get_n_hop_entity_indices(cur_ex.head_id,
-        #                                                               entity_dict=entity_dict,
-        #                                                               n_hop=1)
-        #     n_hop_indices.remove(entity_dict.entity_to_idx(cur_ex.head_id))
-        #     delta = torch.tensor([-0.5 for _ in n_hop_indices]).to(batch_score.device)
-        #     n_hop_indices = torch.LongTensor(list(n_hop_indices)).to(batch_score.device)
-        #
-        #     batch_score[idx].index_add_(0, n_hop_indices, delta)
